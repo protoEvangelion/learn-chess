@@ -3,32 +3,27 @@ import { useEffect } from 'react'
 import type { Position } from '@logic/board'
 import { animated, useSpring } from '@react-spring/three'
 
-export const PieceMaterial: FC<
-  JSX.IntrinsicElements['meshPhysicalMaterial'] & {
-    isSelected: boolean
-    pieceIsBeingReplaced: boolean
-  }
-> = ({ color, isSelected, pieceIsBeingReplaced, ...props }) => {
-  const { opacity } = useSpring({
-    opacity: pieceIsBeingReplaced ? 0 : 1,
-  })
-  return (
-    <animated.meshPhysicalMaterial
-      reflectivity={4}
-      color={color === 'white' ? '#d9d9d9' : '#7c7c7c'}
-      emissive={isSelected ? '#733535' : '#000000'}
-      metalness={1}
-      roughness={0.5}
-      attach="material"
-      envMapIntensity={0.2}
-      opacity={opacity}
-      transparent
-      {...props}
-    />
-  )
-}
+export const PieceMaterial: FC<{
+  color: string
+  isSelected: boolean
+  pieceIsBeingReplaced: boolean
+}> = ({ color, isSelected, pieceIsBeingReplaced }) => (
+  <meshPhysicalMaterial
+    reflectivity={4}
+    color={color === 'white' ? '#d9d9d9' : '#7c7c7c'}
+    emissive={isSelected ? '#733535' : '#000000'}
+    metalness={1}
+    roughness={0.5}
+    attach="material"
+    envMapIntensity={0.2}
+    opacity={pieceIsBeingReplaced ? 0 : 1}
+    transparent
+  />
+)
 
-export type ModelProps = JSX.IntrinsicElements['group'] & {
+export type ModelProps = {
+  position?: [number, number, number]
+  scale?: [number, number, number]
   color: string
   isSelected: boolean
   canMoveHere: Position | null
@@ -36,21 +31,26 @@ export type ModelProps = JSX.IntrinsicElements['group'] & {
   finishMovingPiece: () => void
   pieceIsBeingReplaced: boolean
   wasSelected: boolean
+  onClick?: (e: { stopPropagation: () => void }) => void
+  children?: ReactNode
 }
 
-const FRAMER_MULTIPLIER = 6.66
-const getDistance = (px?: number) => (px ? px * FRAMER_MULTIPLIER : 0)
+const DIST = 6.66
+const dist = (px?: number) => (px ? px * DIST : 0)
 
-export const MeshWrapper: FC<ModelProps & { children?: ReactNode }> = ({
+export const MeshWrapper: FC<ModelProps> = ({
   movingTo,
   finishMovingPiece,
   isSelected,
   children,
   pieceIsBeingReplaced,
   wasSelected: _wasSelected,
-  ...props
+  color,
+  onClick,
+  position,
+  scale,
 }) => {
-  const { x, y, z } = useSpring({
+  const spring = useSpring({
     to: pieceIsBeingReplaced
       ? {
           x: 5 * (Math.random() > 0.5 ? -1 : 1),
@@ -58,21 +58,11 @@ export const MeshWrapper: FC<ModelProps & { children?: ReactNode }> = ({
           z: 10 * (Math.random() > 0.5 ? -1 : 1),
         }
       : movingTo
-        ? {
-            x: getDistance(movingTo.x),
-            y: 1.5,
-            z: getDistance(movingTo.y),
-          }
-        : {
-            x: 0,
-            y: isSelected ? 1.4 : 0,
-            z: 0,
-          },
+        ? { x: dist(movingTo.x), y: 1.5, z: dist(movingTo.y) }
+        : { x: 0, y: isSelected ? 1.4 : 0, z: 0 },
     config: movingTo
       ? { tension: 200, friction: 28 }
-      : pieceIsBeingReplaced
-        ? { tension: 50, friction: 12 }
-        : { tension: 180, friction: 18 },
+      : { tension: 180, friction: 18 },
   })
 
   useEffect(() => {
@@ -82,18 +72,18 @@ export const MeshWrapper: FC<ModelProps & { children?: ReactNode }> = ({
   }, [movingTo, finishMovingPiece])
 
   return (
-    <group {...props} dispose={null} castShadow>
+    <group position={position} scale={scale} onClick={onClick} dispose={null}>
       <animated.mesh
         scale={0.03}
         castShadow={!pieceIsBeingReplaced}
         receiveShadow
-        position-x={x}
-        position-y={y}
-        position-z={z}
+        position-x={spring.x}
+        position-y={spring.y}
+        position-z={spring.z}
       >
         {children}
         <PieceMaterial
-          color={props.color}
+          color={color}
           pieceIsBeingReplaced={pieceIsBeingReplaced}
           isSelected={isSelected}
         />
