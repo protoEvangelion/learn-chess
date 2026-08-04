@@ -43,6 +43,11 @@ export const BoardComponent: FC<{
   moves: Move[]
   setMoves: (moves: Move[]) => void
   setGameOver: (gameOver: GameOver | null) => void
+  playerColor: Color
+  tipFrom?: Position | null
+  tipTo?: Position | null
+  pendingEngineMove?: Move | null
+  onEngineMoveConsumed?: () => void
 }> = ({
   selected,
   setSelected,
@@ -51,6 +56,11 @@ export const BoardComponent: FC<{
   moves,
   setMoves,
   setGameOver,
+  playerColor,
+  tipFrom = null,
+  tipTo = null,
+  pendingEngineMove = null,
+  onEngineMoveConsumed,
 }) => {
   const [lastSelected, setLastSelected] = useState<Tile | null>(null)
   const turn = useGameState((s) => s.turn)
@@ -67,11 +77,13 @@ export const BoardComponent: FC<{
 
   const selectThisPiece = (e: ThreeMouseEvent, tile: Tile | null) => {
     e.stopPropagation()
+    if (turn !== playerColor) return
     if (!tile?.piece?.type && !selected) return
     if (!tile?.piece) {
       setSelected(null)
       return
     }
+    if (tile.piece.color !== playerColor) return
     setMovingTo(null)
     setMoves(
       movesForPiece({ piece: tile.piece, board, propagateDetectCheck: true }),
@@ -80,6 +92,17 @@ export const BoardComponent: FC<{
     setLastSelected(tile)
     setRedLightPosition(tile.position)
   }
+
+  useEffect(() => {
+    if (!pendingEngineMove || movingTo) return
+    const target = getTile(board, pendingEngineMove.newPosition)
+    if (!target) {
+      onEngineMoveConsumed?.()
+      return
+    }
+    setMovingTo({ move: pendingEngineMove, tile: target })
+    onEngineMoveConsumed?.()
+  }, [pendingEngineMove, movingTo, board, onEngineMoveConsumed, setMovingTo])
 
   const finishMovingPiece = (tile: Tile | null) => {
     if (!tile || !movingTo) return
@@ -206,8 +229,13 @@ export const BoardComponent: FC<{
           const isBeingCastled =
             rookCastled && createId(rookCastled) === tile.piece?.getId()
 
+          const isTip =
+            checkIfPositionsMatch(tile.position, tipFrom) ||
+            checkIfPositionsMatch(tile.position, tipTo)
+
           const handleClick = (e: ThreeMouseEvent) => {
             if (movingTo) return
+            if (turn !== playerColor) return
             const tileContainsOtherPlayersPiece =
               tile.piece && tile.piece?.color !== turn
             if (tileContainsOtherPlayersPiece && !canMoveHere) {
@@ -252,6 +280,7 @@ export const BoardComponent: FC<{
                 position={[j, 0.25, i]}
                 onClick={handleClick}
                 canMoveHere={canMoveHere?.newPosition ?? null}
+                isTip={isTip}
               />
               <MeshWrapper key={pieceId} {...props}>
                 {tile.piece?.type === `pawn` && <PawnModel />}
