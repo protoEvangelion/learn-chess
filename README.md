@@ -1,32 +1,56 @@
-# React + TypeScript + Vite
+# Learn Chess
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Local 3D chess with a Stockfish opponent and an LLM coach that gives progressive tips aligned to the engine’s best move.
 
-Currently, two official plugins are available:
+![Learn Chess — board, coach tips, and eval](docs/snapshot.png)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Requirements
 
-## React Compiler
+- **Node.js** 20+ (npm)
+- **[Cursor CLI](https://cursor.com/docs/cli/overview)** (`agent` on your `PATH`) — used by the coach (`Ask coach`)
+- A machine that can run WebAssembly (Stockfish in the browser)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Run
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+git clone git@github.com:protoEvangelion/learn-chess.git
+cd learn-chess
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Open the URL Vite prints (default [http://127.0.0.1:5173](http://127.0.0.1:5173)).
+
+Optional:
+
+```bash
+npm run dev -- --host 127.0.0.1 --port 5174
+```
+
+### Coach (optional)
+
+`Ask coach` shells out to Cursor CLI in ask mode. Sign in / configure the CLI first so `agent` works in a terminal. Override the model with:
+
+```bash
+CURSOR_EXPLAIN_MODEL=gpt-5.6-luna-low-fast npm run dev
+```
+
+Each game gets a `gameId` in the URL so the coach resumes the same CLI chat and can follow how the game is progressing.
+
+## Features
+
+- 3D board with move animations and coordinate labels
+- Play as White or Black vs Stockfish (strength 1–8)
+- Eval bar, material imbalance, check highlight, last-move glow
+- Progressive coach tips (nudge → closer look → full move) tied to Stockfish
+- Position in the URL (`fen` + `gameId`); **Undo** is browser back
+
+## Credits
+
+- **3D chessboard, pieces, and core board logic** adapted from [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) by [joshwrn](https://github.com/joshwrn)
+- **Stockfish** via the lite WASM build in `public/engines/`
+- **chess.js** for FEN helpers and SAN labeling for the coach
+
+## License
+
+See upstream [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) for original board asset licensing; this project’s app code is provided as-is for learning use.

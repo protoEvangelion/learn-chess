@@ -8,11 +8,42 @@ export type ExplainRequest = {
   to: string
   evalLabel: string
   line: string
+  gameId: string
+  /** Fullmove-ish hint so the coach can talk about game phase. */
+  plyHint?: string
 }
 
 /** Cheap Luna tier (fast) — override with CURSOR_EXPLAIN_MODEL. */
 export const EXPLAIN_MODEL =
   process.env.CURSOR_EXPLAIN_MODEL ?? 'gpt-5.6-luna-low-fast'
+
+/** Stable prefix — keep identical across asks for prompt-cache friendliness. */
+const COACH_RULES = [
+  'You are a friendly chess coach helping a beginner–club player.',
+  'You are coaching ONE ongoing game. Earlier messages in this chat are prior tips for earlier positions—use that arc.',
+  'Relate new advice to how the game has progressed when useful.',
+  '',
+  'CRITICAL — all three tips must align with the ENGINE BEST MOVE below.',
+  'tip1, tip2, and tip3 are progressive reveals of THE SAME plan (the engine move)—not three different ideas.',
+  'Do not hint at a different piece, plan, or move than the engine choice.',
+  'UCI moves are long algebraic coordinates only: <from><to>[promotion] (examples: e2e4, e1g1 = castle, e7e8q = promote).',
+  'UCI never names the piece; the mover is whatever occupies <from> in the FEN. Prefer the provided SAN in tip3.',
+  'If earlier tips in this chat pointed elsewhere, course-correct toward this engine move.',
+  '',
+  'Reply with ONLY a single JSON object (no markdown fences, no other text) with exactly these keys:',
+  '{"tip1":"...","tip2":"...","tip3":"..."}',
+  '',
+  'tip1: Soft nudge toward the theme of the engine move (why that idea matters now).',
+  'Do NOT name a specific piece to move, and do NOT give a square or UCI/SAN move.',
+  '1–2 short sentences.',
+  '',
+  'tip2: Narrow toward the engine move—you may name the piece type and/or board area involved.',
+  'Still do NOT give the destination square or the full UCI/SAN move.',
+  '1–2 short sentences.',
+  '',
+  'tip3: State the engine move exactly (prefer SAN plus from→to) and why it fits this game.',
+  '2–3 short sentences. Plain English, no markdown headings or bullet lists.',
+].join('\n')
 
 function readBody(req: import('http').IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -25,15 +56,19 @@ function readBody(req: import('http').IncomingMessage): Promise<string> {
 
 function buildPrompt(body: ExplainRequest): string {
   return [
-    'You are a friendly chess coach. Reply with ONLY a short explanation (2–4 sentences).',
-    'No greeting, no preamble, no markdown headings, no bullet lists.',
-    'Explain why the recommended move is good in plain English for a beginner–club player.',
+    COACH_RULES,
     '',
+    '--- Current position (same game as prior tips in this chat) ---',
+    body.plyHint ? `Progress: ${body.plyHint}` : null,
     `FEN: ${body.fen}`,
-    `Recommended move (UCI): ${body.bestMove} (${body.from} → ${body.to})`,
+    `ENGINE BEST MOVE (mandatory for tip3): ${body.bestMove}`,
+    `From square: ${body.from}`,
+    `To square: ${body.to}`,
     `Engine eval: ${body.evalLabel}`,
     `Principal variation: ${body.line}`,
-  ].join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function isGreetingNoise(text: string): boolean {
@@ -56,7 +91,34 @@ type StreamEvent = {
   is_error?: boolean
 }
 
-/** Stream Cursor CLI ask-mode tokens via SSE. */
+function createCursorChat(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('agent', ['create-chat'], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let out = ''
+    let err = ''
+    child.stdout.on('data', (d) => {
+      out += d.toString()
+    })
+    child.stderr.on('data', (d) => {
+      err += d.toString()
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      const id = out.trim().split(/\s+/)[0]
+      if (code === 0 && id && /^[0-9a-f-]{36}$/i.test(id)) {
+        resolve(id)
+        return
+      }
+      reject(new Error(err.trim() || `create-chat failed (${code})`))
+    })
+  })
+}
+
+/** Stream Cursor CLI ask-mode tokens via SSE, resuming the game chat. */
 function streamCursorExplain(
   body: ExplainRequest,
   onDelta: (text: string) => void,
@@ -67,6 +129,8 @@ function streamCursorExplain(
   const args = [
     '-p',
     '-f',
+    '--resume',
+    body.gameId,
     '--mode',
     'ask',
     '--model',
@@ -120,7 +184,6 @@ function streamCursorExplain(
       }
 
       if (event.type === 'assistant' && event.message?.content) {
-        // Partial deltas include timestamp_ms; final full copy does not.
         if (typeof event.timestamp_ms !== 'number') continue
         for (const block of event.message.content) {
           if (block.type !== 'text' || !block.text) continue
@@ -148,7 +211,9 @@ function streamCursorExplain(
   child.on('close', (code) => {
     if (settled) return
     if (code !== 0) {
-      finishErr(new Error(stderr.trim() || `Cursor agent exited with code ${code}`))
+      finishErr(
+        new Error(stderr.trim() || `Cursor agent exited with code ${code}`),
+      )
       return
     }
     finishOk()
@@ -160,13 +225,37 @@ function streamCursorExplain(
   }
 }
 
-/** Vite middleware: POST /api/explain → streamed Luna coach text (SSE). */
+function sendJson(
+  res: import('http').ServerResponse,
+  status: number,
+  body: unknown,
+) {
+  res.statusCode = status
+  res.setHeader('Content-Type', 'application/json')
+  res.end(JSON.stringify(body))
+}
+
+/** Vite middleware: coach explain + gameId minting. */
 export function explainApiPlugin(): Plugin {
   return {
     name: 'chess-coach-explain-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/explain')) return next()
+        const url = req.url?.split('?')[0] ?? ''
+
+        if (url === '/api/game-id' && req.method === 'POST') {
+          try {
+            const gameId = await createCursorChat()
+            sendJson(res, 200, { gameId })
+          } catch (err) {
+            sendJson(res, 500, {
+              error: err instanceof Error ? err.message : 'create-chat failed',
+            })
+          }
+          return
+        }
+
+        if (!url.startsWith('/api/explain')) return next()
         if (req.method === 'OPTIONS') {
           res.statusCode = 204
           res.end()
@@ -183,10 +272,10 @@ export function explainApiPlugin(): Plugin {
         try {
           const raw = await readBody(req)
           const body = JSON.parse(raw) as ExplainRequest
-          if (!body.fen || !body.bestMove) {
-            res.statusCode = 400
-            res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ error: 'fen and bestMove required' }))
+          if (!body.fen || !body.bestMove || !body.gameId) {
+            sendJson(res, 400, {
+              error: 'fen, bestMove, and gameId required',
+            })
             return
           }
 
@@ -196,13 +285,14 @@ export function explainApiPlugin(): Plugin {
             Connection: 'keep-alive',
             'X-Accel-Buffering': 'no',
             'X-Explain-Model': EXPLAIN_MODEL,
+            'X-Game-Id': body.gameId,
           })
 
           const send = (payload: unknown) => {
             res.write(`data: ${JSON.stringify(payload)}\n\n`)
           }
 
-          send({ type: 'model', model: EXPLAIN_MODEL })
+          send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
 
           cancel = streamCursorExplain(
             body,
@@ -221,13 +311,9 @@ export function explainApiPlugin(): Plugin {
         } catch (err) {
           cancel?.()
           if (!res.headersSent) {
-            res.statusCode = 500
-            res.setHeader('Content-Type', 'application/json')
-            res.end(
-              JSON.stringify({
-                error: err instanceof Error ? err.message : 'Explain failed',
-              }),
-            )
+            sendJson(res, 500, {
+              error: err instanceof Error ? err.message : 'Explain failed',
+            })
           } else {
             res.write(
               `data: ${JSON.stringify({

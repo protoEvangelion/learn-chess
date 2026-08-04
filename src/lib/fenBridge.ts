@@ -1,6 +1,8 @@
 import type { Board, Position } from '@logic/board'
+import { createTile } from '@logic/board'
 import type { Color, PieceType } from '@logic/pieces'
 import { isKing } from '@logic/pieces/king'
+import { isPawn } from '@logic/pieces/pawn'
 import { isRook } from '@logic/pieces/rook'
 import type { HistoryItem } from '@/state/game'
 
@@ -12,6 +14,18 @@ const TYPE_TO_FEN: Record<PieceType, string> = {
   queen: 'q',
   king: 'k',
 }
+
+const FEN_TO_TYPE: Record<string, PieceType> = {
+  p: 'pawn',
+  n: 'knight',
+  b: 'bishop',
+  r: 'rook',
+  q: 'queen',
+  k: 'king',
+}
+
+export const START_FEN =
+  'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
 /** Board x,y → algebraic. y=0 is rank 8. */
 export function positionToSquare(pos: Position): string {
@@ -57,6 +71,125 @@ export function boardToFen(
   return `${rows.join('/')} ${turn === 'white' ? 'w' : 'b'} ${castling} ${ep} 0 ${fullmove}`
 }
 
+export type FenGame = {
+  board: Board
+  turn: Color
+  history: HistoryItem[]
+}
+
+/** Parse a FEN into board + turn + synthetic history (for en passant). */
+export function fenToGame(fen: string): FenGame | null {
+  const parts = fen.trim().split(/\s+/)
+  if (parts.length < 4) return null
+  const [placement, turnPart, castling, ep] = parts
+  if (!placement || (turnPart !== 'w' && turnPart !== 'b')) return null
+
+  const ranks = placement.split('/')
+  if (ranks.length !== 8) return null
+
+  const ids: Record<string, number> = {}
+  const board: Board = []
+
+  for (let y = 0; y < 8; y++) {
+    const rank = ranks[y]
+    if (!rank) return null
+    const row = []
+    let x = 0
+    for (const ch of rank) {
+      if (x > 8) return null
+      if (ch >= '1' && ch <= '8') {
+        const n = Number(ch)
+        for (let i = 0; i < n; i++) {
+          row.push(createTile({ x, y }))
+          x += 1
+        }
+        continue
+      }
+      const type = FEN_TO_TYPE[ch.toLowerCase()]
+      if (!type || x >= 8) return null
+      const color: Color = ch === ch.toUpperCase() ? 'white' : 'black'
+      const key = `${color}-${type}`
+      ids[key] = (ids[key] ?? 0) + 1
+      row.push(createTile({ x, y }, { color, id: ids[key], type }))
+      x += 1
+    }
+    if (x !== 8) return null
+    board.push(row)
+  }
+
+  applyCastlingRights(board, castling === '-' ? '' : castling)
+  applyPawnMovedFlags(board)
+
+  const turn: Color = turnPart === 'b' ? 'black' : 'white'
+  const history = syntheticEpHistory(board, ep)
+
+  return { board, turn, history }
+}
+
+function applyPawnMovedFlags(board: Board) {
+  for (const row of board) {
+    for (const tile of row) {
+      const piece = tile.piece
+      if (!isPawn(piece)) continue
+      const startY = piece.color === 'white' ? 6 : 1
+      if (piece.position.y !== startY) piece.hasMoved = true
+    }
+  }
+}
+
+function applyCastlingRights(board: Board, rights: string) {
+  const wk = board[7][4].piece
+  const bk = board[0][4].piece
+  const wrH = board[7][7].piece
+  const wrA = board[7][0].piece
+  const brH = board[0][7].piece
+  const brA = board[0][0].piece
+
+  if (isKing(wk) && wk.color === 'white') {
+    if (!rights.includes('K') && !rights.includes('Q')) wk.hasMoved = true
+    else {
+      if (!rights.includes('K') && isRook(wrH)) wrH.hasMoved = true
+      if (!rights.includes('Q') && isRook(wrA)) wrA.hasMoved = true
+    }
+  }
+  if (isKing(bk) && bk.color === 'black') {
+    if (!rights.includes('k') && !rights.includes('q')) bk.hasMoved = true
+    else {
+      if (!rights.includes('k') && isRook(brH)) brH.hasMoved = true
+      if (!rights.includes('q') && isRook(brA)) brA.hasMoved = true
+    }
+  }
+}
+
+function syntheticEpHistory(board: Board, ep: string): HistoryItem[] {
+  if (!ep || ep === '-') return []
+  const epPos = squareToPosition(ep)
+  const isWhitePush = ep[1] === '3'
+  const isBlackPush = ep[1] === '6'
+  if (!isWhitePush && !isBlackPush) return []
+
+  const to: Position = isWhitePush
+    ? { x: epPos.x, y: 4 }
+    : { x: epPos.x, y: 3 }
+  const from: Position = isWhitePush
+    ? { x: epPos.x, y: 6 }
+    : { x: epPos.x, y: 1 }
+  const piece = board[to.y][to.x].piece
+  if (!isPawn(piece)) return []
+
+  return [
+    {
+      board,
+      from,
+      to,
+      capture: null,
+      type: 'valid',
+      steps: { x: 0, y: isWhitePush ? -2 : 2 },
+      piece,
+    },
+  ]
+}
+
 function castlingRights(board: Board): string {
   let rights = ''
   const wk = board[7][4].piece
@@ -83,4 +216,55 @@ function enPassantTarget(history: HistoryItem[]): string {
   }
   const y = (last.from.y + last.to.y) / 2
   return positionToSquare({ x: last.to.x, y })
+}
+
+export function readFenFromUrl(search = window.location.search): string | null {
+  const fen = new URLSearchParams(search).get('fen')
+  if (!fen?.trim()) return null
+  return fen.trim()
+}
+
+export function readGameIdFromUrl(
+  search = window.location.search,
+): string | null {
+  const id = new URLSearchParams(search).get('gameId')
+  if (!id?.trim()) return null
+  return id.trim()
+}
+
+export type UrlGameState = {
+  fen: string
+  gameId: string
+  idx: number
+}
+
+function toLocation(fen: string, gameId: string): string {
+  const url = new URL(window.location.href)
+  if (fen === START_FEN) url.searchParams.delete('fen')
+  else url.searchParams.set('fen', fen)
+  if (gameId) url.searchParams.set('gameId', gameId)
+  else url.searchParams.delete('gameId')
+  return `${url.pathname}${url.search}${url.hash}`
+}
+
+export function replaceGameInUrl(fen: string, gameId: string, idx = 0) {
+  const next = toLocation(fen, gameId)
+  window.history.replaceState(
+    { fen, gameId, idx } satisfies UrlGameState,
+    '',
+    next,
+  )
+}
+
+/** Push a new history entry for this position. Returns false if URL unchanged. */
+export function pushGameToUrl(
+  fen: string,
+  gameId: string,
+  idx: number,
+): boolean {
+  const next = toLocation(fen, gameId)
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  if (next === current) return false
+  window.history.pushState({ fen, gameId, idx } satisfies UrlGameState, '', next)
+  return true
 }

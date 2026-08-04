@@ -7,7 +7,9 @@ import {
   checkIfSelectedPieceCanMoveHere,
   createId,
   detectGameOver,
+  findKingPosition,
   getTile,
+  isKingInCheck,
   movesForPiece,
   oppositeColor,
   shouldPromotePawn,
@@ -69,6 +71,13 @@ export const BoardComponent: FC<{
   const setMovingTo = useGameState((s) => s.setMovingTo)
   const history = useGameState((s) => s.history)
   const addHistory = useGameState((s) => s.addHistory)
+
+  const lastOpponentMove = (() => {
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].piece.color !== playerColor) return history[i]
+    }
+    return null
+  })()
 
   const [redLightPosition, setRedLightPosition] = useState<Position>({
     x: 0,
@@ -189,11 +198,17 @@ export const BoardComponent: FC<{
     intensity: selected ? 0.35 : 0,
   })
 
+  const kingInCheck = isKingInCheck(board, turn)
+  const checkedKingPos = kingInCheck ? findKingPosition(board, turn) : null
+
   return (
     <group position={[-3.5, -0.5, -3.5]}>
       <OrbitControls
+        target={[0, 0, 0]}
         maxDistance={25}
         minDistance={7}
+        maxPolarAngle={Math.PI / 2.15}
+        minPolarAngle={Math.PI / 6}
         enableZoom
         enablePan={false}
       />
@@ -232,6 +247,11 @@ export const BoardComponent: FC<{
           const isTip =
             checkIfPositionsMatch(tile.position, tipFrom) ||
             checkIfPositionsMatch(tile.position, tipTo)
+          const isCheck = checkIfPositionsMatch(tile.position, checkedKingPos)
+          const isLastMove =
+            !!lastOpponentMove &&
+            (checkIfPositionsMatch(tile.position, lastOpponentMove.from) ||
+              checkIfPositionsMatch(tile.position, lastOpponentMove.to))
 
           const handleClick = (e: ThreeMouseEvent) => {
             if (movingTo) return
@@ -271,7 +291,9 @@ export const BoardComponent: FC<{
               isBeingCastled ? null : finishMovingPiece(movingTo?.tile ?? null),
           }
 
-          const pieceId = tile.piece?.getId() ?? `empty-${j}-${i}`
+          const pieceId = tile.piece
+            ? `${tile.piece.type}-${tile.piece.color}-${tile.piece.id}-${j}-${i}`
+            : `empty-${j}-${i}`
 
           return (
             <group key={`${j}-${i}`}>
@@ -281,6 +303,8 @@ export const BoardComponent: FC<{
                 onClick={handleClick}
                 canMoveHere={canMoveHere?.newPosition ?? null}
                 isTip={isTip}
+                isCheck={isCheck}
+                isLastMove={isLastMove}
               />
               <MeshWrapper key={pieceId} {...props}>
                 {tile.piece?.type === `pawn` && <PawnModel />}

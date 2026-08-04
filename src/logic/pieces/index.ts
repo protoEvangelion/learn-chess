@@ -65,13 +65,16 @@ export type PieceArgs = {
 export type PieceFactory = PieceArgs & { position: Position }
 
 export const getBasePiece = (args: PieceFactory): Piece => {
-  return {
+  const piece: Piece = {
     color: args.color,
     id: args.id,
     type: args.type,
-    getId: () => createId(args),
     position: args.position,
+    getId() {
+      return createId(this)
+    },
   }
+  return piece
 }
 
 export const createPiece = (
@@ -175,24 +178,38 @@ export const detectStalemate = (
   return `stalemate`
 }
 
+export const isKingInCheck = (board: Board, color: Color): boolean => {
+  for (const tile of board.flat()) {
+    if (tile.piece?.color !== oppositeColor(color)) continue
+    const moves = movesForPiece({
+      piece: tile.piece,
+      board,
+      propagateDetectCheck: false,
+    })
+    if (moves.find((move) => move.type === `captureKing`)) {
+      return true
+    }
+  }
+  return false
+}
+
+export const findKingPosition = (
+  board: Board,
+  color: Color,
+): Position | null => {
+  for (const tile of board.flat()) {
+    if (tile.piece?.type === `king` && tile.piece.color === color) {
+      return tile.position
+    }
+  }
+  return null
+}
+
 export const detectCheckmate = (
   board: Board,
   turn: Color,
 ): GameOverType | null => {
-  for (const tile of board.flat()) {
-    if (tile.piece?.color !== turn) {
-      const moves = movesForPiece({
-        piece: tile.piece,
-        board,
-        propagateDetectCheck: false,
-      })
-      if (moves.find((move) => move.type === `captureKing`)) {
-        return `checkmate`
-      }
-    }
-  }
-
-  return null
+  return isKingInCheck(board, turn) ? `checkmate` : null
 }
 
 export const detectGameOver = (
