@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" width="160" height="100">
+  <rect width="160" height="100" fill="#0c1412"/>
+  <!-- keycap pawn -->
+  <rect x="28" y="48" width="28" height="28" rx="4" fill="#e8e0d4" stroke="#bbb" stroke-width="1"/>
+  <text x="42" y="68" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" font-weight="700" fill="#333">ESC</text>
+  <!-- floppy -->
+  <rect x="68" y="30" width="26" height="46" rx="2" fill="#ddd" stroke="#999"/>
+  <rect x="72" y="36" width="18" height="12" fill="#2a6"/>
+  <rect x="78" y="58" width="6" height="10" fill="#888"/>
+  <!-- CRT king -->
+  <rect x="108" y="58" width="32" height="10" rx="2" fill="#cfcfcf"/>
+  <rect x="112" y="22" width="24" height="38" rx="2" fill="#eaeaea" stroke="#aaa"/>
+  <rect x="116" y="28" width="16" height="20" fill="#1a3"/>
+  <text x="124" y="42" text-anchor="middle" font-family="ui-monospace,monospace" font-size="5" fill="#8f8">CRT</text>
+</svg>

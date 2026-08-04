@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
-import { Environment } from '@react-three/drei'
+import { Canvas, useThree } from '@react-three/fiber'
+import { Environment, Stats } from '@react-three/drei'
 import { createBoard } from '@logic/board'
 import type { Board } from '@logic/board'
 import type { Color, Move, Piece } from '@logic/pieces'
 import { getTile, movesForPiece } from '@logic/pieces'
 import { BoardComponent, type GameOver } from '@/components/Board'
-import { Sidebar } from '@/components/Sidebar'
+import { CoachDialog, CoachIconButton } from '@/components/CoachDialog'
+import { SettingsDrawer } from '@/components/SettingsDrawer'
+import { PixelButton } from '@/components/ui/PixelButton'
 import { Border } from '@models/Border'
+import { BoardSurface, preloadBoard } from '@models/BoardSurface'
+import { RoomScene, preloadRoom } from '@models/RoomScene'
+import { preloadPieceSet } from '@models/PieceModel'
 import { useGameState } from '@/state/game'
 import {
   boardToFen,
@@ -27,6 +32,19 @@ import {
 } from '@/lib/stockfishOpponent'
 import { EndGameOverlay, outcomeFromResult } from '@/EndGameOverlay'
 import { parseCoachTips, type CoachTips } from '@/lib/coachTips'
+import {
+  getBoardTheme,
+  getPieceSet,
+  getRoomTheme,
+  loadBoardId,
+  loadMuted,
+  loadPieceSetId,
+  loadRoomId,
+  loadShowBestMove,
+  loadVolume,
+} from '@/lib/themes'
+import { unlockSfx } from '@/lib/sfx'
+import { formatViewForThemes, getLiveView } from '@/lib/viewDebug'
 import './App.css'
 
 const STRENGTH_KEY = 'chess-3d:strength'
@@ -40,6 +58,30 @@ function loadStrength(): StrengthLevel {
 
 function loadPlayerColor(): Color {
   return localStorage.getItem(COLOR_KEY) === 'black' ? 'black' : 'white'
+}
+
+/** Push camera to the active room's preset when the room theme changes. */
+function RoomCamera({
+  position,
+  fov,
+  target,
+}: {
+  position: [number, number, number]
+  fov: number
+  target: [number, number, number]
+}) {
+  const { camera } = useThree()
+  useEffect(() => {
+    camera.position.set(...position)
+    if ('fov' in camera) {
+      ;(camera as typeof camera & { fov: number }).fov = fov
+      ;(
+        camera as typeof camera & { updateProjectionMatrix: () => void }
+      ).updateProjectionMatrix()
+    }
+    camera.lookAt(...target)
+  }, [camera, position, fov, target])
+  return null
 }
 
 async function mintGameId(signal?: AbortSignal): Promise<string> {
@@ -88,6 +130,14 @@ export default function App() {
   const [opponentThinking, setOpponentThinking] = useState(false)
   const [pendingEngineMove, setPendingEngineMove] = useState<Move | null>(null)
   const [gameId, setGameId] = useState<string | null>(() => readGameIdFromUrl())
+  const [boardId, setBoardId] = useState(loadBoardId)
+  const [pieceSetId, setPieceSetId] = useState(loadPieceSetId)
+  const [roomId, setRoomId] = useState(loadRoomId)
+  const [muted, setMutedState] = useState(loadMuted)
+  const [volume, setVolumeState] = useState(loadVolume)
+  const [showBestMove, setShowBestMove] = useState(loadShowBestMove)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [coachOpen, setCoachOpen] = useState(false)
   const skipEngineOnce = useRef(false)
   const coachAbortRef = useRef<AbortController | null>(null)
   const syncingFromUrlRef = useRef(false)
@@ -96,6 +146,7 @@ export default function App() {
   const gameIdRef = useRef<string | null>(gameId)
   gameIdRef.current = gameId
   const [urlHistoryIndex, setUrlHistoryIndex] = useState(0)
+  const fpsParentRef = useRef<HTMLDivElement>(null)
 
   const turn = useGameState((s) => s.turn)
   const resetTurn = useGameState((s) => s.resetTurn)
@@ -191,17 +242,20 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState)
   }, [applyFen])
 
-  const tipFrom = tip3Open && best ? squareToPosition(best.from) : null
-  const tipTo = tip3Open && best ? squareToPosition(best.to) : null
+  const showBestArrow = showBestMove || tip3Open
+  const tipFrom = showBestArrow && best ? squareToPosition(best.from) : null
+  const tipTo = showBestArrow && best ? squareToPosition(best.to) : null
 
   const endOutcome = outcomeFromResult(gameOver, playerColor)
+  const needAnalysis = showBestMove || coachOpen
 
-  // Analysis for coach tips
+  // Stockfish best-move analysis (only when arrow toggle or coach is open)
   useEffect(() => {
     if (gameOver) {
       setBest(null)
       return
     }
+    if (!needAnalysis) return
     const controller = new AbortController()
     let cancelled = false
     const timer = window.setTimeout(async () => {
@@ -230,7 +284,7 @@ export default function App() {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [fen, gameOver])
+  }, [fen, gameOver, needAnalysis])
 
   useEffect(() => {
     coachAbortRef.current?.abort()
@@ -299,7 +353,7 @@ export default function App() {
     pendingEngineMove,
   ])
 
-  async function askCoach() {
+  const askCoach = useCallback(async () => {
     if (!best || coachStatus === 'loading') return
     coachAbortRef.current?.abort()
     const controller = new AbortController()
@@ -387,7 +441,14 @@ export default function App() {
       setCoachStatus('error')
       setCoachError(err instanceof Error ? err.message : 'Ask coach failed')
     }
-  }
+  }, [best, coachStatus, fen, gameId, history.length, turn])
+
+  // Auto-start coach tips when the panel opens and analysis is ready
+  useEffect(() => {
+    if (!coachOpen || gameOver) return
+    if (!best || coachTips || coachStatus !== 'idle') return
+    void askCoach()
+  }, [askCoach, best, coachOpen, coachStatus, coachTips, gameOver])
 
   async function reset() {
     let id = gameId
@@ -443,7 +504,8 @@ export default function App() {
 
   function onUndo() {
     if (urlHistoryIndex <= 0 || opponentThinking || movingTo) return
-    window.history.back()
+    // Full turn = your ply + opponent reply (two URL entries when available)
+    window.history.go(urlHistoryIndex >= 2 ? -2 : -1)
   }
 
   const onEngineMoveConsumed = useCallback(() => {
@@ -456,8 +518,33 @@ export default function App() {
     return `${turn} to move`
   }, [gameOver, opponentThinking, turn])
 
+  const boardTheme = useMemo(() => getBoardTheme(boardId), [boardId])
+  const pieceSet = useMemo(() => getPieceSet(pieceSetId), [pieceSetId])
+  const roomTheme = useMemo(() => getRoomTheme(roomId), [roomId])
+
+  useEffect(() => {
+    preloadBoard(boardTheme)
+    preloadPieceSet(pieceSet)
+    preloadRoom(roomTheme)
+  }, [boardTheme, pieceSet, roomTheme])
+
+  const dumpView = useCallback(() => {
+    const snap = getLiveView()
+    if (!snap) {
+      console.warn('No view snapshot yet — orbit the board once.')
+      return
+    }
+    const text = formatViewForThemes(snap)
+    console.log(text)
+    console.log('JSON', snap)
+    void navigator.clipboard?.writeText(text).then(
+      () => console.log('Copied themes snippet to clipboard'),
+      () => undefined,
+    )
+  }, [])
+
   return (
-    <div className="app">
+    <div className="app" onPointerDown={() => unlockSfx()}>
       {endOutcome && !endgameDismissed && (
         <EndGameOverlay
           outcome={endOutcome}
@@ -466,65 +553,126 @@ export default function App() {
         />
       )}
 
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        boardId={boardId}
+        pieceSetId={pieceSetId}
+        roomId={roomId}
+        muted={muted}
+        volume={volume}
+        strength={strength}
+        playerColor={playerColor}
+        fen={fenDraft}
+        showBestMove={showBestMove}
+        onBoardChange={setBoardId}
+        onPieceSetChange={setPieceSetId}
+        onRoomChange={setRoomId}
+        onMutedChange={setMutedState}
+        onVolumeChange={setVolumeState}
+        onStrengthChange={onStrengthChange}
+        onColorChange={onColorChange}
+        onFenChange={onFenChange}
+        onFenCommit={onFenCommit}
+        onDumpView={dumpView}
+        onShowBestMoveChange={setShowBestMove}
+      />
+
+      <CoachDialog
+        open={coachOpen}
+        onClose={() => setCoachOpen(false)}
+        fen={fen}
+        best={best}
+        analysisStatus={analysisStatus}
+        analysisError={analysisError}
+        coachTips={coachTips}
+        coachStatus={coachStatus}
+        coachError={coachError}
+        tip3Open={tip3Open}
+        onTip3OpenChange={setTip3Open}
+      />
+
       <div className="layout">
         <section className="stage">
           <header className="hud">
-            <div>
+            <div className="hud-left">
               <p className="eyebrow">3D Chess</p>
-              <p className="status">{status}</p>
+              <div className="hud-status-row">
+                <p className="status">{status}</p>
+                <div className="fps-slot" ref={fpsParentRef} />
+              </div>
             </div>
-            <button type="button" onClick={reset}>
-              New game
-            </button>
+            <div className="hud-actions">
+              <CoachIconButton
+                active={coachOpen}
+                onClick={() => {
+                  if (coachStatus === 'error') {
+                    setCoachStatus('idle')
+                    setCoachError(null)
+                  }
+                  setCoachOpen(true)
+                }}
+              />
+              <PixelButton onClick={() => setSettingsOpen(true)}>
+                Settings
+              </PixelButton>
+              <PixelButton
+                ghost
+                onClick={onUndo}
+                disabled={urlHistoryIndex <= 0 || opponentThinking}
+              >
+                Undo
+              </PixelButton>
+              <PixelButton onClick={reset}>New game</PixelButton>
+            </div>
           </header>
 
-          <Canvas shadows camera={{ position: [0, 12, 9], fov: 40 }}>
-            <color attach="background" args={['#0b0b0b']} />
-            <Environment files="/dawn.hdr" />
-            <Border />
-            <BoardComponent
-              selected={selected}
-              setSelected={setSelected}
-              board={board}
-              setBoard={setBoard}
-              moves={moves}
-              setMoves={setMoves}
-              setGameOver={setGameOver}
-              playerColor={playerColor}
-              tipFrom={tipFrom}
-              tipTo={tipTo}
-              pendingEngineMove={pendingEngineMove}
-              onEngineMoveConsumed={onEngineMoveConsumed}
+          <Canvas
+            shadows
+            dpr={[1, 1.5]}
+            gl={{ antialias: true, powerPreference: 'high-performance' }}
+            camera={{
+              position: roomTheme.cameraPosition ?? [0, 12, 9],
+              fov: roomTheme.cameraFov ?? 40,
+            }}
+          >
+            <Stats
+              className="fps-meter"
+              parent={fpsParentRef as React.RefObject<HTMLElement>}
             />
+            <RoomCamera
+              position={roomTheme.cameraPosition ?? [0, 12, 9]}
+              fov={roomTheme.cameraFov ?? 40}
+              target={roomTheme.boardOffset ?? [0, 0, 0]}
+            />
+            <color attach="background" args={[roomTheme.background]} />
+            <Environment files={roomTheme.hdr} environmentIntensity={0.6} />
+            <RoomScene theme={roomTheme} />
+            <group position={roomTheme.boardOffset ?? [0, 0, 0]}>
+              <BoardSurface theme={boardTheme} />
+              {boardTheme.showProceduralBorder && <Border />}
+              <BoardComponent
+                selected={selected}
+                setSelected={setSelected}
+                board={board}
+                setBoard={setBoard}
+                moves={moves}
+                setMoves={setMoves}
+                setGameOver={setGameOver}
+                playerColor={playerColor}
+                tipFrom={tipFrom}
+                tipTo={tipTo}
+                pendingEngineMove={pendingEngineMove}
+                onEngineMoveConsumed={onEngineMoveConsumed}
+                boardTheme={boardTheme}
+                pieceSet={pieceSet}
+                roomTheme={roomTheme}
+                boardId={boardId}
+                pieceSetId={pieceSetId}
+              />
+            </group>
           </Canvas>
         </section>
-
-        <Sidebar
-          fen={fenDraft}
-          turn={turn}
-          playerColor={playerColor}
-          strength={strength}
-          best={best}
-          analysisStatus={analysisStatus}
-          analysisError={analysisError}
-          coachTips={coachTips}
-          coachStatus={coachStatus}
-          coachError={coachError}
-          tip3Open={tip3Open}
-          opponentThinking={opponentThinking}
-          gameOverLabel={
-            gameOver ? `${gameOver.winner} wins by ${gameOver.type}` : null
-          }
-          canUndo={urlHistoryIndex > 0}
-          onStrengthChange={onStrengthChange}
-          onColorChange={onColorChange}
-          onAskCoach={askCoach}
-          onTip3OpenChange={setTip3Open}
-          onUndo={onUndo}
-          onNewGame={reset}
-          onFenChange={onFenChange}
-          onFenCommit={onFenCommit}
-        />
       </div>
     </div>
   )

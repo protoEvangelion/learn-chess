@@ -15,12 +15,18 @@
     "@react-three/fiber": "^9.7.0",
     "@types/three": "^0.185.3",
     "chess.js": "^1.4.0",
+    "geist": "^1.7.2",
+    "howler": "^2.2.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "three": "^0.185.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.4.2",
+    "@gltf-transform/extensions": "^4.4.2",
+    "@gltf-transform/functions": "^4.4.2",
+    "@types/howler": "^2.2.13",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

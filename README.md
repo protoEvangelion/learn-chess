@@ -39,18 +39,41 @@ Each game gets a `gameId` in the URL so the coach resumes the same CLI chat and 
 
 ## Features
 
-- 3D board with move animations and coordinate labels
+- 3D board with move animations, capture bursts, and SFX
+- Board / piece / room themes (Settings) with curated offline assets
 - Play as White or Black vs Stockfish (strength 1–8)
 - Eval bar, material imbalance, check highlight, last-move glow
 - Progressive coach tips (nudge → closer look → full move) tied to Stockfish
 - Position in the URL (`fen` + `gameId`); **Undo** is browser back
+
+## Assets
+
+Curated themes live under `public/assets/` (boards, pieces, rooms) and `public/sfx/`. Regenerate generated GLBs/SFX with:
+
+```bash
+node scripts/generate-assets.mjs
+```
+
+| Theme | Notes |
+|-------|--------|
+| Classic board / Metal pieces | From [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) |
+| Walnut board | Project-generated GLB (CC0) |
+| Retro PC board + pieces | [Sketchfab](https://sketchfab.com/3d-models/retropc-chess-31e657b251b546e69e6ae312fc0bf66a) (split) |
+| Glass board + pieces | [Al / chess-board](https://sketchfab.com/3d-models/chess-board-a0d61768bc504082901728ec9603fa0d) CC-BY (split) |
+| Dining room | [Modern dining room](https://sketchfab.com/3d-models/modern-dining-room-df3f3c9f6233447eb8b7ee129f3bace5) |
+| Dawn HDR | Existing IBL preset |
+
+When adding Sketchfab models: download a redistributable license (CC-BY/CC0), normalize origins (see `scripts/split-*.mjs`), drop into `public/assets/...`, and register in `src/lib/themes.ts`.
 
 ## Credits
 
 - **3D chessboard, pieces, and core board logic** adapted from [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) by [joshwrn](https://github.com/joshwrn)
 - **Stockfish** via the lite WASM build in `public/engines/`
 - **chess.js** for FEN helpers and SAN labeling for the coach
+- **Retro PC chess** — [Sketchfab](https://sketchfab.com/3d-models/retropc-chess-31e657b251b546e69e6ae312fc0bf66a)
+- **Modern dining room** — [Sketchfab](https://sketchfab.com/3d-models/modern-dining-room-df3f3c9f6233447eb8b7ee129f3bace5)
+- **Glass chess board + pieces** — [Al (@lightningocelot)](https://sketchfab.com/3d-models/chess-board-a0d61768bc504082901728ec9603fa0d) (CC-BY)
 
 ## License
 
-See upstream [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) for original board asset licensing; this project’s app code is provided as-is for learning use.
+See upstream [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) for original board asset licensing; this project’s app code is provided as-is for learning use. Project-generated GLBs/SFX are CC0. Sketchfab assets retain their listed licenses (credit required for CC-BY).

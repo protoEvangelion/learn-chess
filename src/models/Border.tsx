@@ -85,15 +85,12 @@ export const Border: FC = () => (
       position={[0, -0.35, 0]}
     >
       <boxGeometry args={[9, 0.5, 9]} />
-      <meshPhysicalMaterial
-        reflectivity={3}
+      <meshStandardMaterial
         color="#c6c6c6"
         emissive="#323232"
-        metalness={0.8}
-        roughness={0.7}
-        envMapIntensity={0.15}
-        clearcoat={1}
-        clearcoatRoughness={0.1}
+        metalness={0.55}
+        roughness={0.65}
+        envMapIntensity={0.2}
       />
     </mesh>
     <BoardCoordinates />

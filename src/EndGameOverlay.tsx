@@ -1,4 +1,6 @@
 import type { CSSProperties } from 'react'
+import { PixelButton } from '@/components/ui/PixelButton'
+import { PixelHeading } from '@/components/ui/pixel-heading-character'
 
 type Outcome = 'win' | 'loss' | 'draw' | 'over'
 
@@ -48,14 +50,21 @@ export function EndGameOverlay({ outcome, onNewGame, onDismiss }: Props) {
         <p className="endgame-eyebrow">
           {outcome === 'win' || outcome === 'loss' ? 'Checkmate' : 'Finished'}
         </p>
-        <h2 className="endgame-title">{MESSAGES[outcome]}</h2>
+        <PixelHeading
+          as="h2"
+          mode="wave"
+          autoPlay
+          cycleInterval={110}
+          staggerDelay={40}
+          className="endgame-title"
+        >
+          {MESSAGES[outcome]}
+        </PixelHeading>
         <div className="endgame-actions">
-          <button type="button" onClick={onNewGame}>
-            New game
-          </button>
-          <button type="button" className="ghost" onClick={onDismiss}>
+          <PixelButton onClick={onNewGame}>New game</PixelButton>
+          <PixelButton ghost onClick={onDismiss}>
             Close
-          </button>
+          </PixelButton>
         </div>
       </div>
     </div>

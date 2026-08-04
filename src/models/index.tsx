@@ -8,23 +8,42 @@ export const PieceMaterial: FC<{
   color: string
   isSelected: boolean
   pieceIsBeingReplaced: boolean
-}> = ({ color, isSelected, pieceIsBeingReplaced }) => (
-  <meshPhysicalMaterial
-    reflectivity={4}
-    color={color === 'white' ? '#d9d9d9' : '#7c7c7c'}
-    emissive={isSelected ? '#733535' : '#000000'}
-    metalness={1}
-    roughness={0.5}
-    attach="material"
-    envMapIntensity={0.2}
-    opacity={pieceIsBeingReplaced ? 0 : 1}
-    transparent
-  />
-)
+  variant?: 'metal' | 'wood'
+}> = ({ color, isSelected, pieceIsBeingReplaced, variant = 'metal' }) => {
+  const isWhite = color === 'white'
+  const transparent = pieceIsBeingReplaced
+  if (variant === 'wood') {
+    return (
+      <meshStandardMaterial
+        color={isWhite ? '#f0e6d4' : '#3a2a1c'}
+        emissive={isSelected ? '#733535' : '#000000'}
+        roughness={0.55}
+        metalness={0.08}
+        attach="material"
+        opacity={pieceIsBeingReplaced ? 0 : 1}
+        transparent={transparent}
+      />
+    )
+  }
+  return (
+    <meshStandardMaterial
+      color={isWhite ? '#d9d9d9' : '#7c7c7c'}
+      emissive={isSelected ? '#733535' : '#000000'}
+      metalness={0.85}
+      roughness={0.45}
+      attach="material"
+      envMapIntensity={0.35}
+      opacity={pieceIsBeingReplaced ? 0 : 1}
+      transparent={transparent}
+    />
+  )
+}
 
 export type ModelProps = {
   position?: [number, number, number]
   scale?: [number, number, number]
+  meshScale?: number
+  materialVariant?: 'metal' | 'wood' | 'textured'
   color: string
   isSelected: boolean
   canMoveHere: Position | null
@@ -36,11 +55,8 @@ export type ModelProps = {
   children?: ReactNode
 }
 
-/** Parent group is scaled 0.15; 1 board square = 1 world unit → local offset ≈ 1/0.15 */
-const TILE = 1 / 0.15
-const dist = (n: number) => n * TILE
-const LIFT = 1.35
-const SELECT_LIFT = 1.25
+const SELECT_LIFT = 0.35
+const LIFT = 0.55
 
 function easeInOutCubic(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
@@ -60,12 +76,7 @@ type MoveAnim = {
 type CaptureAnim = {
   start: number
   duration: number
-  fromX: number
-  fromY: number
-  fromZ: number
-  toX: number
-  toY: number
-  toZ: number
+  fromScale: number
 }
 
 export const MeshWrapper: FC<ModelProps> = ({
@@ -78,7 +89,9 @@ export const MeshWrapper: FC<ModelProps> = ({
   color,
   onClick,
   position,
-  scale,
+  scale = [0.15, 0.15, 0.15],
+  meshScale = 0.03,
+  materialVariant = 'metal',
 }) => {
   const pieceRef = useRef<Group>(null)
   const finishRef = useRef(finishMovingPiece)
@@ -94,27 +107,38 @@ export const MeshWrapper: FC<ModelProps> = ({
   const moveAnim = useRef<MoveAnim | null>(null)
   const captureAnim = useRef<CaptureAnim | null>(null)
   const wasReplacing = useRef(false)
+  const settled = useRef(false)
+
+  const tile = 1 / scale[0]
+  const dist = (n: number) => n * tile
 
   useFrame((_, delta) => {
     const mesh = pieceRef.current
     if (!mesh) return
 
-    // Capture fly-away (once when capture starts)
+    const busy =
+      !!movingToRef.current ||
+      replacingRef.current ||
+      !!captureAnim.current ||
+      !!moveAnim.current ||
+      selectedRef.current ||
+      !settled.current
+
+    if (!busy) return
+
     if (replacingRef.current && !wasReplacing.current) {
       wasReplacing.current = true
+      settled.current = false
       captureAnim.current = {
         start: performance.now(),
-        duration: 520,
-        fromX: mesh.position.x,
-        fromY: mesh.position.y,
-        fromZ: mesh.position.z,
-        toX: (Math.random() > 0.5 ? 1 : -1) * (4 + Math.random() * 4),
-        toY: 16 + Math.random() * 4,
-        toZ: (Math.random() > 0.5 ? 1 : -1) * (6 + Math.random() * 6),
+        duration: 280,
+        fromScale: 1,
       }
-    } else if (!replacingRef.current) {
+    } else if (!replacingRef.current && wasReplacing.current) {
       wasReplacing.current = false
       captureAnim.current = null
+      mesh.scale.set(1, 1, 1)
+      mesh.rotation.set(0, 0, 0)
     }
 
     const capture = captureAnim.current
@@ -124,9 +148,11 @@ export const MeshWrapper: FC<ModelProps> = ({
         (performance.now() - capture.start) / capture.duration,
       )
       const e = easeInOutCubic(t)
-      mesh.position.x = capture.fromX + (capture.toX - capture.fromX) * e
-      mesh.position.y = capture.fromY + (capture.toY - capture.fromY) * e
-      mesh.position.z = capture.fromZ + (capture.toZ - capture.fromZ) * e
+      const s = capture.fromScale * (1 - e)
+      mesh.scale.setScalar(Math.max(0.01, s))
+      mesh.position.y = e * 0.8
+      mesh.rotation.y = e * 4
+      mesh.rotation.x = e * 1.2
       return
     }
 
@@ -134,6 +160,7 @@ export const MeshWrapper: FC<ModelProps> = ({
     if (!target) {
       moveAnim.current = null
     } else if (!moveAnim.current) {
+      settled.current = false
       const travel = Math.hypot(target.x, target.y)
       moveAnim.current = {
         start: performance.now(),
@@ -154,7 +181,7 @@ export const MeshWrapper: FC<ModelProps> = ({
       mesh.position.x = anim.fromX + (anim.toX - anim.fromX) * e
       mesh.position.z = anim.fromZ + (anim.toZ - anim.fromZ) * e
       mesh.position.y =
-        anim.fromY + (0 - anim.fromY) * e + Math.sin(Math.PI * e) * LIFT
+        anim.fromY + (0 - anim.fromY) * e + Math.sin(Math.PI * e) * LIFT * tile
 
       if (t >= 1) {
         anim.done = true
@@ -164,25 +191,51 @@ export const MeshWrapper: FC<ModelProps> = ({
       return
     }
 
-    // Idle / selected: damp toward rest or select lift
-    const targetY = selectedRef.current ? SELECT_LIFT : 0
+    const targetY = selectedRef.current ? SELECT_LIFT * tile : 0
     const k = 1 - Math.exp(-14 * delta)
     mesh.position.x += (0 - mesh.position.x) * k
     mesh.position.y += (targetY - mesh.position.y) * k
     mesh.position.z += (0 - mesh.position.z) * k
+
+    const dx = Math.abs(mesh.position.x)
+    const dy = Math.abs(mesh.position.y - targetY)
+    const dz = Math.abs(mesh.position.z)
+    if (dx + dy + dz < 0.001) {
+      mesh.position.set(0, targetY, 0)
+      settled.current = !selectedRef.current
+    } else {
+      settled.current = false
+    }
   })
 
   return (
-    <group position={position} scale={scale} onClick={onClick} dispose={null}>
+    <group
+      position={position}
+      scale={scale}
+      onClick={onClick}
+      dispose={null}
+      onPointerOver={(e) => {
+        e.stopPropagation()
+        document.body.style.cursor = 'pointer'
+      }}
+      onPointerOut={() => {
+        document.body.style.cursor = 'auto'
+      }}
+    >
       <group ref={pieceRef}>
-        <mesh scale={0.03} castShadow={!pieceIsBeingReplaced} receiveShadow>
-          {children}
-          <PieceMaterial
-            color={color}
-            pieceIsBeingReplaced={pieceIsBeingReplaced}
-            isSelected={isSelected}
-          />
-        </mesh>
+        {materialVariant === 'textured' ? (
+          <group visible={!pieceIsBeingReplaced}>{children}</group>
+        ) : (
+          <mesh scale={meshScale} castShadow={!pieceIsBeingReplaced}>
+            {children}
+            <PieceMaterial
+              color={color}
+              pieceIsBeingReplaced={pieceIsBeingReplaced}
+              isSelected={isSelected}
+              variant={materialVariant === 'wood' ? 'wood' : 'metal'}
+            />
+          </mesh>
+        )}
       </group>
     </group>
   )

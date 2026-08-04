@@ -2,6 +2,118 @@
   box-sizing: border-box;
 }
 
+@font-face {
+  font-family: 'Geist Pixel Square';
+  src: url('/fonts/GeistPixel-Square.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Pixel Grid';
+  src: url('/fonts/GeistPixel-Grid.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Pixel Circle';
+  src: url('/fonts/GeistPixel-Circle.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Pixel Triangle';
+  src: url('/fonts/GeistPixel-Triangle.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Pixel Line';
+  src: url('/fonts/GeistPixel-Line.woff2') format('woff2');
+  font-display: swap;
+}
+
+.font-pixel-square {
+  font-family: 'Geist Pixel Square', monospace;
+}
+.font-pixel-grid {
+  font-family: 'Geist Pixel Grid', monospace;
+}
+.font-pixel-circle {
+  font-family: 'Geist Pixel Circle', monospace;
+}
+.font-pixel-triangle {
+  font-family: 'Geist Pixel Triangle', monospace;
+}
+.font-pixel-line {
+  font-family: 'Geist Pixel Line', monospace;
+}
+
+.pixel-heading {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.pixel-heading-text {
+  cursor: inherit;
+  user-select: none;
+  margin: 0;
+  line-height: 1.05;
+  letter-spacing: 0.02em;
+}
+
+.pixel-heading-text:focus-visible {
+  outline: 2px solid #c9a06e;
+  outline-offset: 3px;
+}
+
+.pixel-heading-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #8a8074;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.pixel-heading-label.is-visible {
+  opacity: 1;
+}
+
+.pixel-btn {
+  pointer-events: auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.5rem 0.95rem;
+  background: #c9a06e;
+  color: #1a120c;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pixel-btn.ghost {
+  background: #1f1c19;
+  color: #ddd;
+  border: 1px solid #444;
+}
+
+.pixel-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pixel-btn-label {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.endgame-card .endgame-title.pixel-heading-text {
+  font-size: 3.1rem;
+  font-weight: 700;
+}
+
 html,
 body,
 #root {
@@ -22,7 +134,7 @@ body,
 
 .layout {
   display: grid;
-  grid-template-columns: 1fr minmax(280px, 360px);
+  grid-template-columns: 1fr;
   height: 100%;
 }
 
@@ -51,7 +163,11 @@ body,
 }
 
 .hud button,
-.sidebar button {
+.coach-dialog > .btn-row > button,
+.coach-dialog-header button,
+.settings-header button,
+.settings-section > .btn-row > button,
+.settings-full-btn {
   pointer-events: auto;
   border: 0;
   border-radius: 999px;
@@ -62,15 +178,253 @@ body,
   cursor: pointer;
 }
 
-.sidebar button.ghost,
 .hud button.ghost,
+.coach-dialog button.ghost,
+.settings-drawer button.ghost,
 .endgame-actions .ghost {
-  background: transparent;
+  background: #1f1c19;
   color: #ddd;
   border: 1px solid #444;
 }
 
-.sidebar button:disabled {
+.hud .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border-radius: 999px;
+  background: #1f1c19;
+  color: #e8e0d6;
+  border: 1px solid #444;
+}
+
+.hud .icon-btn.active,
+.hud .icon-btn:hover {
+  background: #c9a06e;
+  color: #1a120c;
+  border-color: #c9a06e;
+}
+
+.hud-actions {
+  display: flex;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+
+.hud-left {
+  pointer-events: none;
+}
+
+.hud-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.35rem;
+}
+
+.hud-status-row .status {
+  margin: 0;
+}
+
+.fps-slot {
+  position: relative;
+  width: 80px;
+  height: 48px;
+  flex: 0 0 auto;
+}
+
+/* stats.js defaults to fixed top-left — keep it in the HUD slot */
+.fps-meter {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: auto !important;
+  transform: none !important;
+  opacity: 0.92;
+  pointer-events: none;
+  scale: 0.8;
+  transform-origin: top left;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.settings-drawer {
+  width: min(100%, 380px);
+  height: 100%;
+  overflow: auto;
+  background: linear-gradient(180deg, #161412 0%, #0e0d0c 100%);
+  border-left: 1px solid #2e2924;
+  padding: 1.25rem 1.15rem 2rem;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.settings-section {
+  margin-bottom: 1.35rem;
+}
+
+.settings-section h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9a8f82;
+}
+
+.theme-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.theme-card {
+  flex: 0 0 auto;
+  width: 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.35rem;
+  border-radius: 10px;
+  border: 1px solid #2e2924;
+  background: #1a1714;
+  color: #ddd;
+  cursor: pointer;
+  pointer-events: auto;
+  font: inherit;
+}
+
+.theme-card.active {
+  border-color: #c9a06e;
+  box-shadow: 0 0 0 1px #c9a06e55;
+}
+
+.theme-swatch {
+  display: block;
+  width: 100%;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #111;
+}
+
+.theme-name {
+  font-size: 0.68rem;
+  text-align: center;
+  color: #cfc8bf;
+  line-height: 1.2;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  color: #ccc;
+  font-size: 0.92rem;
+}
+
+.settings-volume {
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.settings-credit {
+  margin: 1.5rem 0 0;
+  font-size: 0.75rem;
+  color: #6e655c;
+  line-height: 1.45;
+}
+
+.settings-credit a {
+  color: #b9a48a;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.settings-credit a:hover {
+  color: #dcc9ae;
+}
+
+.settings-fen {
+  width: 100%;
+  resize: vertical;
+  min-height: 4.5rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #2e2924;
+  background: #0e0d0c;
+  color: #ddd;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.settings-full-btn {
+  width: 100%;
+}
+
+.coach-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.coach-dialog {
+  width: min(100%, 380px);
+  height: 100%;
+  overflow: auto;
+  padding: 1.25rem 1.15rem 2rem;
+  border-radius: 0;
+  border: 0;
+  border-left: 1px solid #2e2924;
+  background: linear-gradient(180deg, #161412 0%, #0e0d0c 100%);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+}
+
+.coach-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.coach-dialog-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.hud button:disabled,
+.settings-drawer button:disabled,
+.coach-dialog button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -366,8 +720,8 @@ body,
 
 .material-row {
   display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 0.35rem;
   color: #999;
   font-size: 0.88rem;
   margin-bottom: 0.25rem;
@@ -375,11 +729,14 @@ body,
 
 .material-side {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.45rem;
+  min-width: 0;
 }
 
 .material-name {
+  flex: 0 0 3.25rem;
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -388,6 +745,8 @@ body,
 .material-pieces {
   color: #eee;
   font-size: 1rem;
+  line-height: 1.35;
+  word-break: break-all;
 }
 
 .material-score {
@@ -440,7 +799,7 @@ body,
 
 .endgame-title {
   margin: 0;
-  font-size: 2.2rem;
+  font-size: 3.1rem;
 }
 
 .endgame-win .endgame-title {
@@ -483,14 +842,8 @@ body,
 }
 
 @media (max-width: 900px) {
-  .layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(50vh, 1fr) auto;
-  }
-
-  .sidebar {
-    border-left: 0;
-    border-top: 1px solid #2a2a2a;
-    max-height: 45vh;
+  .hud-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }

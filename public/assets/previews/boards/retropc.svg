@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" width="160" height="100">
+  <defs>
+    <pattern id="r" width="18" height="18" patternUnits="userSpaceOnUse">
+      <rect width="18" height="18" fill="#3d6b5c"/>
+      <rect width="9" height="9" fill="#c4a574"/>
+      <rect x="9" y="9" width="9" height="9" fill="#c4a574"/>
+    </pattern>
+  </defs>
+  <rect width="160" height="100" fill="#0e1614"/>
+  <rect x="24" y="10" width="112" height="80" fill="#1a2e28" rx="3"/>
+  <rect x="32" y="16" width="96" height="68" fill="url(#r)"/>
+  <text x="80" y="92" text-anchor="middle" font-family="ui-monospace,monospace" font-size="8" fill="#7a9e90">a b c d</text>
+</svg>

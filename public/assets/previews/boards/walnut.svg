@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" width="160" height="100">
+  <defs>
+    <pattern id="w" width="20" height="20" patternUnits="userSpaceOnUse">
+      <rect width="20" height="20" fill="#d4b896"/>
+      <rect width="10" height="10" fill="#6b4423"/>
+      <rect x="10" y="10" width="10" height="10" fill="#6b4423"/>
+    </pattern>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5c3d2e"/>
+      <stop offset="100%" stop-color="#3a2414"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="100" fill="#2a1c14"/>
+  <rect x="22" y="8" width="116" height="84" fill="url(#rim)" rx="4"/>
+  <rect x="34" y="18" width="92" height="64" fill="url(#w)" rx="1"/>
+</svg>

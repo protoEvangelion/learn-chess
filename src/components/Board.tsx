@@ -1,5 +1,5 @@
 import type { Dispatch, FC, SetStateAction } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Board, Position, Tile } from '@logic/board'
 import { checkIfPositionsMatch, copyBoard } from '@logic/board'
 import type { Color, GameOverType, Move, Piece } from '@logic/pieces'
@@ -17,18 +17,18 @@ import {
 import { isPawn } from '@logic/pieces/pawn'
 import { isKing } from '@logic/pieces/king'
 import { isRook } from '@logic/pieces/rook'
-import { BishopComponent } from '@models/Bishop'
-import type { ModelProps } from '@models/index'
 import { MeshWrapper } from '@models/index'
-import { KingComponent } from '@models/King'
-import { KnightComponent } from '@models/Knight'
-import { PawnModel } from '@models/Pawn'
-import { QueenComponent } from '@models/Queen'
-import { RookComponent } from '@models/Rook'
+import { PieceModel } from '@models/PieceModel'
 import { TileComponent } from '@models/Tile'
+import { CaptureBurst } from '@models/CaptureBurst'
 import { animated, useSpring } from '@react-spring/three'
 import { OrbitControls } from '@react-three/drei'
+import { useFrame, useThree } from '@react-three/fiber'
+import * as THREE from 'three'
 import { type MovingTo, useGameState } from '@/state/game'
+import type { BoardTheme, PieceSetTheme, RoomTheme } from '@/lib/themes'
+import { playSfx } from '@/lib/sfx'
+import { setLiveView } from '@/lib/viewDebug'
 
 type ThreeMouseEvent = { stopPropagation: () => void }
 
@@ -50,6 +50,11 @@ export const BoardComponent: FC<{
   tipTo?: Position | null
   pendingEngineMove?: Move | null
   onEngineMoveConsumed?: () => void
+  boardTheme: BoardTheme
+  pieceSet: PieceSetTheme
+  roomTheme: RoomTheme
+  boardId?: string
+  pieceSetId?: string
 }> = ({
   selected,
   setSelected,
@@ -63,6 +68,11 @@ export const BoardComponent: FC<{
   tipTo = null,
   pendingEngineMove = null,
   onEngineMoveConsumed,
+  boardTheme,
+  pieceSet,
+  roomTheme,
+  boardId = boardTheme.id,
+  pieceSetId = pieceSet.id,
 }) => {
   const [lastSelected, setLastSelected] = useState<Tile | null>(null)
   const turn = useGameState((s) => s.turn)
@@ -71,6 +81,7 @@ export const BoardComponent: FC<{
   const setMovingTo = useGameState((s) => s.setMovingTo)
   const history = useGameState((s) => s.history)
   const addHistory = useGameState((s) => s.addHistory)
+  const sfxPlayedForMove = useRef<string | null>(null)
 
   const lastOpponentMove = (() => {
     for (let i = history.length - 1; i >= 0; i--) {
@@ -90,9 +101,17 @@ export const BoardComponent: FC<{
     if (!tile?.piece?.type && !selected) return
     if (!tile?.piece) {
       setSelected(null)
+      setMoves([])
       return
     }
     if (tile.piece.color !== playerColor) return
+    // Second click on the same piece cancels selection / move preview
+    if (selected && selected.getId() === tile.piece.getId()) {
+      setSelected(null)
+      setMoves([])
+      setMovingTo(null)
+      return
+    }
     setMovingTo(null)
     setMoves(
       movesForPiece({ piece: tile.piece, board, propagateDetectCheck: true }),
@@ -112,6 +131,22 @@ export const BoardComponent: FC<{
     setMovingTo({ move: pendingEngineMove, tile: target })
     onEngineMoveConsumed?.()
   }, [pendingEngineMove, movingTo, board, onEngineMoveConsumed, setMovingTo])
+
+  // SFX when a move animation starts
+  useEffect(() => {
+    if (!movingTo) {
+      sfxPlayedForMove.current = null
+      return
+    }
+    const key = `${movingTo.move.piece.getId()}-${movingTo.move.newPosition.x}-${movingTo.move.newPosition.y}`
+    if (sfxPlayedForMove.current === key) return
+    sfxPlayedForMove.current = key
+    const isCapture =
+      movingTo.move.type === 'capture' ||
+      movingTo.move.type === 'captureEnPassant' ||
+      movingTo.move.type === 'captureKing'
+    playSfx(isCapture ? 'capture' : 'move')
+  }, [movingTo])
 
   const finishMovingPiece = (tile: Tile | null) => {
     if (!tile || !movingTo) return
@@ -181,11 +216,23 @@ export const BoardComponent: FC<{
     setLastSelected(null)
   }
 
+  const prevCheckRef = useRef(false)
+  const gameOverSfxRef = useRef(false)
+
   useEffect(() => {
     const gameOverType = detectGameOver(board, turn)
     if (gameOverType) {
       setGameOver({ type: gameOverType, winner: oppositeColor(turn) })
+      if (!gameOverSfxRef.current) {
+        gameOverSfxRef.current = true
+        playSfx('gameOver')
+      }
+      return
     }
+    gameOverSfxRef.current = false
+    const inCheck = isKingInCheck(board, turn)
+    if (inCheck && !prevCheckRef.current) playSfx('check')
+    prevCheckRef.current = inCheck
   }, [board, turn, setGameOver])
 
   const startMovingPiece = (e: ThreeMouseEvent, tile: Tile, nextTile: Move) => {
@@ -196,35 +243,80 @@ export const BoardComponent: FC<{
 
   const { intensity } = useSpring({
     intensity: selected ? 0.35 : 0,
+    config: { tension: 200, friction: 24 },
   })
 
   const kingInCheck = isKingInCheck(board, turn)
   const checkedKingPos = kingInCheck ? findKingPosition(board, turn) : null
 
+  const captureBurst =
+    movingTo?.move.capture != null
+      ? {
+          key: createId(movingTo.move.capture),
+          position: [
+            movingTo.move.capture.position.x,
+            0.5,
+            movingTo.move.capture.position.y,
+          ] as [number, number, number],
+        }
+      : null
+
+  const s = pieceSet.wrapperScale
+  const materialVariant =
+    pieceSet.kind === 'textured' ? 'textured' : 'metal'
+
+  const minPolar = roomTheme.minPolarAngle ?? Math.PI / 6
+  const maxPolar = roomTheme.maxPolarAngle ?? Math.PI / 2.15
+  const minDist = roomTheme.minDistance ?? 7
+  const maxDist = roomTheme.maxDistance ?? 28
+  const target = roomTheme.boardOffset ?? ([0, 0, 0] as [number, number, number])
+
   return (
     <group position={[-3.5, -0.5, -3.5]}>
       <OrbitControls
-        target={[0, 0, 0]}
-        maxDistance={25}
-        minDistance={7}
-        maxPolarAngle={Math.PI / 2.15}
-        minPolarAngle={Math.PI / 6}
+        makeDefault
+        target={target}
+        maxDistance={maxDist}
+        minDistance={minDist}
+        maxPolarAngle={maxPolar}
+        minPolarAngle={minPolar}
         enableZoom
         enablePan={false}
       />
+      <ViewProbe
+        roomId={roomTheme.id}
+        boardId={boardId}
+        pieceSetId={pieceSetId}
+        boardOffset={target}
+        minDistance={minDist}
+        maxDistance={maxDist}
+        minPolarAngle={minPolar}
+        maxPolarAngle={maxPolar}
+      />
       <pointLight
-        shadow-mapSize={[2048, 2048]}
+        shadow-mapSize={[1024, 1024]}
+        shadow-bias={-0.0002}
         castShadow
         position={[3.5, 10, 3.5]}
-        intensity={0.65}
+        intensity={0.7}
         color="#ffe0ec"
       />
-      <hemisphereLight intensity={0.5} color="#ffa4a4" groundColor="#d886b7" />
-      <animated.pointLight
-        intensity={intensity}
-        color="red"
-        position={[redLightPosition.x, 1, redLightPosition.y]}
-      />
+      <hemisphereLight intensity={0.55} color="#ffa4a4" groundColor="#d886b7" />
+      {selected && (
+        <animated.pointLight
+          intensity={intensity}
+          color="red"
+          position={[redLightPosition.x, 1, redLightPosition.y]}
+        />
+      )}
+      {captureBurst && (
+        <CaptureBurst
+          key={captureBurst.key}
+          burstKey={captureBurst.key}
+          position={captureBurst.position}
+          active
+        />
+      )}
       {board.map((row, i) =>
         row.map((tile, j) => {
           const bg = `${(i + j) % 2 === 0 ? `white` : `black`}`
@@ -260,6 +352,7 @@ export const BoardComponent: FC<{
               tile.piece && tile.piece?.color !== turn
             if (tileContainsOtherPlayersPiece && !canMoveHere) {
               setSelected(null)
+              setMoves([])
               return
             }
             canMoveHere
@@ -267,38 +360,15 @@ export const BoardComponent: FC<{
               : selectThisPiece(e, tile)
           }
 
-          const props: ModelProps = {
-            position: [j, 0.5, i],
-            scale: [0.15, 0.15, 0.15],
-            color: tile.piece?.color || `white`,
-            onClick: handleClick,
-            isSelected: !!isSelected,
-            wasSelected: lastSelected
-              ? lastSelected?.piece?.getId() === tile.piece?.getId()
-              : false,
-            canMoveHere: canMoveHere?.newPosition ?? null,
-            movingTo:
-              checkIfPositionsMatch(
-                tile.position,
-                movingTo?.move.piece?.position,
-              ) && movingTo
-                ? movingTo.move.steps
-                : isBeingCastled
-                  ? (movingTo?.move.castling?.rookSteps ?? null)
-                  : null,
-            pieceIsBeingReplaced: !!pieceIsBeingReplaced,
-            finishMovingPiece: () =>
-              isBeingCastled ? null : finishMovingPiece(movingTo?.tile ?? null),
-          }
-
           const pieceId = tile.piece
-            ? `${tile.piece.type}-${tile.piece.color}-${tile.piece.id}-${j}-${i}`
+            ? `${tile.piece.type}-${tile.piece.color}-${tile.piece.id}-${j}-${i}-${pieceSet.id}`
             : `empty-${j}-${i}`
 
           return (
             <group key={`${j}-${i}`}>
               <TileComponent
                 color={bg}
+                mode={boardTheme.tileMode}
                 position={[j, 0.25, i]}
                 onClick={handleClick}
                 canMoveHere={canMoveHere?.newPosition ?? null}
@@ -306,18 +376,108 @@ export const BoardComponent: FC<{
                 isCheck={isCheck}
                 isLastMove={isLastMove}
               />
-              <MeshWrapper key={pieceId} {...props}>
-                {tile.piece?.type === `pawn` && <PawnModel />}
-                {tile.piece?.type === `rook` && <RookComponent />}
-                {tile.piece?.type === `knight` && <KnightComponent />}
-                {tile.piece?.type === `bishop` && <BishopComponent />}
-                {tile.piece?.type === `queen` && <QueenComponent />}
-                {tile.piece?.type === `king` && <KingComponent />}
-              </MeshWrapper>
+              {tile.piece && (
+                <MeshWrapper
+                  key={pieceId}
+                  position={[j, 0.5, i]}
+                  scale={[s, s, s]}
+                  meshScale={pieceSet.meshScale}
+                  materialVariant={materialVariant}
+                  color={tile.piece.color}
+                  onClick={handleClick}
+                  isSelected={!!isSelected}
+                  wasSelected={
+                    lastSelected
+                      ? lastSelected?.piece?.getId() === tile.piece.getId()
+                      : false
+                  }
+                  canMoveHere={canMoveHere?.newPosition ?? null}
+                  movingTo={
+                    checkIfPositionsMatch(
+                      tile.position,
+                      movingTo?.move.piece?.position,
+                    ) && movingTo
+                      ? movingTo.move.steps
+                      : isBeingCastled
+                        ? (movingTo?.move.castling?.rookSteps ?? null)
+                        : null
+                  }
+                  pieceIsBeingReplaced={!!pieceIsBeingReplaced}
+                  finishMovingPiece={() =>
+                    isBeingCastled
+                      ? null
+                      : finishMovingPiece(movingTo?.tile ?? null)
+                  }
+                >
+                  <PieceModel
+                    kind={tile.piece.type}
+                    pieceSet={pieceSet}
+                    color={tile.piece.color}
+                  />
+                </MeshWrapper>
+              )}
             </group>
           )
         }),
       )}
     </group>
   )
+}
+
+/** Samples live camera/orbit into viewDebug for the Dump view button. */
+function ViewProbe({
+  roomId,
+  boardId,
+  pieceSetId,
+  boardOffset,
+  minDistance,
+  maxDistance,
+  minPolarAngle,
+  maxPolarAngle,
+}: {
+  roomId: string
+  boardId: string
+  pieceSetId: string
+  boardOffset: [number, number, number]
+  minDistance: number
+  maxDistance: number
+  minPolarAngle: number
+  maxPolarAngle: number
+}) {
+  const { camera, controls } = useThree()
+  const targetVec = useRef(new THREE.Vector3())
+  useFrame(() => {
+    const c = controls as
+      | {
+          target?: THREE.Vector3
+          getDistance?: () => number
+          getPolarAngle?: () => number
+          getAzimuthalAngle?: () => number
+        }
+      | null
+    const target = c?.target
+    const cameraTarget: [number, number, number] = target
+      ? [target.x, target.y, target.z]
+      : boardOffset
+    targetVec.current.set(...cameraTarget)
+    const fov =
+      'fov' in camera && typeof camera.fov === 'number' ? camera.fov : 40
+    setLiveView({
+      roomId,
+      boardId,
+      pieceSetId,
+      boardOffset,
+      cameraPosition: camera.position.toArray() as [number, number, number],
+      cameraTarget,
+      cameraFov: fov,
+      distance: c?.getDistance?.() ?? camera.position.distanceTo(targetVec.current),
+      polarAngle: c?.getPolarAngle?.() ?? 0,
+      azimuthAngle: c?.getAzimuthalAngle?.() ?? 0,
+      minDistance,
+      maxDistance,
+      minPolarAngle,
+      maxPolarAngle,
+    })
+  })
+  return null
 }
