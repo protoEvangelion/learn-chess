@@ -37,7 +37,7 @@ export type BestMoveResult = {
 const ENGINE_URL = '/engines/stockfish-18-lite-single.js'
 
 /** Full-strength analysis settings for best-move arrow / coach. */
-const ANALYSIS = { skill: 20, depth: 18, movetime: 1200, multiPv: 1 } as const
+const ANALYSIS = { skill: 20, depth: 18, multiPv: 1 } as const
 
 function parseScore(infoLine: string): { cp: number | null; mate: number | null } {
   const mate = infoLine.match(/\bscore mate (-?\d+)\b/)
@@ -190,6 +190,9 @@ export class StockfishOpponent {
 
       this.send(`setoption name Skill Level value ${cfg.skill}`)
       this.send(`setoption name MultiPV value ${cfg.multiPv}`)
+      this.send('isready')
+      await this.waitFor((l) => l === 'readyok', 10000)
+
       this.send(`position fen ${fen}`)
 
       const bestPromise = this.waitFor((l) => l.startsWith('bestmove '), 30000)
@@ -219,44 +222,58 @@ export class StockfishOpponent {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       await this.init()
 
-      this.send('stop')
-      this.send('ucinewgame')
-      this.send('isready')
-      await this.waitFor((l) => l === 'readyok', 10000)
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      const stopOnAbort = () => this.send('stop')
+      signal?.addEventListener('abort', stopOnAbort)
 
-      this.send(`setoption name Skill Level value ${ANALYSIS.skill}`)
-      this.send(`setoption name MultiPV value ${ANALYSIS.multiPv}`)
-      this.send(`position fen ${fen}`)
+      try {
+        this.send('stop')
+        this.send('ucinewgame')
+        this.send('isready')
+        await this.waitFor((l) => l === 'readyok', 10000)
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-      const resultPromise = this.collectUntilBestMove(45000)
-      this.send(`go depth ${ANALYSIS.depth} movetime ${ANALYSIS.movetime}`)
+        // Reset any weakened opponent settings before analyzing.
+        this.send(`setoption name Skill Level value ${ANALYSIS.skill}`)
+        this.send('setoption name UCI_LimitStrength value false')
+        this.send(`setoption name MultiPV value ${ANALYSIS.multiPv}`)
+        this.send('isready')
+        await this.waitFor((l) => l === 'readyok', 10000)
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-      const { bestmove, lastInfo } = await resultPromise
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+        this.send(`position fen ${fen}`)
 
-      const uci = bestmove.split(/\s+/)[1]
-      if (!uci || uci === '(none)') {
-        throw new Error('Engine returned no best move')
-      }
+        const resultPromise = this.collectUntilBestMove(45000)
+        // Depth-only so lite WASM isn’t cut off early by a short movetime.
+        this.send(`go depth ${ANALYSIS.depth}`)
 
-      const squares = uciToSquares(uci)
-      if (!squares) throw new Error(`Bad engine move: ${uci}`)
+        const { bestmove, lastInfo } = await resultPromise
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-      const line = parsePv(lastInfo) || uci
-      const sideToMove = (fen.split(/\s+/)[1] === 'b' ? 'b' : 'w') as 'w' | 'b'
-      const raw = lastInfo ? parseScore(lastInfo) : { cp: null, mate: null }
-      const { whiteCp, whiteMate, evalLabel } = toWhitePerspective(raw, sideToMove)
+        const uci = bestmove.split(/\s+/)[1]
+        if (!uci || uci === '(none)') {
+          throw new Error('Engine returned no best move')
+        }
 
-      return {
-        uci,
-        from: squares.from,
-        to: squares.to,
-        evalLabel,
-        whiteCp,
-        whiteMate,
-        depth: lastInfo ? parseDepth(lastInfo) : ANALYSIS.depth,
-        line,
+        const squares = uciToSquares(uci)
+        if (!squares) throw new Error(`Bad engine move: ${uci}`)
+
+        const line = parsePv(lastInfo) || uci
+        const sideToMove = (fen.split(/\s+/)[1] === 'b' ? 'b' : 'w') as 'w' | 'b'
+        const raw = lastInfo ? parseScore(lastInfo) : { cp: null, mate: null }
+        const { whiteCp, whiteMate, evalLabel } = toWhitePerspective(raw, sideToMove)
+
+        return {
+          uci,
+          from: squares.from,
+          to: squares.to,
+          evalLabel,
+          whiteCp,
+          whiteMate,
+          depth: lastInfo ? parseDepth(lastInfo) : ANALYSIS.depth,
+          line,
+        }
+      } finally {
+        signal?.removeEventListener('abort', stopOnAbort)
       }
     })
   }

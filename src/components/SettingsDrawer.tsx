@@ -3,6 +3,7 @@ import {
   BOARD_KEY,
   BOARD_THEMES,
   BEST_MOVE_KEY,
+  FPS_KEY,
   PIECE_KEY,
   PIECE_SETS,
   ROOM_KEY,
@@ -14,6 +15,8 @@ import {
   type StrengthLevel,
 } from '@/lib/stockfishOpponent'
 import type { Color } from '@logic/pieces'
+import { AnimatedSwitch } from '@/components/ui/animated-switch'
+import { PixelButton } from '@/components/ui/PixelButton'
 
 type Props = {
   open: boolean
@@ -27,6 +30,7 @@ type Props = {
   playerColor: Color
   fen: string
   showBestMove: boolean
+  showFps: boolean
   onBoardChange: (id: string) => void
   onPieceSetChange: (id: string) => void
   onRoomChange: (id: string) => void
@@ -38,6 +42,7 @@ type Props = {
   onFenCommit: () => void
   onDumpView: () => void
   onShowBestMoveChange: (show: boolean) => void
+  onShowFpsChange: (show: boolean) => void
 }
 
 function ThemeStrip<
@@ -99,6 +104,7 @@ export const SettingsDrawer: FC<Props> = ({
   playerColor,
   fen,
   showBestMove,
+  showFps,
   onBoardChange,
   onPieceSetChange,
   onRoomChange,
@@ -110,6 +116,7 @@ export const SettingsDrawer: FC<Props> = ({
   onFenCommit,
   onDumpView,
   onShowBestMoveChange,
+  onShowFpsChange,
 }) => {
   if (!open) return null
 
@@ -124,9 +131,9 @@ export const SettingsDrawer: FC<Props> = ({
       >
         <header className="settings-header">
           <h2>Settings</h2>
-          <button type="button" className="ghost" onClick={onClose}>
+          <PixelButton ghost onClick={onClose}>
             Close
-          </button>
+          </PixelButton>
         </header>
 
         <section className="settings-section">
@@ -152,33 +159,41 @@ export const SettingsDrawer: FC<Props> = ({
             <span>8 strong</span>
           </div>
           <div className="btn-row">
-            <button
-              type="button"
-              className={playerColor === 'white' ? '' : 'ghost'}
+            <PixelButton
+              ghost={playerColor !== 'white'}
               onClick={() => onColorChange('white')}
             >
               Play White
-            </button>
-            <button
-              type="button"
-              className={playerColor === 'black' ? '' : 'ghost'}
+            </PixelButton>
+            <PixelButton
+              ghost={playerColor !== 'black'}
               onClick={() => onColorChange('black')}
             >
               Play Black
-            </button>
+            </PixelButton>
           </div>
-          <label className="settings-row" style={{ marginTop: '0.85rem' }}>
-            <span>Show best move</span>
-            <input
-              type="checkbox"
+          <div className="settings-row" style={{ marginTop: '0.85rem' }}>
+            <span id="settings-best-move-label">Show best move</span>
+            <AnimatedSwitch
               checked={showBestMove}
-              onChange={(e) => {
-                const next = e.target.checked
+              aria-labelledby="settings-best-move-label"
+              onCheckedChange={(next) => {
                 localStorage.setItem(BEST_MOVE_KEY, next ? '1' : '0')
                 onShowBestMoveChange(next)
               }}
             />
-          </label>
+          </div>
+          <div className="settings-row">
+            <span id="settings-fps-label">Show FPS</span>
+            <AnimatedSwitch
+              checked={showFps}
+              aria-labelledby="settings-fps-label"
+              onCheckedChange={(next) => {
+                localStorage.setItem(FPS_KEY, next ? '1' : '0')
+                onShowFpsChange(next)
+              }}
+            />
+          </div>
         </section>
 
         <ThemeStrip
@@ -211,18 +226,17 @@ export const SettingsDrawer: FC<Props> = ({
 
         <section className="settings-section">
           <h3>Sound</h3>
-          <label className="settings-row">
-            <span>Mute</span>
-            <input
-              type="checkbox"
+          <div className="settings-row">
+            <span id="settings-mute-label">Mute</span>
+            <AnimatedSwitch
               checked={muted}
-              onChange={(e) => {
-                const next = e.target.checked
+              aria-labelledby="settings-mute-label"
+              onCheckedChange={(next) => {
                 setMuted(next)
                 onMutedChange(next)
               }}
             />
-          </label>
+          </div>
           <label className="slider-label settings-volume">
             Volume
             <input
@@ -263,9 +277,13 @@ export const SettingsDrawer: FC<Props> = ({
 
         <section className="settings-section">
           <h3>Developer</h3>
-          <button type="button" className="ghost settings-full-btn" onClick={onDumpView}>
+          <PixelButton
+            ghost
+            className="settings-full-btn"
+            onClick={onDumpView}
+          >
             Dump view
-          </button>
+          </PixelButton>
         </section>
 
         <p className="settings-credit">
@@ -292,6 +310,22 @@ export const SettingsDrawer: FC<Props> = ({
             rel="noreferrer"
           >
             Glass chess (Al)
+          </a>
+          {' · '}
+          <a
+            href="https://sketchfab.com/3d-models/chess-set-89509e3c894c40a68542bdc586b38c9c"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Low Poly chess set
+          </a>
+          {' · '}
+          <a
+            href="https://sketchfab.com/3d-models/chess-e54c2d04d4f74823b69ba4a794fb4500"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Ornate chess (Verfassen)
           </a>
         </p>
       </aside>

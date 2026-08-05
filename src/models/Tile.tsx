@@ -128,10 +128,21 @@ export const TileComponent: FC<{
   const tileColor = getColor(color, !!canMoveHere, isCheck)
   const emissiveColor = getEmissive(color, !!canMoveHere, isCheck)
   const showHighlight = !!canMoveHere || isCheck
+  const pointerHandlers = canMoveHere
+    ? {
+        onPointerOver: (e: { stopPropagation: () => void }) => {
+          e.stopPropagation()
+          document.body.style.cursor = 'pointer'
+        },
+        onPointerOut: () => {
+          document.body.style.cursor = 'auto'
+        },
+      }
+    : undefined
 
   if (mode === 'hit') {
     return (
-      <group position={position} onClick={onClick}>
+      <group position={position} onClick={onClick} {...pointerHandlers}>
         <mesh scale={[1, 0.2, 1]} position={[0, 0.15, 0]}>
           <boxGeometry />
           <meshBasicMaterial transparent opacity={0} depthWrite={false} />
@@ -154,7 +165,7 @@ export const TileComponent: FC<{
   }
 
   return (
-    <group position={position} onClick={onClick}>
+    <group position={position} onClick={onClick} {...pointerHandlers}>
       <mesh scale={[1, 0.5, 1]} receiveShadow>
         <boxGeometry />
         <meshStandardMaterial

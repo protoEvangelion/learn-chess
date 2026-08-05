@@ -41,4 +41,3 @@ const RoomGlb: FC<{ theme: RoomTheme }> = ({ theme }) => {
 export function preloadRoom(theme: RoomTheme) {
   if (theme.modelPath) useGLTF.preload(theme.modelPath)
 }
-

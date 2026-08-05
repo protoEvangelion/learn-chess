@@ -55,6 +55,8 @@ export const BoardComponent: FC<{
   roomTheme: RoomTheme
   boardId?: string
   pieceSetId?: string
+  /** Left-drag: orbit vs screen pan */
+  orbitDragMode?: 'rotate' | 'pan'
 }> = ({
   selected,
   setSelected,
@@ -73,6 +75,7 @@ export const BoardComponent: FC<{
   roomTheme,
   boardId = boardTheme.id,
   pieceSetId = pieceSet.id,
+  orbitDragMode = 'rotate',
 }) => {
   const [lastSelected, setLastSelected] = useState<Tile | null>(null)
   const turn = useGameState((s) => s.turn)
@@ -281,7 +284,16 @@ export const BoardComponent: FC<{
         maxPolarAngle={maxPolar}
         minPolarAngle={minPolar}
         enableZoom
-        enablePan={false}
+        enablePan
+        enableRotate
+        screenSpacePanning
+        mouseButtons={{
+          LEFT:
+            orbitDragMode === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT:
+            orbitDragMode === 'pan' ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN,
+        }}
       />
       <ViewProbe
         roomId={roomTheme.id}

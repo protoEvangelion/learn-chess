@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { Chess } from 'chess.js'
 import type { Plugin } from 'vite'
 
 export type ExplainRequest = {
@@ -11,6 +12,15 @@ export type ExplainRequest = {
   gameId: string
   /** Fullmove-ish hint so the coach can talk about game phase. */
   plyHint?: string
+}
+
+export type CoachChatRequest = {
+  gameId: string
+  fen: string
+  question: string
+  bestMove?: string
+  evalLabel?: string
+  tips?: { tip1: string; tip2: string; tip3: string }
 }
 
 /** Cheap Luna tier (fast) — override with CURSOR_EXPLAIN_MODEL. */
@@ -45,6 +55,47 @@ const COACH_RULES = [
   '2–3 short sentences. Plain English, no markdown headings or bullet lists.',
 ].join('\n')
 
+/** Follow-up Q&A about tips / the recommended move (same Cursor chat session). */
+const COACH_CHAT_RULES = [
+  'You are a friendly chess coach helping a beginner–club player.',
+  'You are coaching ONE ongoing game. Earlier messages may be tips for OLDER positions.',
+  'CRITICAL: The CURRENT FEN and POSITION FACTS below are authoritative. Ignore piece placement from earlier turns if it conflicts.',
+  'If POSITION FACTS say a castling side is legal or illegal, trust that—do not invent blockers.',
+  'Answer the player’s follow-up question about those tips or this position.',
+  'Stay aligned with the ENGINE BEST MOVE when discussing what to play—do not push a different move.',
+  'Plain English, 2–5 short sentences. No JSON, no markdown fences, no bullet lists unless the player asks for a list.',
+  'Do not greet or restate the full tips unless asked.',
+].join('\n')
+
+/** Ground-truth facts so follow-ups don’t rely on stale chat memory. */
+function positionFacts(fen: string): string {
+  try {
+    const chess = new Chess(fen)
+    const parts = fen.trim().split(/\s+/)
+    const side = parts[1] === 'b' ? 'Black' : 'White'
+    const rights = parts[2] ?? '-'
+    const legal = chess.moves({ verbose: true })
+    const oo = legal.find((m) => m.flags.includes('k'))
+    const ooo = legal.find((m) => m.flags.includes('q'))
+    const castlingLine =
+      oo || ooo
+        ? [
+            oo ? `Kingside O-O is LEGAL (${oo.from}→${oo.to}).` : 'Kingside O-O is NOT legal.',
+            ooo
+              ? `Queenside O-O-O is LEGAL (${ooo.from}→${ooo.to}).`
+              : 'Queenside O-O-O is NOT legal.',
+          ].join(' ')
+        : 'No castling moves are legal for the side to move.'
+    return [
+      `Side to move: ${side}`,
+      `Castling rights in FEN: ${rights}`,
+      castlingLine,
+    ].join('\n')
+  } catch {
+    return 'Position facts unavailable (invalid FEN).'
+  }
+}
+
 function readBody(req: import('http').IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -66,6 +117,30 @@ function buildPrompt(body: ExplainRequest): string {
     `To square: ${body.to}`,
     `Engine eval: ${body.evalLabel}`,
     `Principal variation: ${body.line}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function buildChatPrompt(body: CoachChatRequest): string {
+  return [
+    COACH_CHAT_RULES,
+    '',
+    '--- Current position (authoritative) ---',
+    `FEN: ${body.fen}`,
+    positionFacts(body.fen),
+    body.bestMove ? `ENGINE BEST MOVE: ${body.bestMove}` : null,
+    body.evalLabel ? `Engine eval: ${body.evalLabel}` : null,
+    body.tips
+      ? [
+          '--- Tips already shown to the player (for this position) ---',
+          `tip1: ${body.tips.tip1}`,
+          `tip2: ${body.tips.tip2}`,
+          `tip3: ${body.tips.tip3}`,
+        ].join('\n')
+      : null,
+    '',
+    `Player question: ${body.question.trim()}`,
   ]
     .filter(Boolean)
     .join('\n')
@@ -119,18 +194,18 @@ function createCursorChat(): Promise<string> {
 }
 
 /** Stream Cursor CLI ask-mode tokens via SSE, resuming the game chat. */
-function streamCursorExplain(
-  body: ExplainRequest,
+function streamCursorAsk(
+  gameId: string,
+  prompt: string,
   onDelta: (text: string) => void,
   onDone: (fullText: string) => void,
   onError: (err: Error) => void,
 ): () => void {
-  const prompt = buildPrompt(body)
   const args = [
     '-p',
     '-f',
     '--resume',
-    body.gameId,
+    gameId,
     '--mode',
     'ask',
     '--model',
@@ -255,7 +330,10 @@ export function explainApiPlugin(): Plugin {
           return
         }
 
-        if (!url.startsWith('/api/explain')) return next()
+        const isExplain = url.startsWith('/api/explain')
+        const isCoachChat = url.startsWith('/api/coach-chat')
+        if (!isExplain && !isCoachChat) return next()
+
         if (req.method === 'OPTIONS') {
           res.statusCode = 204
           res.end()
@@ -271,6 +349,49 @@ export function explainApiPlugin(): Plugin {
 
         try {
           const raw = await readBody(req)
+
+          if (isCoachChat) {
+            const body = JSON.parse(raw) as CoachChatRequest
+            if (!body.gameId || !body.fen || !body.question?.trim()) {
+              sendJson(res, 400, {
+                error: 'gameId, fen, and question required',
+              })
+              return
+            }
+
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache, no-transform',
+              Connection: 'keep-alive',
+              'X-Accel-Buffering': 'no',
+              'X-Explain-Model': EXPLAIN_MODEL,
+              'X-Game-Id': body.gameId,
+            })
+
+            const send = (payload: unknown) => {
+              res.write(`data: ${JSON.stringify(payload)}\n\n`)
+            }
+
+            send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
+
+            cancel = streamCursorAsk(
+              body.gameId,
+              buildChatPrompt(body),
+              (text) => send({ type: 'delta', text }),
+              (fullText) => {
+                send({ type: 'done', text: fullText })
+                res.end()
+              },
+              (err) => {
+                send({ type: 'error', error: err.message })
+                res.end()
+              },
+            )
+
+            req.on('close', () => cancel?.())
+            return
+          }
+
           const body = JSON.parse(raw) as ExplainRequest
           if (!body.fen || !body.bestMove || !body.gameId) {
             sendJson(res, 400, {
@@ -294,8 +415,9 @@ export function explainApiPlugin(): Plugin {
 
           send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
 
-          cancel = streamCursorExplain(
-            body,
+          cancel = streamCursorAsk(
+            body.gameId,
+            buildPrompt(body),
             (text) => send({ type: 'delta', text }),
             (fullText) => {
               send({ type: 'done', text: fullText })

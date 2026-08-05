@@ -141,6 +141,36 @@ export const BOARD_THEMES: BoardTheme[] = [
     previewColor: '#7aa0b8',
     preview: '/assets/previews/boards/glass.svg',
   },
+  {
+    id: 'chessset',
+    name: 'Low Poly',
+    credit:
+      'https://sketchfab.com/3d-models/chess-set-89509e3c894c40a68542bdc586b38c9c',
+    license: 'See Sketchfab listing / CC-BY if applicable',
+    modelPath: '/assets/boards/chessset/model.glb?v=6',
+    scale: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    showProceduralBorder: false,
+    tileMode: 'hit',
+    previewColor: '#dcc95c',
+    preview: '/assets/previews/boards/chessset.svg',
+  },
+  {
+    id: 'verfassen',
+    name: 'Ornate',
+    credit:
+      'Verfassen — https://sketchfab.com/3d-models/chess-e54c2d04d4f74823b69ba4a794fb4500',
+    license: 'CC-BY',
+    modelPath: '/assets/boards/verfassen/model.glb',
+    scale: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    showProceduralBorder: false,
+    tileMode: 'hit',
+    previewColor: '#b87333',
+    preview: '/assets/previews/boards/verfassen.svg',
+  },
 ]
 
 export const PIECE_SETS: PieceSetTheme[] = [
@@ -240,6 +270,82 @@ export const PIECE_SETS: PieceSetTheme[] = [
     previewColor: '#7aa0b8',
     preview: '/assets/previews/pieces/glass.svg',
   },
+  {
+    id: 'chessset',
+    name: 'Low Poly',
+    credit:
+      'https://sketchfab.com/3d-models/chess-set-89509e3c894c40a68542bdc586b38c9c',
+    license: 'See Sketchfab listing / CC-BY if applicable',
+    kind: 'textured',
+    paths: {
+      pawn: {
+        white: '/assets/pieces/chessset/pawn-w.glb?v=3',
+        black: '/assets/pieces/chessset/pawn-b.glb?v=3',
+      },
+      rook: {
+        white: '/assets/pieces/chessset/rook-w.glb?v=3',
+        black: '/assets/pieces/chessset/rook-b.glb?v=3',
+      },
+      knight: {
+        white: '/assets/pieces/chessset/knight-w.glb?v=3',
+        black: '/assets/pieces/chessset/knight-b.glb?v=3',
+      },
+      bishop: {
+        white: '/assets/pieces/chessset/bishop-w.glb?v=3',
+        black: '/assets/pieces/chessset/bishop-b.glb?v=3',
+      },
+      queen: {
+        white: '/assets/pieces/chessset/queen-w.glb?v=3',
+        black: '/assets/pieces/chessset/queen-b.glb?v=3',
+      },
+      king: {
+        white: '/assets/pieces/chessset/king-w.glb?v=3',
+        black: '/assets/pieces/chessset/king-b.glb?v=3',
+      },
+    },
+    wrapperScale: 1,
+    meshScale: 1,
+    previewColor: '#dcc95c',
+    preview: '/assets/previews/pieces/chessset.svg',
+  },
+  {
+    id: 'verfassen',
+    name: 'Ornate',
+    credit:
+      'Verfassen — https://sketchfab.com/3d-models/chess-e54c2d04d4f74823b69ba4a794fb4500',
+    license: 'CC-BY',
+    kind: 'textured',
+    paths: {
+      pawn: {
+        white: '/assets/pieces/verfassen/pawn-w.glb',
+        black: '/assets/pieces/verfassen/pawn-b.glb',
+      },
+      rook: {
+        white: '/assets/pieces/verfassen/rook-w.glb',
+        black: '/assets/pieces/verfassen/rook-b.glb',
+      },
+      knight: {
+        white: '/assets/pieces/verfassen/knight-w.glb',
+        black: '/assets/pieces/verfassen/knight-b.glb',
+      },
+      bishop: {
+        white: '/assets/pieces/verfassen/bishop-w.glb',
+        black: '/assets/pieces/verfassen/bishop-b.glb',
+      },
+      queen: {
+        white: '/assets/pieces/verfassen/queen-w.glb?v=2',
+        black: '/assets/pieces/verfassen/queen-b.glb?v=2',
+      },
+      king: {
+        white: '/assets/pieces/verfassen/king-w.glb?v=2',
+        black: '/assets/pieces/verfassen/king-b.glb?v=2',
+      },
+    },
+    wrapperScale: 1,
+    meshScale: 1,
+    previewColor: '#b87333',
+    preview: '/assets/previews/pieces/verfassen.svg',
+  },
 ]
 
 export const ROOM_THEMES: RoomTheme[] = [
@@ -289,6 +395,7 @@ export const ROOM_KEY = 'chess-3d:roomId'
 export const MUTE_KEY = 'chess-3d:muted'
 export const VOLUME_KEY = 'chess-3d:volume'
 export const BEST_MOVE_KEY = 'chess-3d:showBestMove'
+export const FPS_KEY = 'chess-3d:showFps'
 
 export function loadBoardId(): string {
   const id = localStorage.getItem(BOARD_KEY)
@@ -316,6 +423,10 @@ export function loadVolume(): number {
 
 export function loadShowBestMove(): boolean {
   return localStorage.getItem(BEST_MOVE_KEY) === '1'
+}
+
+export function loadShowFps(): boolean {
+  return localStorage.getItem(FPS_KEY) === '1'
 }
 
 export function getBoardTheme(id: string): BoardTheme {

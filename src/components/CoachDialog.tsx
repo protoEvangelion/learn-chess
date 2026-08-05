@@ -1,14 +1,20 @@
-import { useEffect, useState, type FC } from 'react'
+import { useEffect, useRef, useState, type FC, type FormEvent } from 'react'
 import type { BestMoveResult } from '@/lib/stockfishOpponent'
-import { advantageFromBest } from '@/lib/advantage'
-import { materialFromFen, materialGlyphs } from '@/lib/material'
 import type { CoachTips } from '@/lib/coachTips'
+import { PixelButton } from '@/components/ui/PixelButton'
+
+export type CoachChatMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+}
 
 type Props = {
   open: boolean
   onClose: () => void
-  fen: string
   best: BestMoveResult | null
+  /** When false, coach waits instead of tipping the opponent’s move. */
+  isPlayerTurn: boolean
   analysisStatus: 'idle' | 'loading' | 'error'
   analysisError: string | null
   coachTips: CoachTips | null
@@ -16,6 +22,10 @@ type Props = {
   coachError: string | null
   tip3Open: boolean
   onTip3OpenChange: (open: boolean) => void
+  chatMessages: CoachChatMessage[]
+  chatStatus: 'idle' | 'loading' | 'error'
+  chatError: string | null
+  onSendChat: (question: string) => void
 }
 
 function TipRow({
@@ -23,15 +33,19 @@ function TipRow({
   body,
   open,
   onOpenChange,
+  accent,
 }: {
   label: string
   body: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  accent?: boolean
 }) {
   return (
     <details
-      className="coach-tip"
+      className={['coach-tip', accent ? 'coach-tip-accent' : '']
+        .filter(Boolean)
+        .join(' ')}
       open={open}
       onToggle={(e) => {
         const next = e.currentTarget.open
@@ -47,8 +61,8 @@ function TipRow({
 export const CoachDialog: FC<Props> = ({
   open,
   onClose,
-  fen,
   best,
+  isPlayerTurn,
   analysisStatus,
   analysisError,
   coachTips,
@@ -56,12 +70,15 @@ export const CoachDialog: FC<Props> = ({
   coachError,
   tip3Open,
   onTip3OpenChange,
+  chatMessages,
+  chatStatus,
+  chatError,
+  onSendChat,
 }) => {
-  const advantage = advantageFromBest(best)
-  const material = materialFromFen(fen)
-  const barWhitePercent = advantage?.whitePercent ?? 50
   const [tip1Open, setTip1Open] = useState(true)
   const [tip2Open, setTip2Open] = useState(false)
+  const [draft, setDraft] = useState('')
+  const threadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!coachTips) return
@@ -69,24 +86,66 @@ export const CoachDialog: FC<Props> = ({
     setTip2Open(false)
   }, [coachTips])
 
-  if (!open) return null
+  useEffect(() => {
+    const el = threadRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [chatMessages, chatStatus])
 
+  const statusLine = coachTips
+    ? null
+    : !isPlayerTurn
+      ? 'Waiting for the opponent… tips resume on your turn.'
+      : coachStatus === 'loading'
+        ? 'Writing tips…'
+        : analysisStatus === 'loading'
+          ? 'Looking up best move…'
+          : coachError
+            ? null
+            : best
+              ? 'Preparing coach tips…'
+              : 'No best move for this position.'
+
+  const chatReady = !!coachTips
+  const chatBusy = chatStatus === 'loading'
+
+  function submitChat(e?: FormEvent) {
+    e?.preventDefault()
+    const q = draft.trim()
+    if (!q || !chatReady || chatBusy) return
+    setDraft('')
+    onSendChat(q)
+  }
+
+  // Stay mounted when closed so tip accordion + draft survive reopen.
   return (
-    <div className="coach-backdrop" onClick={onClose} role="presentation">
+    <div
+      className={['coach-backdrop', open ? '' : 'is-closed'].filter(Boolean).join(' ')}
+      onClick={open ? onClose : undefined}
+      role="presentation"
+      aria-hidden={!open}
+    >
       <aside
         className="coach-dialog"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Coach"
+        inert={!open ? true : undefined}
       >
         <header className="coach-dialog-header">
-          <h2>Coach</h2>
-          <button type="button" className="ghost" onClick={onClose}>
+          <div className="coach-dialog-title">
+            <p className="coach-eyebrow">Hints</p>
+            <h2>Coach</h2>
+          </div>
+          <PixelButton ghost onClick={onClose}>
             Close
-          </button>
+          </PixelButton>
         </header>
 
         {analysisError && <p className="error">{analysisError}</p>}
+        {coachError && <p className="error">{coachError}</p>}
+
+        {statusLine && <p className="coach-status">{statusLine}</p>}
 
         {coachTips && (
           <div className="coach-tips">
@@ -107,103 +166,55 @@ export const CoachDialog: FC<Props> = ({
               body={coachTips.tip3}
               open={tip3Open}
               onOpenChange={onTip3OpenChange}
+              accent
             />
           </div>
         )}
 
-        {!coachTips && (
-          <p className="meta">
-            {coachStatus === 'loading'
-              ? 'Writing tips…'
-              : analysisStatus === 'loading'
-                ? 'Looking up best move…'
-                : coachError
-                  ? null
-                  : best
-                    ? 'Preparing coach tips…'
-                    : 'No best move for this position.'}
-          </p>
+        {chatReady && (
+          <section className="coach-chat" aria-label="Ask the coach">
+            <p className="coach-chat-label">Ask about these tips</p>
+            <div className="coach-chat-thread" ref={threadRef}>
+              {chatMessages.length === 0 && (
+                <p className="coach-chat-empty">
+                  e.g. “Why this piece?” or “What if they take?”
+                </p>
+              )}
+              {chatMessages.map((m) => (
+                <div
+                  key={m.id}
+                  className={[
+                    'coach-chat-bubble',
+                    m.role === 'user' ? 'is-user' : 'is-assistant',
+                  ].join(' ')}
+                >
+                  {m.text || (chatBusy ? '…' : '')}
+                </div>
+              ))}
+            </div>
+            {chatError && <p className="error">{chatError}</p>}
+            <form className="coach-chat-form" onSubmit={submitChat}>
+              <input
+                type="text"
+                className="coach-chat-input"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Ask a follow-up…"
+                disabled={chatBusy}
+                aria-label="Question for the coach"
+                autoComplete="off"
+              />
+              <PixelButton
+                type="submit"
+                disabled={chatBusy || !draft.trim()}
+                aria-label="Send"
+              >
+                Send
+              </PixelButton>
+            </form>
+          </section>
         )}
-
-        {coachError && <p className="error">{coachError}</p>}
-
-        <div
-          className="eval-bar-h"
-          title={
-            advantage
-              ? `Engine: ${advantage.label} ${advantage.detail}`
-              : 'Evaluating…'
-          }
-        >
-          <div
-            className="eval-bar-h-white"
-            style={{ width: `${barWhitePercent}%` }}
-          />
-          <span className="eval-bar-h-label">
-            {advantage
-              ? advantage.label === 'Even'
-                ? `Even ${advantage.detail}`
-                : `${advantage.label} ${advantage.detail}`
-              : analysisStatus === 'loading'
-                ? '…'
-                : '—'}
-          </span>
-        </div>
-
-        <div className="material-row">
-          <div className="material-side">
-            <span className="material-name">White</span>
-            <span className="material-pieces" aria-hidden="true">
-              {materialGlyphs(material.whiteCaptures)}
-            </span>
-            {material.whiteScore > 0 && (
-              <span className="material-score">+{material.whiteScore}</span>
-            )}
-          </div>
-          <div className="material-side">
-            <span className="material-name">Black</span>
-            <span className="material-pieces" aria-hidden="true">
-              {materialGlyphs(material.blackCaptures)}
-            </span>
-            {material.whiteScore < 0 && (
-              <span className="material-score">
-                +{Math.abs(material.whiteScore)}
-              </span>
-            )}
-          </div>
-        </div>
       </aside>
     </div>
   )
 }
-
-/** Compact HUD control that opens the coach dialog. */
-export const CoachIconButton: FC<{
-  onClick: () => void
-  active?: boolean
-}> = ({ onClick, active }) => (
-  <button
-    type="button"
-    className={`icon-btn${active ? ' active' : ''}`}
-    onClick={onClick}
-    aria-label="Open coach"
-    title="Coach"
-  >
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" />
-      <path d="M8 7h8" />
-      <path d="M8 11h6" />
-      <path d="M8 15h4" />
-    </svg>
-  </button>
-)
