@@ -142,77 +142,82 @@ export const CoachDialog: FC<Props> = ({
           </PixelButton>
         </header>
 
-        {analysisError && <p className="error">{analysisError}</p>}
-        {coachError && <p className="error">{coachError}</p>}
+        <div className="coach-dialog-scroll">
+          {analysisError && <p className="error">{analysisError}</p>}
+          {coachError && <p className="error">{coachError}</p>}
 
-        {statusLine && <p className="coach-status">{statusLine}</p>}
+          {statusLine && <p className="coach-status">{statusLine}</p>}
 
-        {coachTips && (
-          <div className="coach-tips">
-            <TipRow
-              label="1 · Nudge"
-              body={coachTips.tip1}
-              open={tip1Open}
-              onOpenChange={setTip1Open}
-            />
-            <TipRow
-              label="2 · Closer look"
-              body={coachTips.tip2}
-              open={tip2Open}
-              onOpenChange={setTip2Open}
-            />
-            <TipRow
-              label="3 · Recommended move"
-              body={coachTips.tip3}
-              open={tip3Open}
-              onOpenChange={onTip3OpenChange}
-              accent
-            />
-          </div>
-        )}
+          {coachTips && (
+            <div className="coach-tips">
+              <TipRow
+                label="1 · Nudge"
+                body={coachTips.tip1}
+                open={tip1Open}
+                onOpenChange={setTip1Open}
+              />
+              <TipRow
+                label="2 · Closer look"
+                body={coachTips.tip2}
+                open={tip2Open}
+                onOpenChange={setTip2Open}
+              />
+              <TipRow
+                label="3 · Recommended move"
+                body={coachTips.tip3}
+                open={tip3Open}
+                onOpenChange={onTip3OpenChange}
+                accent
+              />
+            </div>
+          )}
+
+          {chatReady && (
+            <section className="coach-chat" aria-label="Ask the coach">
+              <p className="coach-chat-label">Ask about these tips</p>
+              <div className="coach-chat-thread" ref={threadRef}>
+                {chatMessages.length === 0 && (
+                  <p className="coach-chat-empty">
+                    e.g. “Why this piece?” or “What if they take?”
+                  </p>
+                )}
+                {chatMessages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={[
+                      'coach-chat-bubble',
+                      m.role === 'user' ? 'is-user' : 'is-assistant',
+                    ].join(' ')}
+                  >
+                    {m.text || (chatBusy ? '…' : '')}
+                  </div>
+                ))}
+              </div>
+              {chatError && <p className="error">{chatError}</p>}
+            </section>
+          )}
+        </div>
 
         {chatReady && (
-          <section className="coach-chat" aria-label="Ask the coach">
-            <p className="coach-chat-label">Ask about these tips</p>
-            <div className="coach-chat-thread" ref={threadRef}>
-              {chatMessages.length === 0 && (
-                <p className="coach-chat-empty">
-                  e.g. “Why this piece?” or “What if they take?”
-                </p>
-              )}
-              {chatMessages.map((m) => (
-                <div
-                  key={m.id}
-                  className={[
-                    'coach-chat-bubble',
-                    m.role === 'user' ? 'is-user' : 'is-assistant',
-                  ].join(' ')}
-                >
-                  {m.text || (chatBusy ? '…' : '')}
-                </div>
-              ))}
-            </div>
-            {chatError && <p className="error">{chatError}</p>}
-            <form className="coach-chat-form" onSubmit={submitChat}>
-              <input
-                type="text"
-                className="coach-chat-input"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="Ask a follow-up…"
-                disabled={chatBusy}
-                aria-label="Question for the coach"
-                autoComplete="off"
-              />
-              <PixelButton
-                type="submit"
-                disabled={chatBusy || !draft.trim()}
-                aria-label="Send"
-              >
-                Send
-              </PixelButton>
-            </form>
-          </section>
+          <form className="coach-chat-form" onSubmit={submitChat}>
+            <input
+              type="text"
+              className="coach-chat-input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Ask a follow-up…"
+              disabled={chatBusy}
+              aria-label="Question for the coach"
+              autoComplete="off"
+            />
+            <PixelButton
+              type="submit"
+              disabled={chatBusy || !draft.trim()}
+              aria-label="Send"
+            >
+              Send
+            </PixelButton>
+          </form>
         )}
       </aside>
     </div>

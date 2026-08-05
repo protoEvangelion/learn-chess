@@ -2,7 +2,7 @@
 
 Local 3D chess with a Stockfish opponent and an LLM coach that gives progressive tips aligned to the engine’s best move.
 
-![Learn Chess — board, coach tips, and eval](docs/snapshot.png)
+![Learn Chess — 3D board with coach tips and follow-up chat](docs/snapshot.png)
 
 ## Requirements
 
