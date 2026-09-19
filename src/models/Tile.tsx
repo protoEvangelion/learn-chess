@@ -1,15 +1,25 @@
 import type { FC, Ref } from 'react'
 import { memo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
+import { Billboard, Text } from '@react-three/drei'
 import type { Group, Mesh, MeshBasicMaterial } from 'three'
 import type { Position } from '../logic/board'
+import type { MovePreview, PieceSafety } from '../logic/movePreview'
+import {
+  PIECE_SAFETY_COLOR,
+  tradeMarkerColor,
+  tradeMarkerLabel,
+  washColorForPreview,
+} from '../logic/movePreview'
 
 const getColor = (
   color: string,
   canMoveHere: boolean,
   isCheck: boolean,
+  previewWash: string | null,
 ) => {
-  if (canMoveHere) return `#ff0101`
+  if (canMoveHere && previewWash) return previewWash
+  if (canMoveHere) return `#5eb0ff`
   if (isCheck) return `#e11d2e`
   if (color === `white`) return `#aaaaaa`
   if (color === `black`) return `#5a5a5a`
@@ -20,31 +30,47 @@ const getEmissive = (
   color: string,
   canMoveHere: boolean,
   isCheck: boolean,
+  previewWash: string | null,
 ) => {
-  if (canMoveHere && color === `white`) return `#ff0000`
-  if (canMoveHere && color === `black`) return `#c50000`
+  if (canMoveHere && previewWash) {
+    return color === `black` ? previewWash : previewWash
+  }
+  if (canMoveHere && color === `white`) return `#3a8fd4`
+  if (canMoveHere && color === `black`) return `#2a6fa8`
   if (isCheck) return `#b01020`
   return `#000000`
 }
 
-function borderBars(y: number, t: number, length: number) {
+/** Thin square frame; side bars stop short so corners don’t form cube “blobs”. */
+function borderBars(y: number, t: number, outer = 1) {
+  const half = outer / 2
+  const sideLen = Math.max(outer - 2 * t, t)
   return [
-    [0, y, 0.5 - t / 2, length, t, t],
-    [0, y, -0.5 + t / 2, length, t, t],
-    [0.5 - t / 2, y, 0, t, t, length],
-    [-0.5 + t / 2, y, 0, t, t, length],
+    [0, y, half - t / 2, outer, t, t],
+    [0, y, -(half - t / 2), outer, t, t],
+    [half - t / 2, y, 0, t, t, sideLen],
+    [-(half - t / 2), y, 0, t, t, sideLen],
   ] as const
 }
 
+const RING_Y = 0.27
+const RING_T = 0.028
+
 const BorderLayer: FC<{
   groupRef?: Ref<Group>
-  y: number
-  thickness: number
-  length: number
+  y?: number
+  thickness?: number
+  outer?: number
   color: string
-}> = ({ groupRef, y, thickness, length, color }) => (
+}> = ({
+  groupRef,
+  y = RING_Y,
+  thickness = RING_T,
+  outer = 1,
+  color,
+}) => (
   <group ref={groupRef}>
-    {borderBars(y, thickness, length).map(([x, yy, z, w, h, d], i) => (
+    {borderBars(y, thickness, outer).map(([x, yy, z, w, h, d], i) => (
       <mesh key={i} position={[x, yy, z]}>
         <boxGeometry args={[w, h, d]} />
         <meshBasicMaterial color={color} toneMapped={false} />
@@ -54,7 +80,7 @@ const BorderLayer: FC<{
 )
 
 const LastMoveBorder: FC = () => (
-  <BorderLayer y={0.27} thickness={0.055} length={1.02} color="#5eb0ff" />
+  <BorderLayer color="#5eb0ff" />
 )
 
 /** Lightsaber-style best-move: outer aura + bright core, pulsed via color only. */
@@ -90,19 +116,53 @@ const BestMoveBorder: FC = () => {
     <group>
       <BorderLayer
         groupRef={glow}
-        y={0.265}
-        thickness={0.09}
-        length={1.08}
+        y={RING_Y - 0.004}
+        thickness={RING_T * 1.35}
         color="#0d6b32"
       />
-      <BorderLayer
-        groupRef={core}
-        y={0.288}
-        thickness={0.038}
-        length={1.0}
-        color="#7dff9c"
-      />
+      <BorderLayer groupRef={core} y={RING_Y + 0.006} color="#7dff9c" />
     </group>
+  )
+}
+
+const PieceSafetyBadge: FC<{ safety: PieceSafety }> = ({ safety }) => (
+  <BorderLayer
+    y={
+      safety === 'hanging'
+        ? RING_Y + 0.004
+        : safety === 'contested'
+          ? RING_Y + 0.002
+          : safety === 'loose'
+            ? RING_Y
+            : RING_Y - 0.002
+    }
+    color={PIECE_SAFETY_COLOR[safety]}
+  />
+)
+
+const OppCheckRing: FC = () => (
+  <BorderLayer y={RING_Y + 0.008} color="#2dd4bf" />
+)
+
+const TradeMarker: FC<{ preview: MovePreview }> = ({ preview }) => {
+  const trade = preview.captureTrade
+  if (!trade) return null
+  const label = tradeMarkerLabel(trade)
+  const color = tradeMarkerColor(trade.label)
+  return (
+    <Billboard position={[0, 0.72, 0]} follow lockX={false} lockY={false} lockZ={false}>
+      <Text
+        fontSize={0.38}
+        color={color}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.03}
+        outlineColor="#0a0a0c"
+        depthOffset={-1}
+      >
+        {label}
+      </Text>
+    </Billboard>
   )
 }
 
@@ -112,33 +172,86 @@ export const TileComponent: FC<{
   isTip?: boolean
   isCheck?: boolean
   isLastMove?: boolean
+  pieceSafety?: PieceSafety | null
+  /** Hovered legal move would check — ring their king */
+  isOppCheckPreview?: boolean
   mode?: 'solid' | 'hit'
   position: [number, number, number]
   onClick?: (e: { stopPropagation: () => void }) => void
+  movePreview?: MovePreview | null
+  onPreviewHover?: (
+    preview: MovePreview | null,
+    clientX: number,
+    clientY: number,
+    destKey?: string | null,
+  ) => void
 }> = memo(function TileComponent({
   color,
   canMoveHere,
   isTip = false,
   isCheck = false,
   isLastMove = false,
+  pieceSafety = null,
+  isOppCheckPreview = false,
   mode = 'solid',
   position,
   onClick,
+  movePreview = null,
+  onPreviewHover,
 }) {
-  const tileColor = getColor(color, !!canMoveHere, isCheck)
-  const emissiveColor = getEmissive(color, !!canMoveHere, isCheck)
+  const previewWash =
+    canMoveHere && movePreview ? washColorForPreview(movePreview) : null
+  const tileColor = getColor(color, !!canMoveHere, isCheck, previewWash)
+  const emissiveColor = getEmissive(color, !!canMoveHere, isCheck, previewWash)
   const showHighlight = !!canMoveHere || isCheck
+  const destKey = canMoveHere
+    ? `${canMoveHere.x},${canMoveHere.y}`
+    : null
+
   const pointerHandlers = canMoveHere
     ? {
-        onPointerOver: (e: { stopPropagation: () => void }) => {
+        onPointerOver: (e: {
+          stopPropagation: () => void
+          nativeEvent: { clientX: number; clientY: number }
+        }) => {
           e.stopPropagation()
           document.body.style.cursor = 'pointer'
+          onPreviewHover?.(
+            movePreview ?? null,
+            e.nativeEvent.clientX,
+            e.nativeEvent.clientY,
+            destKey,
+          )
+        },
+        onPointerMove: (e: {
+          nativeEvent: { clientX: number; clientY: number }
+        }) => {
+          if (!movePreview) return
+          onPreviewHover?.(
+            movePreview,
+            e.nativeEvent.clientX,
+            e.nativeEvent.clientY,
+            destKey,
+          )
         },
         onPointerOut: () => {
           document.body.style.cursor = 'auto'
+          onPreviewHover?.(null, 0, 0, null)
         },
       }
     : undefined
+
+  const overlays = (
+    <>
+      {isLastMove && <LastMoveBorder />}
+      {isTip && <BestMoveBorder />}
+      {isOppCheckPreview && <OppCheckRing />}
+      {pieceSafety && <PieceSafetyBadge safety={pieceSafety} />}
+      {canMoveHere && movePreview?.captureTrade && (
+        <TradeMarker preview={movePreview} />
+      )}
+    </>
+  )
 
   if (mode === 'hit') {
     return (
@@ -158,8 +271,7 @@ export const TileComponent: FC<{
             />
           </mesh>
         )}
-        {isLastMove && <LastMoveBorder />}
-        {isTip && <BestMoveBorder />}
+        {overlays}
       </group>
     )
   }
@@ -171,14 +283,13 @@ export const TileComponent: FC<{
         <meshStandardMaterial
           color={tileColor}
           emissive={emissiveColor}
-          emissiveIntensity={showHighlight ? 0.6 : 0}
+          emissiveIntensity={showHighlight ? 0.55 : 0}
           metalness={0.35}
           roughness={0.75}
           envMapIntensity={0.1}
         />
       </mesh>
-      {isLastMove && <LastMoveBorder />}
-      {isTip && <BestMoveBorder />}
+      {overlays}
     </group>
   )
 })

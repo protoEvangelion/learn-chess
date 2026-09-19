@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"],
+      "env": {
+        "CULT_UI_API_KEY": "${CULT_UI_API_KEY}"
+      }
+    }
+  }
+}

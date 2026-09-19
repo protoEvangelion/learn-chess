@@ -9,6 +9,55 @@ export const RoomScene: FC<{ theme: RoomTheme }> = ({ theme }) => {
   return <RoomGlb theme={theme} />
 }
 
+const RoomTable: FC<{
+  table: NonNullable<RoomTheme['table']>
+}> = ({ table }) => {
+  const [tw, th, td] = table.topSize
+  const height = table.height
+  const color = table.color ?? '#6b3f24'
+  const legColor = table.legColor ?? '#4a2c18'
+  const legW = Math.min(tw, td) * 0.07
+  const legH = Math.max(0.05, height - th)
+  const insetX = tw * 0.5 - legW * 0.85
+  const insetZ = td * 0.5 - legW * 0.85
+  const legs: [number, number][] = [
+    [-insetX, -insetZ],
+    [insetX, -insetZ],
+    [-insetX, insetZ],
+    [insetX, insetZ],
+  ]
+
+  return (
+    <group position={table.position ?? [0, 0, 0]} name="CoffeeTable">
+      <mesh
+        name="CoffeeTableTop"
+        position={[0, height - th / 2, 0]}
+        castShadow
+        receiveShadow
+      >
+        <boxGeometry args={[tw, th, td]} />
+        <meshStandardMaterial color={color} roughness={0.72} metalness={0.05} />
+      </mesh>
+      {legs.map(([x, z], i) => (
+        <mesh
+          key={i}
+          name={`CoffeeTableLeg${i}`}
+          position={[x, legH / 2, z]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[legW, legH, legW]} />
+          <meshStandardMaterial
+            color={legColor}
+            roughness={0.8}
+            metalness={0.02}
+          />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
 const RoomGlb: FC<{ theme: RoomTheme }> = ({ theme }) => {
   const { scene } = useGLTF(theme.modelPath!)
   const clone = useMemo(() => {
@@ -33,6 +82,7 @@ const RoomGlb: FC<{ theme: RoomTheme }> = ({ theme }) => {
       rotation={theme.rotation}
     >
       <primitive object={clone} />
+      {theme.table ? <RoomTable table={theme.table} /> : null}
     </group>
   )
 }

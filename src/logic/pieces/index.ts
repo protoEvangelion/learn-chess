@@ -134,22 +134,24 @@ export const willBeInCheck = (
 ): boolean => {
   const newBoard = copyBoard(board)
   const tile = getTile(newBoard, piece.position)
-  const newTile = getTile(newBoard, {
+  const next = {
     x: move.x + piece.position.x,
     y: move.y + piece.position.y,
-  })
+  }
+  const newTile = getTile(newBoard, next)
   if (!tile || !newTile) return false
-  newTile.piece = piece
+  // Move piece onto the destination (captures whatever was there).
+  newTile.piece = { ...piece, position: next }
   tile.piece = null
 
-  for (const tile of newBoard.flat()) {
-    if (tile.piece?.color === oppositeColor(piece.color)) {
+  for (const t of newBoard.flat()) {
+    if (t.piece?.color === oppositeColor(piece.color)) {
       const moves = movesForPiece({
-        piece: tile.piece,
+        piece: t.piece,
         board: newBoard,
         propagateDetectCheck: false,
       })
-      if (moves.find((move) => move.type === `captureKing`)) {
+      if (moves.find((m) => m.type === `captureKing`)) {
         return true
       }
     }
@@ -158,6 +160,13 @@ export const willBeInCheck = (
 }
 
 export type GameOverType = `checkmate` | `stalemate`
+
+const LEGAL_MOVE_TYPES = new Set<MoveTypes>([
+  moveTypes.valid,
+  moveTypes.capture,
+  moveTypes.captureEnPassant,
+  moveTypes.castling,
+])
 
 export const detectStalemate = (
   board: Board,
@@ -170,7 +179,7 @@ export const detectStalemate = (
         board,
         propagateDetectCheck: true,
       })
-      if (moves.find((move) => move.type !== `invalid`)) {
+      if (moves.find((move) => LEGAL_MOVE_TYPES.has(move.type))) {
         return null
       }
     }

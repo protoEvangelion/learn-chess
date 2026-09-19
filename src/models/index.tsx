@@ -1,6 +1,7 @@
 import type { FC, ReactNode } from 'react'
 import { useRef } from 'react'
 import type { Position } from '@logic/board'
+import type { MovePreview } from '@logic/movePreview'
 import { useFrame } from '@react-three/fiber'
 import type { Group } from 'three'
 
@@ -53,6 +54,13 @@ export type ModelProps = {
   wasSelected: boolean
   onClick?: (e: { stopPropagation: () => void }) => void
   children?: ReactNode
+  movePreview?: MovePreview | null
+  onPreviewHover?: (
+    preview: MovePreview | null,
+    clientX: number,
+    clientY: number,
+    destKey?: string | null,
+  ) => void
 }
 
 const SELECT_LIFT = 0.35
@@ -92,6 +100,9 @@ export const MeshWrapper: FC<ModelProps> = ({
   scale = [0.15, 0.15, 0.15],
   meshScale = 0.03,
   materialVariant = 'metal',
+  canMoveHere,
+  movePreview = null,
+  onPreviewHover,
 }) => {
   const pieceRef = useRef<Group>(null)
   const finishRef = useRef(finishMovingPiece)
@@ -217,9 +228,21 @@ export const MeshWrapper: FC<ModelProps> = ({
       onPointerOver={(e) => {
         e.stopPropagation()
         document.body.style.cursor = 'pointer'
+        if (canMoveHere && onPreviewHover) {
+          const ne = e.nativeEvent
+          const destKey = `${canMoveHere.x},${canMoveHere.y}`
+          onPreviewHover(movePreview, ne.clientX, ne.clientY, destKey)
+        }
+      }}
+      onPointerMove={(e) => {
+        if (!canMoveHere || !onPreviewHover || !movePreview) return
+        const ne = e.nativeEvent
+        const destKey = `${canMoveHere.x},${canMoveHere.y}`
+        onPreviewHover(movePreview, ne.clientX, ne.clientY, destKey)
       }}
       onPointerOut={() => {
         document.body.style.cursor = 'auto'
+        if (canMoveHere) onPreviewHover?.(null, 0, 0, null)
       }}
     >
       <group ref={pieceRef}>

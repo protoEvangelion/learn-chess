@@ -28,8 +28,8 @@ export type PieceSetTheme = {
   name: string
   credit: string
   license: string
-  /** classic = root public gltfs; glb = geometry+shared material; textured = keep materials */
-  kind: 'classic' | 'glb' | 'textured'
+  /** classic = root public gltfs; glb = geometry+shared material; textured = keep materials; flat = billboard SVGs */
+  kind: 'classic' | 'glb' | 'textured' | 'flat'
   paths?: {
     pawn: string | PieceColorPaths
     rook: string | PieceColorPaths
@@ -78,9 +78,36 @@ export type RoomTheme = {
   /** Orbit tilt clamps (radians from +Y); defaults ~PI/6 .. PI/2.15 */
   minPolarAngle?: number
   maxPolarAngle?: number
+  /**
+   * Procedural coffee table when the GLB has none.
+   * Top surface sits at `position.y + height` (world, after room group).
+   */
+  table?: {
+    /** Top slab [width, thickness, depth] */
+    topSize: Vec3
+    /** Floor → top surface */
+    height: number
+    color?: string
+    legColor?: string
+    position?: Vec3
+  }
 }
 
 export const BOARD_THEMES: BoardTheme[] = [
+  {
+    id: 'void',
+    name: 'Void',
+    credit: 'No board — pieces float for room / piece shots',
+    license: 'N/A',
+    modelPath: null,
+    scale: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    showProceduralBorder: false,
+    tileMode: 'hit',
+    previewColor: '#111111',
+    preview: '/assets/previews/boards/void.svg',
+  },
   {
     id: 'procedural',
     name: 'Classic',
@@ -93,7 +120,7 @@ export const BOARD_THEMES: BoardTheme[] = [
     showProceduralBorder: true,
     tileMode: 'solid',
     previewColor: '#8a8a8a',
-    preview: '/assets/previews/boards/classic.svg',
+    preview: '/assets/previews/boards/classic.png',
   },
   {
     id: 'wood',
@@ -108,7 +135,7 @@ export const BOARD_THEMES: BoardTheme[] = [
     showProceduralBorder: false,
     tileMode: 'hit',
     previewColor: '#6b4423',
-    preview: '/assets/previews/boards/walnut.svg',
+    preview: '/assets/previews/boards/walnut.png',
   },
   {
     id: 'retropc',
@@ -124,7 +151,7 @@ export const BOARD_THEMES: BoardTheme[] = [
     showProceduralBorder: false,
     tileMode: 'hit',
     previewColor: '#2a4a3a',
-    preview: '/assets/previews/boards/retropc.svg',
+    preview: '/assets/previews/boards/retropc.png',
   },
   {
     id: 'glass',
@@ -139,7 +166,7 @@ export const BOARD_THEMES: BoardTheme[] = [
     showProceduralBorder: false,
     tileMode: 'hit',
     previewColor: '#7aa0b8',
-    preview: '/assets/previews/boards/glass.svg',
+    preview: '/assets/previews/boards/glass.png',
   },
   {
     id: 'chessset',
@@ -154,7 +181,7 @@ export const BOARD_THEMES: BoardTheme[] = [
     showProceduralBorder: false,
     tileMode: 'hit',
     previewColor: '#dcc95c',
-    preview: '/assets/previews/boards/chessset.svg',
+    preview: '/assets/previews/boards/chessset.png',
   },
   {
     id: 'verfassen',
@@ -169,7 +196,7 @@ export const BOARD_THEMES: BoardTheme[] = [
     showProceduralBorder: false,
     tileMode: 'hit',
     previewColor: '#b87333',
-    preview: '/assets/previews/boards/verfassen.svg',
+    preview: '/assets/previews/boards/verfassen.png',
   },
 ]
 
@@ -183,7 +210,7 @@ export const PIECE_SETS: PieceSetTheme[] = [
     wrapperScale: 0.15,
     meshScale: 0.03,
     previewColor: '#c0c0c0',
-    preview: '/assets/previews/pieces/metal.svg',
+    preview: '/assets/previews/pieces/metal.png',
   },
   {
     id: 'retropc',
@@ -227,10 +254,10 @@ export const PIECE_SETS: PieceSetTheme[] = [
       queen: -Math.PI / 2,
       king: -Math.PI / 2,
     },
-    wrapperScale: 1,
+    wrapperScale: 0.88,
     meshScale: 1,
     previewColor: '#3d6b5c',
-    preview: '/assets/previews/pieces/retropc.svg',
+    preview: '/assets/previews/pieces/retropc.png',
   },
   {
     id: 'glass',
@@ -268,7 +295,7 @@ export const PIECE_SETS: PieceSetTheme[] = [
     wrapperScale: 1,
     meshScale: 1,
     previewColor: '#7aa0b8',
-    preview: '/assets/previews/pieces/glass.svg',
+    preview: '/assets/previews/pieces/glass.png',
   },
   {
     id: 'chessset',
@@ -279,34 +306,34 @@ export const PIECE_SETS: PieceSetTheme[] = [
     kind: 'textured',
     paths: {
       pawn: {
-        white: '/assets/pieces/chessset/pawn-w.glb?v=3',
-        black: '/assets/pieces/chessset/pawn-b.glb?v=3',
+        white: '/assets/pieces/chessset/pawn-w.glb?v=4',
+        black: '/assets/pieces/chessset/pawn-b.glb?v=4',
       },
       rook: {
-        white: '/assets/pieces/chessset/rook-w.glb?v=3',
-        black: '/assets/pieces/chessset/rook-b.glb?v=3',
+        white: '/assets/pieces/chessset/rook-w.glb?v=4',
+        black: '/assets/pieces/chessset/rook-b.glb?v=4',
       },
       knight: {
-        white: '/assets/pieces/chessset/knight-w.glb?v=3',
-        black: '/assets/pieces/chessset/knight-b.glb?v=3',
+        white: '/assets/pieces/chessset/knight-w.glb?v=4',
+        black: '/assets/pieces/chessset/knight-b.glb?v=4',
       },
       bishop: {
-        white: '/assets/pieces/chessset/bishop-w.glb?v=3',
-        black: '/assets/pieces/chessset/bishop-b.glb?v=3',
+        white: '/assets/pieces/chessset/bishop-w.glb?v=4',
+        black: '/assets/pieces/chessset/bishop-b.glb?v=4',
       },
       queen: {
-        white: '/assets/pieces/chessset/queen-w.glb?v=3',
-        black: '/assets/pieces/chessset/queen-b.glb?v=3',
+        white: '/assets/pieces/chessset/queen-w.glb?v=4',
+        black: '/assets/pieces/chessset/queen-b.glb?v=4',
       },
       king: {
-        white: '/assets/pieces/chessset/king-w.glb?v=3',
-        black: '/assets/pieces/chessset/king-b.glb?v=3',
+        white: '/assets/pieces/chessset/king-w.glb?v=4',
+        black: '/assets/pieces/chessset/king-b.glb?v=4',
       },
     },
     wrapperScale: 1,
     meshScale: 1,
     previewColor: '#dcc95c',
-    preview: '/assets/previews/pieces/chessset.svg',
+    preview: '/assets/previews/pieces/chessset.png',
   },
   {
     id: 'verfassen',
@@ -344,7 +371,45 @@ export const PIECE_SETS: PieceSetTheme[] = [
     wrapperScale: 1,
     meshScale: 1,
     previewColor: '#b87333',
-    preview: '/assets/previews/pieces/verfassen.svg',
+    preview: '/assets/previews/pieces/verfassen.png',
+  },
+  {
+    id: 'flat',
+    name: 'Flat (Neo-style)',
+    credit:
+      'Kaneo — Neo-inspired set by SmallChess (CC BY 4.0), https://github.com/SmallChess/chess-pieces',
+    license: 'CC-BY-4.0',
+    kind: 'flat',
+    paths: {
+      pawn: {
+        white: '/assets/pieces-2d/pawn-w.png',
+        black: '/assets/pieces-2d/pawn-b.png',
+      },
+      rook: {
+        white: '/assets/pieces-2d/rook-w.png',
+        black: '/assets/pieces-2d/rook-b.png',
+      },
+      knight: {
+        white: '/assets/pieces-2d/knight-w.png',
+        black: '/assets/pieces-2d/knight-b.png',
+      },
+      bishop: {
+        white: '/assets/pieces-2d/bishop-w.png',
+        black: '/assets/pieces-2d/bishop-b.png',
+      },
+      queen: {
+        white: '/assets/pieces-2d/queen-w.png',
+        black: '/assets/pieces-2d/queen-b.png',
+      },
+      king: {
+        white: '/assets/pieces-2d/king-w.png',
+        black: '/assets/pieces-2d/king-b.png',
+      },
+    },
+    wrapperScale: 0.95,
+    meshScale: 1,
+    previewColor: '#e8dcc8',
+    preview: '/assets/pieces-2d/queen-w.png',
   },
 ]
 
@@ -361,7 +426,7 @@ export const ROOM_THEMES: RoomTheme[] = [
     background: '#0b0b0b',
     hdr: '/dawn.hdr',
     previewColor: '#0b0b0b',
-    preview: '/assets/previews/rooms/void.svg',
+    preview: '/assets/previews/rooms/void.png',
   },
   {
     id: 'dining',
@@ -379,13 +444,68 @@ export const ROOM_THEMES: RoomTheme[] = [
     background: '#1a1814',
     hdr: '/dawn.hdr',
     previewColor: '#c4b49a',
-    preview: '/assets/previews/rooms/dining.svg',
+    preview: '/assets/previews/rooms/dining.png',
     cameraPosition: [0.07, 13.552, 12.403],
     cameraFov: 40,
     minDistance: 5,
     maxDistance: 45,
     minPolarAngle: 0.524,
     maxPolarAngle: 1.461,
+  },
+  {
+    id: 'realistic',
+    name: 'Realistic',
+    credit:
+      'https://sketchfab.com/3d-models/realistic-room-7b65ce7710b442d9932440d5b9812287',
+    license: 'See Sketchfab listing / CC-BY if applicable',
+    modelPath: '/assets/rooms/realistic/room.glb?v=4',
+    scale: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    // Lift board so underside sits on coffee-table top (baked topY ≈ 0.08)
+    boardOffset: [0, 0.3, 0],
+    background: '#1c1814',
+    // Sharp outdoor HDR (Poly Haven) — still one env cubemap, FPS-friendly
+    hdr: '/assets/hdr/qwantani_noon_2k.hdr',
+    previewColor: '#8a7a68',
+    preview: '/assets/previews/rooms/realistic.png',
+    cameraPosition: [0.1, 11, 12],
+    cameraFov: 40,
+    minDistance: 5,
+    maxDistance: 20,
+    minPolarAngle: 0.45,
+    maxPolarAngle: 1.4,
+  },
+  {
+    id: 'simpsons',
+    name: 'Simpsons',
+    credit:
+      'https://sketchfab.com/3d-models/the-simpsons-living-room-24f9058a77ef4f9ab172d6d06954bc82',
+    license: 'CC-BY (cyanarion) — procedural table by this project',
+    modelPath: '/assets/rooms/simpsons/room.glb?v=2',
+    scale: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    // Live view dump (simpsons / glass / verfassen)
+    boardOffset: [0, -8.35, 4.5],
+    table: {
+      // ~board / 0.55 ≈ 16.6 short side
+      topSize: [16.6, 0.28, 16.6],
+      height: 3.1,
+      color: '#6b3f24',
+      legColor: '#4a2c18',
+      position: [0, -12, 5],
+    },
+    background: '#2a1f14',
+    hdr: '/dawn.hdr',
+    previewColor: '#f2c94c',
+    preview: '/assets/previews/rooms/simpsons.png',
+    cameraPosition: [0.185, -3.951, 24.009],
+    cameraFov: 40,
+    minDistance: 8,
+    maxDistance: 20,
+    minPolarAngle: 0.35,
+    maxPolarAngle: 1.35,
   },
 ]
 
@@ -395,7 +515,9 @@ export const ROOM_KEY = 'chess-3d:roomId'
 export const MUTE_KEY = 'chess-3d:muted'
 export const VOLUME_KEY = 'chess-3d:volume'
 export const BEST_MOVE_KEY = 'chess-3d:showBestMove'
+export const BEST_MOVE_DELAY_KEY = 'chess-3d:bestMoveDelaySec'
 export const FPS_KEY = 'chess-3d:showFps'
+export const MOVE_INDICATORS_KEY = 'chess-3d:showMoveIndicators'
 
 export function loadBoardId(): string {
   const id = localStorage.getItem(BOARD_KEY)
@@ -425,8 +547,21 @@ export function loadShowBestMove(): boolean {
   return localStorage.getItem(BEST_MOVE_KEY) === '1'
 }
 
+/** Seconds to wait before showing the best-move arrow. Default 5. */
+export function loadBestMoveDelaySec(): number {
+  const raw = localStorage.getItem(BEST_MOVE_DELAY_KEY)
+  if (raw === null) return 5
+  const v = Number(raw)
+  return Number.isFinite(v) ? Math.min(30, Math.max(0, v)) : 5
+}
+
 export function loadShowFps(): boolean {
   return localStorage.getItem(FPS_KEY) === '1'
+}
+
+/** Move-safety washes/icons + threatened-piece rings. Default on. */
+export function loadShowMoveIndicators(): boolean {
+  return localStorage.getItem(MOVE_INDICATORS_KEY) !== '0'
 }
 
 export function getBoardTheme(id: string): BoardTheme {

@@ -1,0 +1,8 @@
+Kaneo chess pieces (Neo-inspired)
+Source: https://github.com/SmallChess/chess-pieces (chess_kaneo/)
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+Attribution: SmallChess / Kaneo piece set
+
+These are used for drill-mode flat billboards. They are inspired by the
+look of Chess.com’s Neo set but are an independent CC-BY design — Chess.com
+Neo artwork is proprietary and is not bundled here.

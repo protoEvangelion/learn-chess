@@ -1,6 +1,14 @@
 import type { Board, Position } from '../board'
 import type { Move, MoveFunction, Piece, PieceFactory } from './'
-import { moveTypes, getFarMoves, getPiece, getMove, getBasePiece } from './'
+import {
+  moveTypes,
+  getFarMoves,
+  getPiece,
+  getMove,
+  getBasePiece,
+  isKingInCheck,
+  willBeInCheck,
+} from './'
 import type { Rook } from './rook'
 import { isRook } from './rook'
 
@@ -8,8 +16,15 @@ export function isKing(value: King | Piece | null): value is King {
   return value?.type === `king`
 }
 
-const canCastleKing = (king: King, board: Board): Move[] => {
+const canCastleKing = (
+  king: King,
+  board: Board,
+  propagateDetectCheck: boolean,
+): Move[] => {
   if (king.hasMoved) return []
+  // Cannot castle out of check.
+  if (propagateDetectCheck && isKingInCheck(board, king.color)) return []
+
   const possibleRookPositions: Move[] = []
   const rook = getPiece(board, {
     x: king.position.x + 3,
@@ -43,11 +58,32 @@ const canCastleKing = (king: King, board: Board): Move[] => {
       rookNewPosition: { x: right ? 5 : 3, y: king.position.y },
     },
   })
-  if (isRook(rook) && !rook.hasMoved && spacesToRight.length === 2) {
+
+  const safeCastle = (right: boolean): boolean => {
+    if (!propagateDetectCheck) return true
+    // King may not pass through or land on a checked square (e1→f1→g1 / e1→d1→c1).
+    const dir = right ? 1 : -1
+    for (const dist of [1, 2]) {
+      if (willBeInCheck(king, board, { x: dir * dist, y: 0 })) return false
+    }
+    return true
+  }
+
+  if (
+    isRook(rook) &&
+    !rook.hasMoved &&
+    spacesToRight.length === 2 &&
+    safeCastle(true)
+  ) {
     possibleRookPositions.push(props(true))
   }
 
-  if (isRook(rook2) && !rook2.hasMoved && spacesToLeft.length === 3) {
+  if (
+    isRook(rook2) &&
+    !rook2.hasMoved &&
+    spacesToLeft.length === 3 &&
+    safeCastle(false)
+  ) {
     possibleRookPositions.push(props(false))
   }
   return possibleRookPositions
@@ -66,7 +102,7 @@ export const kingMoves: MoveFunction<King> = ({
     moves.push(move)
   }
 
-  const possibleCastles = canCastleKing(piece, board)
+  const possibleCastles = canCastleKing(piece, board, propagateDetectCheck)
 
   return [...moves, ...possibleCastles]
 }

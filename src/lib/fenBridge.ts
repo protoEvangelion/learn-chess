@@ -232,25 +232,51 @@ export function readGameIdFromUrl(
   return id.trim()
 }
 
+/** Which drawer is open — at most one. */
+export type PanelId = 'settings' | 'coach' | 'analysis' | 'drill'
+
+export function readPanelFromUrl(
+  search = window.location.search,
+): PanelId | null {
+  const p = new URLSearchParams(search).get('panel')
+  // Legacy import panel folded into analysis
+  if (p === 'import') return 'analysis'
+  if (p === 'settings' || p === 'coach' || p === 'analysis' || p === 'drill') {
+    return p
+  }
+  return null
+}
+
 export type UrlGameState = {
   fen: string
   gameId: string
   idx: number
+  panel?: PanelId | null
 }
 
-function toLocation(fen: string, gameId: string): string {
+function toLocation(
+  fen: string,
+  gameId: string,
+  panel: PanelId | null | undefined = undefined,
+): string {
   const url = new URL(window.location.href)
   if (fen === START_FEN) url.searchParams.delete('fen')
   else url.searchParams.set('fen', fen)
   if (gameId) url.searchParams.set('gameId', gameId)
   else url.searchParams.delete('gameId')
+  // undefined = keep whatever is already in the URL
+  const nextPanel =
+    panel === undefined ? readPanelFromUrl(url.search) : panel
+  if (nextPanel) url.searchParams.set('panel', nextPanel)
+  else url.searchParams.delete('panel')
   return `${url.pathname}${url.search}${url.hash}`
 }
 
 export function replaceGameInUrl(fen: string, gameId: string, idx = 0) {
-  const next = toLocation(fen, gameId)
+  const panel = readPanelFromUrl()
+  const next = toLocation(fen, gameId, panel)
   window.history.replaceState(
-    { fen, gameId, idx } satisfies UrlGameState,
+    { fen, gameId, idx, panel } satisfies UrlGameState,
     '',
     next,
   )
@@ -262,9 +288,30 @@ export function pushGameToUrl(
   gameId: string,
   idx: number,
 ): boolean {
-  const next = toLocation(fen, gameId)
+  const panel = readPanelFromUrl()
+  const next = toLocation(fen, gameId, panel)
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
   if (next === current) return false
-  window.history.pushState({ fen, gameId, idx } satisfies UrlGameState, '', next)
+  window.history.pushState(
+    { fen, gameId, idx, panel } satisfies UrlGameState,
+    '',
+    next,
+  )
   return true
+}
+
+/** Open/close settings or coach without adding a history entry. */
+export function replacePanelInUrl(panel: PanelId | null) {
+  const fen = readFenFromUrl() ?? START_FEN
+  const gameId = readGameIdFromUrl() ?? ''
+  const idx =
+    typeof (window.history.state as UrlGameState | null)?.idx === 'number'
+      ? (window.history.state as UrlGameState).idx
+      : 0
+  const next = toLocation(fen, gameId, panel)
+  window.history.replaceState(
+    { fen, gameId, idx, panel } satisfies UrlGameState,
+    '',
+    next,
+  )
 }

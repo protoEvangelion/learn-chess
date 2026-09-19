@@ -26,12 +26,14 @@ function getHowl(id: SfxId): Howl {
 export function setMuted(next: boolean) {
   muted = next
   localStorage.setItem(MUTE_KEY, next ? '1' : '0')
+  void import('@/lib/music').then((m) => m.syncMusicFromSfx())
 }
 
 export function setVolume(next: number) {
   volume = Math.min(1, Math.max(0, next))
   localStorage.setItem(VOLUME_KEY, String(volume))
   for (const h of cache.values()) h.volume(volume)
+  void import('@/lib/music').then((m) => m.syncMusicFromSfx())
 }
 
 export function getMuted() {
@@ -52,4 +54,5 @@ export function playSfx(id: SfxId) {
 /** Warm-load clips after first gesture. */
 export function unlockSfx() {
   for (const id of Object.keys(sources) as SfxId[]) getHowl(id)
+  void import('@/lib/music').then((m) => m.unlockMusic())
 }

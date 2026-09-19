@@ -1,5 +1,5 @@
 import type { Dispatch, FC, SetStateAction } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Board, Position, Tile } from '@logic/board'
 import { checkIfPositionsMatch, copyBoard } from '@logic/board'
 import type { Color, GameOverType, Move, Piece } from '@logic/pieces'
@@ -29,12 +29,24 @@ import { type MovingTo, useGameState } from '@/state/game'
 import type { BoardTheme, PieceSetTheme, RoomTheme } from '@/lib/themes'
 import { playSfx } from '@/lib/sfx'
 import { setLiveView } from '@/lib/viewDebug'
+import type { MovePreview } from '@/logic/movePreview'
+import {
+  applyMoveOnCopy,
+  pieceSafetyMap,
+  positionKey,
+  previewByDestination,
+  tooltipLinesForPreview,
+} from '@/logic/movePreview'
+
+const ZERO_OFFSET: [number, number, number] = [0, 0, 0]
 
 type ThreeMouseEvent = { stopPropagation: () => void }
 
 export type GameOver = {
-  type: GameOverType
-  winner: Color
+  /** checkmate/stalemate from live play; resign/draw from imported PGN. */
+  type: GameOverType | 'resign' | 'draw'
+  /** Null only for drawn imported games. */
+  winner: Color | null
 }
 
 export const BoardComponent: FC<{
@@ -57,6 +69,12 @@ export const BoardComponent: FC<{
   pieceSetId?: string
   /** Left-drag: orbit vs screen pan */
   orbitDragMode?: 'rotate' | 'pan'
+  /** Move-safety cues + threatened-piece rings */
+  showMoveIndicators?: boolean
+  /** When true, ignore piece clicks / engine animation (imported review). */
+  readOnly?: boolean
+  /** Return false to reject a player move attempt (e.g. drill mode). */
+  validateMove?: (move: Move) => boolean
 }> = ({
   selected,
   setSelected,
@@ -76,6 +94,9 @@ export const BoardComponent: FC<{
   boardId = boardTheme.id,
   pieceSetId = pieceSet.id,
   orbitDragMode = 'rotate',
+  showMoveIndicators = true,
+  readOnly = false,
+  validateMove,
 }) => {
   const [lastSelected, setLastSelected] = useState<Tile | null>(null)
   const turn = useGameState((s) => s.turn)
@@ -97,9 +118,94 @@ export const BoardComponent: FC<{
     x: 0,
     y: 0,
   })
+  const [previewTip, setPreviewTip] = useState<{
+    lines: string[]
+    x: number
+    y: number
+  } | null>(null)
+  /** Legal dest under pointer while a piece is selected — drives after-move rings. */
+  const [hoveredDestKey, setHoveredDestKey] = useState<string | null>(null)
+
+  const movePreviews = useMemo(
+    () =>
+      showMoveIndicators && selected && moves.length
+        ? previewByDestination(board, moves)
+        : null,
+    [board, moves, selected, showMoveIndicators],
+  )
+
+  const safetyBySquare = useMemo(() => {
+    if (!showMoveIndicators) return null
+    let viewBoard = board
+    if (selected && hoveredDestKey) {
+      const move = moves.find(
+        (m) => positionKey(m.newPosition) === hoveredDestKey,
+      )
+      if (move) viewBoard = applyMoveOnCopy(board, move)
+    }
+    return pieceSafetyMap(viewBoard, playerColor)
+  }, [board, hoveredDestKey, moves, playerColor, selected, showMoveIndicators])
+
+  useEffect(() => {
+    if (!selected || !showMoveIndicators) {
+      setPreviewTip(null)
+      setHoveredDestKey(null)
+    }
+  }, [selected, showMoveIndicators])
+
+  useEffect(() => {
+    const id = 'move-preview-tooltip'
+    if (!previewTip) {
+      document.getElementById(id)?.remove()
+      return
+    }
+    let el = document.getElementById(id)
+    if (!el) {
+      el = document.createElement('div')
+      el.id = id
+      el.className = 'move-preview-tooltip'
+      el.setAttribute('role', 'tooltip')
+      document.body.appendChild(el)
+    }
+    el.style.left = `${previewTip.x + 14}px`
+    el.style.top = `${previewTip.y + 14}px`
+    el.replaceChildren(
+      ...previewTip.lines.map((line) => {
+        const row = document.createElement('div')
+        row.textContent = line
+        return row
+      }),
+    )
+  }, [previewTip])
+
+  useEffect(() => {
+    return () => {
+      document.getElementById('move-preview-tooltip')?.remove()
+    }
+  }, [])
+
+  const handlePreviewHover = (
+    preview: MovePreview | null,
+    clientX: number,
+    clientY: number,
+    destKey: string | null = null,
+  ) => {
+    if (!preview) {
+      setPreviewTip(null)
+      setHoveredDestKey(null)
+      return
+    }
+    if (destKey != null) setHoveredDestKey(destKey)
+    setPreviewTip({
+      lines: tooltipLinesForPreview(preview),
+      x: clientX,
+      y: clientY,
+    })
+  }
 
   const selectThisPiece = (e: ThreeMouseEvent, tile: Tile | null) => {
     e.stopPropagation()
+    if (readOnly) return
     if (turn !== playerColor) return
     if (!tile?.piece?.type && !selected) return
     if (!tile?.piece) {
@@ -125,7 +231,7 @@ export const BoardComponent: FC<{
   }
 
   useEffect(() => {
-    if (!pendingEngineMove || movingTo) return
+    if (readOnly || !pendingEngineMove || movingTo) return
     const target = getTile(board, pendingEngineMove.newPosition)
     if (!target) {
       onEngineMoveConsumed?.()
@@ -133,7 +239,14 @@ export const BoardComponent: FC<{
     }
     setMovingTo({ move: pendingEngineMove, tile: target })
     onEngineMoveConsumed?.()
-  }, [pendingEngineMove, movingTo, board, onEngineMoveConsumed, setMovingTo])
+  }, [
+    readOnly,
+    pendingEngineMove,
+    movingTo,
+    board,
+    onEngineMoveConsumed,
+    setMovingTo,
+  ])
 
   // SFX when a move animation starts
   useEffect(() => {
@@ -240,6 +353,13 @@ export const BoardComponent: FC<{
 
   const startMovingPiece = (e: ThreeMouseEvent, tile: Tile, nextTile: Move) => {
     e.stopPropagation()
+    if (readOnly) return
+    if (validateMove && !validateMove(nextTile)) {
+      playSfx('check')
+      setSelected(null)
+      setMoves([])
+      return
+    }
     const newMovingTo: MovingTo = { move: nextTile, tile }
     setMovingTo(newMovingTo)
   }
@@ -251,6 +371,12 @@ export const BoardComponent: FC<{
 
   const kingInCheck = isKingInCheck(board, turn)
   const checkedKingPos = kingInCheck ? findKingPosition(board, turn) : null
+  const oppKingPos = findKingPosition(board, oppositeColor(playerColor))
+  const hoveredPreview =
+    hoveredDestKey && movePreviews
+      ? (movePreviews.get(hoveredDestKey) ?? null)
+      : null
+  const showOppCheckRing = !!hoveredPreview?.givesCheck
 
   const captureBurst =
     movingTo?.move.capture != null
@@ -266,13 +392,16 @@ export const BoardComponent: FC<{
 
   const s = pieceSet.wrapperScale
   const materialVariant =
-    pieceSet.kind === 'textured' ? 'textured' : 'metal'
+    pieceSet.kind === 'textured' || pieceSet.kind === 'flat'
+      ? 'textured'
+      : 'metal'
 
   const minPolar = roomTheme.minPolarAngle ?? Math.PI / 6
   const maxPolar = roomTheme.maxPolarAngle ?? Math.PI / 2.15
   const minDist = roomTheme.minDistance ?? 7
   const maxDist = roomTheme.maxDistance ?? 28
-  const target = roomTheme.boardOffset ?? ([0, 0, 0] as [number, number, number])
+  // Stable fallback — a fresh [0,0,0] each render makes OrbitControls reset target.
+  const target = roomTheme.boardOffset ?? ZERO_OFFSET
 
   return (
     <group position={[-3.5, -0.5, -3.5]}>
@@ -387,6 +516,21 @@ export const BoardComponent: FC<{
                 isTip={isTip}
                 isCheck={isCheck}
                 isLastMove={isLastMove}
+                pieceSafety={
+                  safetyBySquare?.get(positionKey(tile.position)) ?? null
+                }
+                isOppCheckPreview={
+                  showOppCheckRing &&
+                  checkIfPositionsMatch(tile.position, oppKingPos)
+                }
+                movePreview={
+                  canMoveHere
+                    ? (movePreviews?.get(
+                        positionKey(canMoveHere.newPosition),
+                      ) ?? null)
+                    : null
+                }
+                onPreviewHover={handlePreviewHover}
               />
               {tile.piece && (
                 <MeshWrapper
@@ -404,6 +548,14 @@ export const BoardComponent: FC<{
                       : false
                   }
                   canMoveHere={canMoveHere?.newPosition ?? null}
+                  movePreview={
+                    canMoveHere
+                      ? (movePreviews?.get(
+                          positionKey(canMoveHere.newPosition),
+                        ) ?? null)
+                      : null
+                  }
+                  onPreviewHover={handlePreviewHover}
                   movingTo={
                     checkIfPositionsMatch(
                       tile.position,

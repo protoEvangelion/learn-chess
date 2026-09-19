@@ -418,6 +418,50 @@ for (const spec of pieceSpecs) {
   const tris = pieceTris.get(key)
   if (!tris?.length) throw new Error(`No triangles for ${key} (${outName})`)
   const raw = extractTriangles(tris, worldVerts, worldNormals, srcUv, srcIndices)
+
+  // Subdivided board-tile faces slip past MIN_BOARD_TILE_FP — drop them here.
+  {
+    const keepIdx = []
+    const remap = new Map()
+    const positions = []
+    const normals = []
+    const uvs = []
+    const add = (vi) => {
+      if (remap.has(vi)) return remap.get(vi)
+      const i = positions.length / 3
+      positions.push(
+        raw.positions[vi * 3],
+        raw.positions[vi * 3 + 1],
+        raw.positions[vi * 3 + 2],
+      )
+      normals.push(
+        raw.normals[vi * 3],
+        raw.normals[vi * 3 + 1],
+        raw.normals[vi * 3 + 2],
+      )
+      uvs.push(raw.uvs[vi * 2], raw.uvs[vi * 2 + 1])
+      remap.set(vi, i)
+      return i
+    }
+    for (let t = 0; t < raw.indices.length / 3; t++) {
+      const a = raw.indices[t * 3]
+      const b = raw.indices[t * 3 + 1]
+      const c = raw.indices[t * 3 + 2]
+      const maxY = Math.max(
+        raw.positions[a * 3 + 1],
+        raw.positions[b * 3 + 1],
+        raw.positions[c * 3 + 1],
+      )
+      if (maxY <= TILE_TOP_Y + 1e-4) continue
+      keepIdx.push(add(a), add(b), add(c))
+    }
+    if (!keepIdx.length) throw new Error(`tile strip emptied ${outName}`)
+    raw.positions = new Float32Array(positions)
+    raw.normals = new Float32Array(normals)
+    raw.uvs = new Float32Array(uvs)
+    raw.indices = new Uint32Array(keepIdx)
+  }
+
   const box = new THREE.Box3()
   for (let i = 0; i < raw.positions.length; i += 3) {
     box.expandByPoint(

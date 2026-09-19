@@ -1,15 +1,21 @@
 import { uciToSquares } from './uci'
 
-/** Difficulty 1–8 → Stockfish UCI settings (approx.). */
+/**
+ * Difficulty 1–8. Elo hints match Lichess AI.
+ *
+ * Official Stockfish Skill Level min is 0 (~1100). Lichess gets ~400 at level 1
+ * with Fairy-Stockfish skill −9. We search at full strength (MultiPV) then pick
+ * with that virtual skill in `pickSkillMove` so 1–3 are actually weaker than 4.
+ */
 export const STRENGTH_LEVELS = {
-  1: { skill: 0, depth: 5, movetime: 50, multiPv: 4, eloHint: '~400' },
-  2: { skill: 0, depth: 5, movetime: 100, multiPv: 4, eloHint: '~500' },
-  3: { skill: 0, depth: 5, movetime: 150, multiPv: 4, eloHint: '~800' },
-  4: { skill: 3, depth: 5, movetime: 200, multiPv: 4, eloHint: '~1100' },
-  5: { skill: 7, depth: 5, movetime: 300, multiPv: 4, eloHint: '~1500' },
-  6: { skill: 11, depth: 8, movetime: 400, multiPv: 4, eloHint: '~1900' },
-  7: { skill: 16, depth: 13, movetime: 500, multiPv: 4, eloHint: '~2300' },
-  8: { skill: 20, depth: 22, movetime: 1000, multiPv: 1, eloHint: '2800+' },
+  1: { skill: -9, depth: 5, multiPv: 8, eloHint: '~400' },
+  2: { skill: -5, depth: 5, multiPv: 6, eloHint: '~500' },
+  3: { skill: -1, depth: 5, multiPv: 4, eloHint: '~800' },
+  4: { skill: 3, depth: 5, multiPv: 4, eloHint: '~1100' },
+  5: { skill: 7, depth: 5, multiPv: 4, eloHint: '~1500' },
+  6: { skill: 11, depth: 8, multiPv: 4, eloHint: '~1900' },
+  7: { skill: 15, depth: 13, multiPv: 4, eloHint: '~2300' },
+  8: { skill: 20, depth: 22, multiPv: 1, eloHint: '2800+' },
 } as const
 
 export type StrengthLevel = keyof typeof STRENGTH_LEVELS
@@ -34,10 +40,23 @@ export type BestMoveResult = {
   line: string
 }
 
+/** MultiPV analysis for coach / arrow (ranked best → 3rd). */
+export type AnalysisResult = {
+  lines: BestMoveResult[]
+}
+
 const ENGINE_URL = '/engines/stockfish-18-lite-single.js'
 
 /** Full-strength analysis settings for best-move arrow / coach. */
-const ANALYSIS = { skill: 20, depth: 18, multiPv: 1 } as const
+const ANALYSIS = { skill: 20, depth: 18, multiPv: 3 } as const
+
+/** Faster single-PV eval for post-game ply tagging. */
+export const REVIEW_ANALYSIS = { skill: 20, depth: 12, multiPv: 1 } as const
+
+export type AnalyzeOpts = {
+  depth?: number
+  multiPv?: number
+}
 
 function parseScore(infoLine: string): { cp: number | null; mate: number | null } {
   const mate = infoLine.match(/\bscore mate (-?\d+)\b/)
@@ -74,6 +93,82 @@ function parsePv(infoLine: string): string {
   const idx = infoLine.indexOf(' pv ')
   if (idx < 0) return ''
   return infoLine.slice(idx + 4).trim()
+}
+
+function parseMultiPv(infoLine: string): number {
+  const m = infoLine.match(/\bmultipv (\d+)\b/)
+  return m ? Number(m[1]) : 1
+}
+
+/** Side-to-move score in cp (mates mapped to a large magnitude). */
+function pickScore(infoLine: string): number {
+  const { cp, mate } = parseScore(infoLine)
+  if (mate != null) return mate > 0 ? 100000 - mate : -100000 - mate
+  return cp ?? 0
+}
+
+export type SkillCandidate = { uci: string; score: number }
+
+/**
+ * Stockfish `Skill::pick_best` (allows skill < 0, which official UCI cannot).
+ * Higher `skill` → more likely to keep the top line.
+ */
+export function pickSkillMove(
+  lines: SkillCandidate[],
+  skill: number,
+): string | null {
+  if (lines.length === 0) return null
+  if (skill >= 20 || lines.length === 1) return lines[0].uci
+
+  let topScore = -Infinity
+  let minScore = Infinity
+  for (const line of lines) {
+    topScore = Math.max(topScore, line.score)
+    minScore = Math.min(minScore, line.score)
+  }
+
+  const pawn = 100
+  const delta = Math.max(1, Math.min(topScore - minScore, pawn))
+  const weakness = 120 - 2 * skill
+  if (weakness <= 1) return lines[0].uci
+
+  let bestUci = lines[0].uci
+  let maxScore = -Infinity
+  for (const line of lines) {
+    const rand = Math.floor(Math.random() * weakness)
+    const push = (weakness * (topScore - line.score) + delta * rand) / 128
+    const adjusted = line.score + push
+    if (adjusted >= maxScore) {
+      maxScore = adjusted
+      bestUci = line.uci
+    }
+  }
+  return bestUci
+}
+
+function infoToLine(
+  infoLine: string,
+  fen: string,
+  fallbackUci?: string,
+): BestMoveResult | null {
+  const pv = parsePv(infoLine)
+  const uci = (pv.split(/\s+/)[0] || fallbackUci || '').trim()
+  if (!uci || uci === '(none)') return null
+  const squares = uciToSquares(uci)
+  if (!squares) return null
+  const sideToMove = (fen.split(/\s+/)[1] === 'b' ? 'b' : 'w') as 'w' | 'b'
+  const raw = parseScore(infoLine)
+  const { whiteCp, whiteMate, evalLabel } = toWhitePerspective(raw, sideToMove)
+  return {
+    uci,
+    from: squares.from,
+    to: squares.to,
+    evalLabel,
+    whiteCp,
+    whiteMate,
+    depth: parseDepth(infoLine) || ANALYSIS.depth,
+    line: pv || uci,
+  }
 }
 
 export class StockfishOpponent {
@@ -154,10 +249,11 @@ export class StockfishOpponent {
 
   private collectUntilBestMove(timeoutMs: number): Promise<{
     bestmove: string
-    lastInfo: string
+    /** Latest info line keyed by multipv index (1-based). */
+    infoByMultiPv: Map<number, string>
   }> {
     return new Promise((resolve, reject) => {
-      let lastInfo = ''
+      const infoByMultiPv = new Map<number, string>()
       const timer = window.setTimeout(() => {
         this.listeners.delete(onLine)
         reject(new Error('Stockfish timed out'))
@@ -165,12 +261,12 @@ export class StockfishOpponent {
 
       const onLine = (line: string) => {
         if (line.startsWith('info ') && line.includes(' pv ')) {
-          lastInfo = line
+          infoByMultiPv.set(parseMultiPv(line), line)
         }
         if (!line.startsWith('bestmove ')) return
         window.clearTimeout(timer)
         this.listeners.delete(onLine)
-        resolve({ bestmove: line, lastInfo })
+        resolve({ bestmove: line, infoByMultiPv })
       }
 
       this.listeners.add(onLine)
@@ -188,21 +284,37 @@ export class StockfishOpponent {
       this.send('isready')
       await this.waitFor((l) => l === 'readyok', 10000)
 
-      this.send(`setoption name Skill Level value ${cfg.skill}`)
+      // Full-strength search; virtual skill (including negatives) is applied in JS.
+      this.send('setoption name Skill Level value 20')
+      this.send('setoption name UCI_LimitStrength value false')
       this.send(`setoption name MultiPV value ${cfg.multiPv}`)
       this.send('isready')
       await this.waitFor((l) => l === 'readyok', 10000)
 
       this.send(`position fen ${fen}`)
 
-      const bestPromise = this.waitFor((l) => l.startsWith('bestmove '), 30000)
-      this.send(`go depth ${cfg.depth} movetime ${cfg.movetime}`)
+      const resultPromise = this.collectUntilBestMove(30000)
+      this.send(`go depth ${cfg.depth}`)
 
-      const bestLine = await bestPromise
-      const uci = bestLine.split(/\s+/)[1]
-      if (!uci || uci === '(none)') {
+      const { bestmove, infoByMultiPv } = await resultPromise
+      const bestUci = bestmove.split(/\s+/)[1]
+      if (!bestUci || bestUci === '(none)') {
         throw new Error('Engine returned no move')
       }
+
+      const candidates: SkillCandidate[] = []
+      for (let i = 1; i <= cfg.multiPv; i++) {
+        const info = infoByMultiPv.get(i)
+        if (!info) continue
+        const parsed = infoToLine(info, fen, i === 1 ? bestUci : undefined)
+        if (!parsed) continue
+        candidates.push({ uci: parsed.uci, score: pickScore(info) })
+      }
+
+      const uci =
+        cfg.skill >= 20
+          ? bestUci
+          : (pickSkillMove(candidates, cfg.skill) ?? bestUci)
 
       const squares = uciToSquares(uci)
       if (!squares) throw new Error(`Bad engine move: ${uci}`)
@@ -216,8 +328,14 @@ export class StockfishOpponent {
     })
   }
 
-  /** Full-strength local analysis for the green-arrow best move. */
-  getBestMove(fen: string, signal?: AbortSignal): Promise<BestMoveResult> {
+  /** Full-strength MultiPV analysis (up to 3 lines) for arrow / coach. */
+  getBestMove(
+    fen: string,
+    signal?: AbortSignal,
+    opts?: AnalyzeOpts,
+  ): Promise<AnalysisResult> {
+    const depth = opts?.depth ?? ANALYSIS.depth
+    const multiPv = opts?.multiPv ?? ANALYSIS.multiPv
     return this.enqueue(async () => {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       await this.init()
@@ -235,7 +353,7 @@ export class StockfishOpponent {
         // Reset any weakened opponent settings before analyzing.
         this.send(`setoption name Skill Level value ${ANALYSIS.skill}`)
         this.send('setoption name UCI_LimitStrength value false')
-        this.send(`setoption name MultiPV value ${ANALYSIS.multiPv}`)
+        this.send(`setoption name MultiPV value ${multiPv}`)
         this.send('isready')
         await this.waitFor((l) => l === 'readyok', 10000)
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
@@ -243,35 +361,42 @@ export class StockfishOpponent {
         this.send(`position fen ${fen}`)
 
         const resultPromise = this.collectUntilBestMove(45000)
-        // Depth-only so lite WASM isn’t cut off early by a short movetime.
-        this.send(`go depth ${ANALYSIS.depth}`)
+        this.send(`go depth ${depth}`)
 
-        const { bestmove, lastInfo } = await resultPromise
+        const { bestmove, infoByMultiPv } = await resultPromise
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-        const uci = bestmove.split(/\s+/)[1]
-        if (!uci || uci === '(none)') {
+        const bestUci = bestmove.split(/\s+/)[1]
+        const lines: BestMoveResult[] = []
+        const maxPv = Math.max(multiPv, ...infoByMultiPv.keys(), 1)
+        for (let i = 1; i <= maxPv && lines.length < multiPv; i++) {
+          const info = infoByMultiPv.get(i)
+          if (!info) continue
+          const parsed = infoToLine(info, fen, i === 1 ? bestUci : undefined)
+          if (parsed) lines.push(parsed)
+        }
+
+        if (lines.length === 0 && bestUci && bestUci !== '(none)') {
+          const squares = uciToSquares(bestUci)
+          if (squares) {
+            lines.push({
+              uci: bestUci,
+              from: squares.from,
+              to: squares.to,
+              evalLabel: '—',
+              whiteCp: null,
+              whiteMate: null,
+              depth,
+              line: bestUci,
+            })
+          }
+        }
+
+        if (lines.length === 0) {
           throw new Error('Engine returned no best move')
         }
 
-        const squares = uciToSquares(uci)
-        if (!squares) throw new Error(`Bad engine move: ${uci}`)
-
-        const line = parsePv(lastInfo) || uci
-        const sideToMove = (fen.split(/\s+/)[1] === 'b' ? 'b' : 'w') as 'w' | 'b'
-        const raw = lastInfo ? parseScore(lastInfo) : { cp: null, mate: null }
-        const { whiteCp, whiteMate, evalLabel } = toWhitePerspective(raw, sideToMove)
-
-        return {
-          uci,
-          from: squares.from,
-          to: squares.to,
-          evalLabel,
-          whiteCp,
-          whiteMate,
-          depth: lastInfo ? parseDepth(lastInfo) : ANALYSIS.depth,
-          line,
-        }
+        return { lines }
       } finally {
         signal?.removeEventListener('abort', stopOnAbort)
       }

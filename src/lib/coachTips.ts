@@ -1,39 +1,57 @@
-export type CoachTips = {
-  tip1: string
-  tip2: string
-  tip3: string
+/** Single-card coach reply (move + alternatives in one explanation). */
+export type CoachExplainResult = {
+  explanation: string
 }
 
-/** Parse progressive coach tips from a single LLM reply. */
-export function parseCoachTips(raw: string): CoachTips | null {
+/**
+ * Parse `{ "explanation": "..." }` (also accepts legacy tip1/tip2/tip3 / compareNote).
+ */
+export function parseCoachExplain(raw: string): CoachExplainResult | null {
   const text = raw.trim()
   if (!text) return null
 
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (jsonMatch) {
     try {
-      const parsed = JSON.parse(jsonMatch[0]) as Partial<CoachTips>
-      if (parsed.tip1 && parsed.tip2 && parsed.tip3) {
-        return {
-          tip1: String(parsed.tip1).trim(),
-          tip2: String(parsed.tip2).trim(),
-          tip3: String(parsed.tip3).trim(),
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        explanation?: unknown
+        compareNote?: unknown
+        options?: Array<{ tip1?: unknown; tip2?: unknown; tip3?: unknown }>
+        tip1?: unknown
+        tip2?: unknown
+        tip3?: unknown
+      }
+
+      if (typeof parsed.explanation === 'string' && parsed.explanation.trim()) {
+        return { explanation: parsed.explanation.trim() }
+      }
+
+      // Legacy MultiPV progressive tips → one combined card.
+      const parts: string[] = []
+      if (typeof parsed.compareNote === 'string' && parsed.compareNote.trim()) {
+        parts.push(parsed.compareNote.trim())
+      }
+      if (Array.isArray(parsed.options) && parsed.options[0]) {
+        const o = parsed.options[0]
+        for (const key of ['tip1', 'tip2', 'tip3'] as const) {
+          const v = o[key]
+          if (typeof v === 'string' && v.trim()) parts.push(v.trim())
+        }
+      } else {
+        for (const key of ['tip1', 'tip2', 'tip3'] as const) {
+          const v = parsed[key]
+          if (typeof v === 'string' && v.trim()) parts.push(v.trim())
         }
       }
+      if (parts.length > 0) return { explanation: parts.join('\n\n') }
     } catch {
-      /* fall through to labeled format */
+      /* fall through */
     }
   }
 
-  const tip1 = text.match(/tip\s*1\s*[:\-]\s*([\s\S]*?)(?=tip\s*2\s*[:\-]|$)/i)
-  const tip2 = text.match(/tip\s*2\s*[:\-]\s*([\s\S]*?)(?=tip\s*3\s*[:\-]|$)/i)
-  const tip3 = text.match(/tip\s*3\s*[:\-]\s*([\s\S]*?)$/i)
-  if (tip1?.[1]?.trim() && tip2?.[1]?.trim() && tip3?.[1]?.trim()) {
-    return {
-      tip1: tip1[1].trim(),
-      tip2: tip2[1].trim(),
-      tip3: tip3[1].trim(),
-    }
+  // Plain prose fallback
+  if (text.length > 20 && !text.startsWith('{')) {
+    return { explanation: text }
   }
 
   return null

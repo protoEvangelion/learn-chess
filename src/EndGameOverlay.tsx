@@ -16,13 +16,23 @@ type Props = {
   outcome: Outcome
   onNewGame: () => void | Promise<void>
   onDismiss: () => void
+  onReviewGame?: () => void
+  reviewBusy?: boolean
+  reviewProgress?: string | null
+  reviewError?: string | null
+  canReview?: boolean
 }
 
 function EndGameCard({
   outcome,
   onNewGame,
   onDismiss,
+  onReviewGame,
   starting,
+  reviewBusy,
+  reviewProgress,
+  reviewError,
+  canReview,
 }: Props & { starting: boolean }) {
   return (
     <div className={`endgame-card endgame-${outcome}`}>
@@ -39,11 +49,20 @@ function EndGameCard({
       >
         {MESSAGES[outcome]}
       </PixelHeading>
+      {reviewProgress && (
+        <p className="endgame-review-status">{reviewProgress}</p>
+      )}
+      {reviewError && <p className="error">{reviewError}</p>}
       <div className="endgame-actions">
-        <PixelButton onClick={onNewGame} disabled={starting}>
+        {canReview && onReviewGame && (
+          <PixelButton onClick={onReviewGame} disabled={starting || reviewBusy}>
+            {reviewBusy ? 'Reviewing…' : 'Review game'}
+          </PixelButton>
+        )}
+        <PixelButton onClick={onNewGame} disabled={starting || reviewBusy}>
           {starting ? 'Starting…' : 'New game'}
         </PixelButton>
-        <PixelButton ghost onClick={onDismiss} disabled={starting}>
+        <PixelButton ghost onClick={onDismiss} disabled={starting || reviewBusy}>
           Close
         </PixelButton>
       </div>
@@ -51,15 +70,23 @@ function EndGameCard({
   )
 }
 
-export function EndGameOverlay({ outcome, onNewGame, onDismiss }: Props) {
+export function EndGameOverlay({
+  outcome,
+  onNewGame,
+  onDismiss,
+  onReviewGame,
+  reviewBusy = false,
+  reviewProgress = null,
+  reviewError = null,
+  canReview = false,
+}: Props) {
   const confetti = outcome === 'win'
   const [starting, setStarting] = useState(false)
 
   async function handleNewGame() {
-    if (starting) return
+    if (starting || reviewBusy) return
     setStarting(true)
     try {
-      // Let the border laser lap before tearing down the overlay.
       await new Promise<void>((r) => window.setTimeout(r, 900))
       await onNewGame()
     } catch {
@@ -72,7 +99,12 @@ export function EndGameOverlay({ outcome, onNewGame, onDismiss }: Props) {
       outcome={outcome}
       onNewGame={handleNewGame}
       onDismiss={onDismiss}
+      onReviewGame={onReviewGame}
       starting={starting}
+      reviewBusy={reviewBusy}
+      reviewProgress={reviewProgress}
+      reviewError={reviewError}
+      canReview={canReview}
     />
   )
 
@@ -102,24 +134,24 @@ export function EndGameOverlay({ outcome, onNewGame, onDismiss }: Props) {
           ))}
         </div>
       )}
-      {outcome === 'win' ? (
+      {outcome === 'win' || reviewBusy ? (
         <BorderBeam
           className={[
             'endgame-beam',
-            starting ? 'endgame-beam-loading' : '',
+            starting || reviewBusy ? 'endgame-beam-loading' : '',
           ]
             .filter(Boolean)
             .join(' ')}
           size="md"
           colorVariant="ocean"
           theme="dark"
-          duration={starting ? 1.1 : 2.4}
+          duration={starting || reviewBusy ? 1.1 : 2.4}
           borderRadius={14}
-          strength={starting ? 1.35 : 0.85}
-          brightness={starting ? 2.8 : 1.6}
+          strength={starting || reviewBusy ? 1.35 : 0.85}
+          brightness={starting || reviewBusy ? 2.8 : 1.6}
           saturation={1.6}
           hueRange={50}
-          active={starting}
+          active={starting || reviewBusy}
         >
           {card}
         </BorderBeam>
@@ -131,12 +163,16 @@ export function EndGameOverlay({ outcome, onNewGame, onDismiss }: Props) {
 }
 
 export function outcomeFromResult(
-  gameOver: { type: string; winner: 'white' | 'black' } | null,
+  gameOver: {
+    type: string
+    winner: 'white' | 'black' | null
+  } | null,
   playerColor: 'white' | 'black',
 ): Outcome | null {
   if (!gameOver) return null
-  if (gameOver.type === 'stalemate') return 'draw'
-  if (gameOver.type === 'checkmate') {
+  if (gameOver.type === 'stalemate' || gameOver.type === 'draw') return 'draw'
+  if (gameOver.type === 'checkmate' || gameOver.type === 'resign') {
+    if (!gameOver.winner) return 'over'
     return gameOver.winner === playerColor ? 'win' : 'loss'
   }
   return 'over'

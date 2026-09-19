@@ -1,7 +1,7 @@
 import type { FC } from 'react'
 import { useMemo } from 'react'
-import { useGLTF } from '@react-three/drei'
-import type * as THREE from 'three'
+import { Billboard, useGLTF, useTexture } from '@react-three/drei'
+import * as THREE from 'three'
 import type { GLTF } from 'three-stdlib'
 import type { PieceColorPaths, PieceSetTheme } from '@/lib/themes'
 
@@ -53,10 +53,37 @@ export const PieceModel: FC<{
   if (pieceSet.kind === 'classic') {
     return <ClassicPiece kind={kind} />
   }
+  if (pieceSet.kind === 'flat') {
+    return <FlatPiece kind={kind} pieceSet={pieceSet} color={color} />
+  }
   if (pieceSet.kind === 'textured') {
     return <TexturedPiece kind={kind} pieceSet={pieceSet} color={color} />
   }
   return <GlbPiece kind={kind} pieceSet={pieceSet} color={color} />
+}
+
+const FlatPiece: FC<{
+  kind: PieceKind
+  pieceSet: PieceSetTheme
+  color: string
+}> = ({ kind, pieceSet, color }) => {
+  const path = resolvePath(pieceSet.paths!, kind, color)
+  const texture = useTexture(path)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.anisotropy = 8
+  return (
+    <Billboard follow lockX={false} lockY={false} lockZ={false}>
+      <mesh position={[0, 0.52, 0]} castShadow={false} receiveShadow={false}>
+        <planeGeometry args={[1.12, 1.12]} />
+        <meshBasicMaterial
+          map={texture}
+          transparent
+          depthWrite={false}
+          alphaTest={0.05}
+        />
+      </mesh>
+    </Billboard>
+  )
 }
 
 const ClassicPiece: FC<{ kind: PieceKind }> = ({ kind }) => {
@@ -132,6 +159,16 @@ const KINDS = Object.keys(CLASSIC_PATHS) as PieceKind[]
 export function preloadPieceSet(pieceSet: PieceSetTheme) {
   if (pieceSet.kind === 'classic') {
     for (const p of Object.values(CLASSIC_PATHS)) useGLTF.preload(p)
+    return
+  }
+  if (pieceSet.kind === 'flat') {
+    if (!pieceSet.paths) return
+    for (const kind of KINDS) {
+      const entry = pieceSet.paths[kind]
+      if (!entry || typeof entry === 'string') continue
+      useTexture.preload(entry.white)
+      useTexture.preload(entry.black)
+    }
     return
   }
   if (!pieceSet.paths) return

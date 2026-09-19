@@ -52,16 +52,37 @@ export const pawnMoves: MoveFunction<Pawn> = ({
 
   const moves: Move[] = []
 
-  const movesForward: Position[] = [{ x: 0, y: 1 * colorMultiplier }]
-  if (!hasMoved) {
-    movesForward.push({ x: 0, y: 2 * colorMultiplier })
-  }
-  for (const steps of movesForward) {
-    const move = getMove({ piece, board, steps, propagateDetectCheck })
-    if (move && move.type !== `capture` && move.type !== `captureKing`) {
-      moves.push(move)
-    } else {
-      break
+  const oneForward: Position = { x: 0, y: 1 * colorMultiplier }
+  const twoForward: Position = { x: 0, y: 2 * colorMultiplier }
+
+  // Path occupancy only (ignore check) — a one-step that stays in check must
+  // not prevent a two-step that blocks the check further along the file.
+  const mid = getMove({
+    piece,
+    board,
+    steps: oneForward,
+    propagateDetectCheck: false,
+  })
+  const pathClear =
+    !!mid && mid.type !== `capture` && mid.type !== `captureKing`
+
+  if (pathClear) {
+    const step1 = getMove({
+      piece,
+      board,
+      steps: oneForward,
+      propagateDetectCheck,
+    })
+    if (step1 && step1.type === `valid`) moves.push(step1)
+
+    if (!hasMoved) {
+      const step2 = getMove({
+        piece,
+        board,
+        steps: twoForward,
+        propagateDetectCheck,
+      })
+      if (step2 && step2.type === `valid`) moves.push(step2)
     }
   }
 

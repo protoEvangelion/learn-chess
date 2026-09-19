@@ -2,14 +2,19 @@ import { spawn } from 'node:child_process'
 import { Chess } from 'chess.js'
 import type { Plugin } from 'vite'
 
-export type ExplainRequest = {
-  fen: string
+export type ExplainOption = {
   bestMove: string
   from: string
   to: string
   evalLabel: string
   line: string
+}
+
+export type ExplainRequest = {
+  fen: string
   gameId: string
+  /** Engine MultiPV lines (1–3); tips must align per option. */
+  options: ExplainOption[]
   /** Fullmove-ish hint so the coach can talk about game phase. */
   plyHint?: string
 }
@@ -20,7 +25,33 @@ export type CoachChatRequest = {
   question: string
   bestMove?: string
   evalLabel?: string
-  tips?: { tip1: string; tip2: string; tip3: string }
+  /** Full coach card text for this position (if already asked). */
+  explanation?: string
+  /** Top engine lines when tips have not been requested yet. */
+  engineLines?: Array<{
+    uci: string
+    from: string
+    to: string
+    evalLabel: string
+  }>
+}
+
+export type ReviewPlyPayload = {
+  ply: number
+  fen: string
+  san: string
+  by: 'player' | 'opponent'
+  tag?: 'best' | 'inaccuracy' | 'mistake' | 'blunder'
+  playedEval?: string
+  bestSan?: string
+  bestEval?: string
+}
+
+export type ReviewRequest = {
+  gameId: string
+  playerColor: 'white' | 'black'
+  outcome: 'win' | 'loss' | 'draw'
+  plies: ReviewPlyPayload[]
 }
 
 /** Cheap Luna tier (fast) — override with CURSOR_EXPLAIN_MODEL. */
@@ -33,36 +64,35 @@ const COACH_RULES = [
   'You are coaching ONE ongoing game. Earlier messages in this chat are prior tips for earlier positions—use that arc.',
   'Relate new advice to how the game has progressed when useful.',
   '',
-  'CRITICAL — all three tips must align with the ENGINE BEST MOVE below.',
-  'tip1, tip2, and tip3 are progressive reveals of THE SAME plan (the engine move)—not three different ideas.',
-  'Do not hint at a different piece, plan, or move than the engine choice.',
+  'CRITICAL — SIDE TO MOVE:',
+  'Coach ONLY the side to move named in POSITION FACTS (White or Black).',
+  'Every sentence must tell THAT side what to do on THIS move.',
+  'Never advise the opponent, never describe “Black’s plan” when White is to move (or vice versa).',
+  'If earlier chat tips were for the other color, ignore that perspective and coach the current side only.',
+  'Speak as “you” to the side to move (e.g. when White to move: “you can…”, not “Black should…”).',
+  '',
+  'You will receive ONE OR MORE engine move OPTIONS (ranked best → alternatives) for the side to move.',
+  'Write ONE short coaching card that:',
+  '1) Recommends option 1 (prefer SAN + from→to) and why it fits now,',
+  '2) Briefly mentions how options 2/3 compare (or that they are close), using evals when helpful.',
   'UCI moves are long algebraic coordinates only: <from><to>[promotion] (examples: e2e4, e1g1 = castle, e7e8q = promote).',
-  'UCI never names the piece; the mover is whatever occupies <from> in the FEN. Prefer the provided SAN in tip3.',
-  'If earlier tips in this chat pointed elsewhere, course-correct toward this engine move.',
+  'UCI never names the piece; the mover is whatever occupies <from> in the FEN.',
+  'If earlier tips in this chat pointed elsewhere, course-correct toward these engine options.',
   '',
-  'Reply with ONLY a single JSON object (no markdown fences, no other text) with exactly these keys:',
-  '{"tip1":"...","tip2":"...","tip3":"..."}',
-  '',
-  'tip1: Soft nudge toward the theme of the engine move (why that idea matters now).',
-  'Do NOT name a specific piece to move, and do NOT give a square or UCI/SAN move.',
-  '1–2 short sentences.',
-  '',
-  'tip2: Narrow toward the engine move—you may name the piece type and/or board area involved.',
-  'Still do NOT give the destination square or the full UCI/SAN move.',
-  '1–2 short sentences.',
-  '',
-  'tip3: State the engine move exactly (prefer SAN plus from→to) and why it fits this game.',
-  '2–3 short sentences. Plain English, no markdown headings or bullet lists.',
+  'Reply with ONLY a single JSON object (no markdown fences, no other text):',
+  '{"explanation":"..."}',
+  'explanation: 4–8 short sentences, plain English, no markdown headings or bullet lists.',
 ].join('\n')
 
-/** Follow-up Q&A about tips / the recommended move (same Cursor chat session). */
+/** Follow-up Q&A about the position / tips / recommended move (same Cursor chat session). */
 const COACH_CHAT_RULES = [
   'You are a friendly chess coach helping a beginner–club player.',
   'You are coaching ONE ongoing game. Earlier messages may be tips for OLDER positions.',
   'CRITICAL: The CURRENT FEN and POSITION FACTS below are authoritative. Ignore piece placement from earlier turns if it conflicts.',
+  'CRITICAL: Coach ONLY the side to move in POSITION FACTS—never switch to advising the opponent.',
   'If POSITION FACTS say a castling side is legal or illegal, trust that—do not invent blockers.',
-  'Answer the player’s follow-up question about those tips or this position.',
-  'Stay aligned with the ENGINE BEST MOVE when discussing what to play—do not push a different move.',
+  'Answer the player’s question about this position, the listed engine moves, or any tips already shown.',
+  'Stay aligned with the ENGINE BEST MOVE / listed engine lines when discussing what to play—do not push a different move.',
   'Plain English, 2–5 short sentences. No JSON, no markdown fences, no bullet lists unless the player asks for a list.',
   'Do not greet or restate the full tips unless asked.',
 ].join('\n')
@@ -73,6 +103,7 @@ function positionFacts(fen: string): string {
     const chess = new Chess(fen)
     const parts = fen.trim().split(/\s+/)
     const side = parts[1] === 'b' ? 'Black' : 'White'
+    const opponent = side === 'White' ? 'Black' : 'White'
     const rights = parts[2] ?? '-'
     const legal = chess.moves({ verbose: true })
     const oo = legal.find((m) => m.flags.includes('k'))
@@ -87,12 +118,35 @@ function positionFacts(fen: string): string {
           ].join(' ')
         : 'No castling moves are legal for the side to move.'
     return [
-      `Side to move: ${side}`,
+      `Side to move: ${side} (YOU are coaching ${side} only — do not advise ${opponent}).`,
       `Castling rights in FEN: ${rights}`,
       castlingLine,
     ].join('\n')
   } catch {
     return 'Position facts unavailable (invalid FEN).'
+  }
+}
+
+function describeMover(fen: string, from: string, to: string): string {
+  try {
+    const chess = new Chess(fen)
+    const piece = chess.get(from as Parameters<Chess['get']>[0])
+    if (!piece) return `No piece on ${from} (bad option).`
+    const color = piece.color === 'w' ? 'White' : 'Black'
+    const names: Record<string, string> = {
+      p: 'pawn',
+      n: 'knight',
+      b: 'bishop',
+      r: 'rook',
+      q: 'queen',
+      k: 'king',
+    }
+    const name = names[piece.type] ?? piece.type
+    const side = fen.trim().split(/\s+/)[1] === 'b' ? 'Black' : 'White'
+    const ok = color === side ? 'matches side to move' : 'WARNING: does NOT match side to move'
+    return `Moving piece: ${color} ${name} on ${from} → ${to} (${ok}).`
+  } catch {
+    return `Moving piece: unknown (${from} → ${to}).`
   }
 }
 
@@ -106,37 +160,103 @@ function readBody(req: import('http').IncomingMessage): Promise<string> {
 }
 
 function buildPrompt(body: ExplainRequest): string {
+  const side = body.fen.trim().split(/\s+/)[1] === 'b' ? 'Black' : 'White'
+  const optionBlocks = body.options.map((opt, i) =>
+    [
+      `--- ENGINE OPTION ${i + 1} of ${body.options.length} (${side} to play) ---`,
+      `ENGINE MOVE: ${opt.bestMove}`,
+      describeMover(body.fen, opt.from, opt.to),
+      `From square: ${opt.from}`,
+      `To square: ${opt.to}`,
+      `Engine eval: ${opt.evalLabel}`,
+      `Principal variation: ${opt.line}`,
+    ].join('\n'),
+  )
+
   return [
     COACH_RULES,
     '',
     '--- Current position (same game as prior tips in this chat) ---',
     body.plyHint ? `Progress: ${body.plyHint}` : null,
     `FEN: ${body.fen}`,
-    `ENGINE BEST MOVE (mandatory for tip3): ${body.bestMove}`,
-    `From square: ${body.from}`,
-    `To square: ${body.to}`,
-    `Engine eval: ${body.evalLabel}`,
-    `Principal variation: ${body.line}`,
+    positionFacts(body.fen),
+    `YOU ARE COACHING: ${side}. Explain for ${side}'s move now.`,
+    `Number of ENGINE OPTIONS: ${body.options.length}`,
+    body.options.length > 1
+      ? `Recommend option 1 and briefly compare the alternatives using evals.`
+      : 'Only one engine option — explain that move.',
+    '',
+    ...optionBlocks,
   ]
     .filter(Boolean)
     .join('\n')
 }
 
+function buildReviewPrompt(body: ReviewRequest): string {
+  const you = body.playerColor === 'white' ? 'White' : 'Black'
+  const plyLines = body.plies.map((p) => {
+    const who = p.by === 'player' ? 'YOU' : 'opp'
+    const tag = p.tag ? ` [${p.tag}]` : ''
+    const best =
+      p.bestSan && p.tag && p.tag !== 'best'
+        ? ` best was ${p.bestSan} (${p.bestEval ?? '—'})`
+        : ''
+    const evals = p.playedEval ? ` eval ${p.playedEval}` : ''
+    return `${p.ply}. ${who} ${p.san}${tag}${evals}${best} | ${p.fen}`
+  })
+
+  return [
+    'You are a friendly chess coach helping a beginner–club player review a finished game.',
+    `You are coaching ${you} (the human). Speak as “you”. Do not advise the opponent’s plans except to explain what you faced.`,
+    'The move list and FENs below are ground truth for YOU only — do not invent what happened.',
+    'CRITICAL — the player cannot replay move numbers yet. Do NOT cite move numbers, SAN, or UCI',
+    '(no “7.Qe1”, no “1.b3”, no “Nxg6”). Talk in ideas a beginner can picture on the board:',
+    'pieces, files, king safety, pawn weaknesses, development, checks, captures, hanging pieces.',
+    'You may say “early on”, “in the opening”, “later”, “the finishing blow” — not ply indices.',
+    'Write a post-game recap:',
+    '1) One opening takeaway (development / center / king safety),',
+    '2) 2–4 turning ideas from tagged mistakes/blunders, described as what went wrong and the safer idea,',
+    '3) The main attacking or defensive theme if it showed up,',
+    '4) One habit to practice next (e.g. checks, captures, king attacks).',
+    '8–14 short sentences, plain English, no markdown headings or bullet lists.',
+    'Reply with ONLY a single JSON object (no markdown fences): {"explanation":"..."}',
+    '',
+    `Outcome: ${you} ${body.outcome}.`,
+    `You played ${you}.`,
+    `Plies: ${body.plies.length}`,
+    '',
+    '--- Game (ply, who, SAN, quality tag, evals, FEN before the move) ---',
+    ...plyLines,
+  ].join('\n')
+}
+
 function buildChatPrompt(body: CoachChatRequest): string {
+  const engineBlock =
+    body.engineLines && body.engineLines.length > 0
+      ? [
+          '--- Top engine moves (for this position) ---',
+          ...body.engineLines.map(
+            (l, i) =>
+              `${i + 1}. ${l.uci} (${l.from}→${l.to}) eval ${l.evalLabel}`,
+          ),
+        ].join('\n')
+      : null
+
   return [
     COACH_CHAT_RULES,
     '',
     '--- Current position (authoritative) ---',
     `FEN: ${body.fen}`,
     positionFacts(body.fen),
-    body.bestMove ? `ENGINE BEST MOVE: ${body.bestMove}` : null,
+    body.bestMove
+      ? `ENGINE BEST MOVE (selected/option 1 focus): ${body.bestMove}`
+      : null,
     body.evalLabel ? `Engine eval: ${body.evalLabel}` : null,
-    body.tips
+    engineBlock,
+    body.explanation
       ? [
-          '--- Tips already shown to the player (for this position) ---',
-          `tip1: ${body.tips.tip1}`,
-          `tip2: ${body.tips.tip2}`,
-          `tip3: ${body.tips.tip3}`,
+          '--- Coach card already shown to the player ---',
+          body.explanation,
         ].join('\n')
       : null,
     '',
@@ -310,6 +430,145 @@ function sendJson(
   res.end(JSON.stringify(body))
 }
 
+const CHESSCOM_URL_RE =
+  /(?:https?:\/\/)?(?:www\.)?chess\.com\/game\/(live|daily)\/(\d+)/i
+
+type ChessComCallbackPayload = {
+  game?: Record<string, unknown> & {
+    pgnHeaders?: Record<string, string>
+    endTime?: number
+    end_time?: number
+    white?: { username?: string }
+    black?: { username?: string }
+  }
+  players?: {
+    top?: { username?: string }
+    bottom?: { username?: string }
+  }
+}
+
+type ChessComArchiveGame = {
+  url?: string
+  pgn?: string
+}
+
+async function fetchJson(url: string): Promise<unknown> {
+  const res = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'learn-chess-import/1.0',
+    },
+  })
+  if (!res.ok) {
+    throw new Error(`Fetch failed ${res.status} for ${url}`)
+  }
+  return res.json()
+}
+
+function chessComMonthFromUnix(sec: number): { yyyy: string; mm: string } {
+  const d = new Date(sec * 1000)
+  return {
+    yyyy: String(d.getUTCFullYear()),
+    mm: String(d.getUTCMonth() + 1).padStart(2, '0'),
+  }
+}
+
+async function importChessComPgn(urlOrId: string): Promise<{
+  pgn: string
+  white: string | null
+  black: string | null
+  gameUrl: string
+}> {
+  const m = urlOrId.trim().match(CHESSCOM_URL_RE)
+  if (!m) {
+    throw new Error(
+      'Expected a chess.com game URL like https://www.chess.com/game/live/123',
+    )
+  }
+  const type = m[1].toLowerCase() as 'live' | 'daily'
+  const id = m[2]
+  const gameUrl = `https://www.chess.com/game/${type}/${id}`
+
+  const raw = (await fetchJson(
+    `https://www.chess.com/callback/${type}/game/${id}`,
+  )) as ChessComCallbackPayload
+  const game = raw.game
+  if (!game) throw new Error('chess.com returned no game data')
+
+  const white =
+    game.white?.username ??
+    raw.players?.bottom?.username ??
+    game.pgnHeaders?.White ??
+    null
+  const black =
+    game.black?.username ??
+    raw.players?.top?.username ??
+    game.pgnHeaders?.Black ??
+    null
+
+  let endSec =
+    typeof game.end_time === 'number'
+      ? game.end_time
+      : typeof game.endTime === 'number'
+        ? game.endTime
+        : null
+  if (endSec != null && endSec > 1e12) endSec = Math.floor(endSec / 1000)
+
+  const usernames = [white, black].filter(Boolean) as string[]
+  if (usernames.length === 0) {
+    throw new Error('Could not resolve players for this chess.com game')
+  }
+
+  const months: Array<{ yyyy: string; mm: string }> = []
+  if (endSec != null) months.push(chessComMonthFromUnix(endSec))
+  else {
+    const now = new Date()
+    months.push({
+      yyyy: String(now.getUTCFullYear()),
+      mm: String(now.getUTCMonth() + 1).padStart(2, '0'),
+    })
+  }
+
+  let pgn: string | null = null
+  let lastErr: Error | null = null
+  for (const user of usernames) {
+    for (const { yyyy, mm } of months) {
+      try {
+        const archive = (await fetchJson(
+          `https://api.chess.com/pub/player/${encodeURIComponent(user.toLowerCase())}/games/${yyyy}/${mm}`,
+        )) as { games?: ChessComArchiveGame[] }
+        const match = (archive.games ?? []).find((g) => {
+          const u = g.url ?? ''
+          return u.endsWith(`/${id}`) || u.includes(`/game/${type}/${id}`)
+        })
+        if (match?.pgn) {
+          pgn = match.pgn
+          break
+        }
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err))
+      }
+    }
+    if (pgn) break
+  }
+
+  if (!pgn) {
+    throw (
+      lastErr ??
+      new Error(
+        'PGN not found in chess.com monthly archive yet — try again later or paste the PGN',
+      )
+    )
+  }
+
+  return {
+    pgn,
+    white: white?.trim() || null,
+    black: black?.trim() || null,
+    gameUrl,
+  }
+}
+
 /** Vite middleware: coach explain + gameId minting. */
 export function explainApiPlugin(): Plugin {
   return {
@@ -330,9 +589,41 @@ export function explainApiPlugin(): Plugin {
           return
         }
 
+        if (url === '/api/import-chesscom') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          try {
+            const rawBody = await readBody(req)
+            const body = JSON.parse(rawBody || '{}') as { url?: string }
+            if (!body.url?.trim()) {
+              sendJson(res, 400, { error: 'url required' })
+              return
+            }
+            const result = await importChessComPgn(body.url)
+            sendJson(res, 200, result)
+          } catch (err) {
+            sendJson(res, 502, {
+              error:
+                err instanceof Error
+                  ? err.message
+                  : 'chess.com import failed',
+            })
+          }
+          return
+        }
+
         const isExplain = url.startsWith('/api/explain')
         const isCoachChat = url.startsWith('/api/coach-chat')
-        if (!isExplain && !isCoachChat) return next()
+        const isReview = url.startsWith('/api/review')
+        if (!isExplain && !isCoachChat && !isReview) return next()
 
         if (req.method === 'OPTIONS') {
           res.statusCode = 204
@@ -392,10 +683,64 @@ export function explainApiPlugin(): Plugin {
             return
           }
 
+          if (isReview) {
+            const body = JSON.parse(raw) as ReviewRequest
+            if (
+              !body.gameId ||
+              (body.playerColor !== 'white' && body.playerColor !== 'black') ||
+              !['win', 'loss', 'draw'].includes(body.outcome) ||
+              !Array.isArray(body.plies) ||
+              body.plies.length === 0
+            ) {
+              sendJson(res, 400, {
+                error: 'gameId, playerColor, outcome, and plies required',
+              })
+              return
+            }
+
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache, no-transform',
+              Connection: 'keep-alive',
+              'X-Accel-Buffering': 'no',
+              'X-Explain-Model': EXPLAIN_MODEL,
+              'X-Game-Id': body.gameId,
+            })
+
+            const send = (payload: unknown) => {
+              res.write(`data: ${JSON.stringify(payload)}\n\n`)
+            }
+
+            send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
+
+            cancel = streamCursorAsk(
+              body.gameId,
+              buildReviewPrompt(body),
+              (text) => send({ type: 'delta', text }),
+              (fullText) => {
+                send({ type: 'done', text: fullText })
+                res.end()
+              },
+              (err) => {
+                send({ type: 'error', error: err.message })
+                res.end()
+              },
+            )
+
+            req.on('close', () => cancel?.())
+            return
+          }
+
           const body = JSON.parse(raw) as ExplainRequest
-          if (!body.fen || !body.bestMove || !body.gameId) {
+          if (
+            !body.fen ||
+            !body.gameId ||
+            !Array.isArray(body.options) ||
+            body.options.length === 0 ||
+            body.options.some((o) => !o?.bestMove || !o?.from || !o?.to)
+          ) {
             sendJson(res, 400, {
-              error: 'fen, bestMove, and gameId required',
+              error: 'fen, gameId, and options[{bestMove,from,to,...}] required',
             })
             return
           }

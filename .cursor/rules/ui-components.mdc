@@ -1,0 +1,13 @@
+---
+description: Cult UI / shadcn for UI components; call out missing comps
+alwaysApply: true
+---
+
+# UI components
+
+- Prefer **Cult UI** / **shadcn** via the **shadcn MCP** (or `npx shadcn@latest search/add`).
+- Stack: Vite + **Tailwind v4** + shadcn. App chrome still uses `App.css` (`--sw-*`); `html.dark` for shadcn tokens.
+- Hand-ports in `src/components/ui/`: GradientButtonGroup, BgAnimateButton, animated-switch, pixel-heading, PixelButton.
+- **If the ideal component does not exist, is Pro-locked, or cannot be installed: say so clearly** and extend a local control. Do not fake a wrapper.
+- Opening-drill line picker: **`@shadcn/select`** in `DrillDialog`. Cult Animated Select = Pro-only upgrade path.
+- Full notes: `AGENTS.md`.
