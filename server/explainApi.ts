@@ -1,6 +1,18 @@
-import { spawn } from 'node:child_process'
 import { Chess } from 'chess.js'
 import type { Plugin } from 'vite'
+import {
+  createCursorChat,
+  EXPLAIN_MODEL,
+  streamCursorAsk,
+} from './cursorAsk.ts'
+import {
+  formatOpeningCardForCoach,
+  getCachedOpeningCard,
+  getOrCreateOpeningCard,
+  type OpeningLineInput,
+} from './openingCards.ts'
+
+export { EXPLAIN_MODEL } from './cursorAsk.ts'
 
 export type ExplainOption = {
   bestMove: string
@@ -17,6 +29,8 @@ export type ExplainRequest = {
   options: ExplainOption[]
   /** Fullmove-ish hint so the coach can talk about game phase. */
   plyHint?: string
+  /** Drill / opening practice line — injects a cached briefing into the prompt. */
+  openingLineId?: string
 }
 
 export type CoachChatRequest = {
@@ -34,6 +48,8 @@ export type CoachChatRequest = {
     to: string
     evalLabel: string
   }>
+  /** Drill / opening practice line — injects a cached briefing into the prompt. */
+  openingLineId?: string
 }
 
 export type ReviewPlyPayload = {
@@ -53,10 +69,6 @@ export type ReviewRequest = {
   outcome: 'win' | 'loss' | 'draw'
   plies: ReviewPlyPayload[]
 }
-
-/** Cheap Luna tier (fast) — override with CURSOR_EXPLAIN_MODEL. */
-export const EXPLAIN_MODEL =
-  process.env.CURSOR_EXPLAIN_MODEL ?? 'gpt-5.6-luna-low-fast'
 
 /** Stable prefix — keep identical across asks for prompt-cache friendliness. */
 const COACH_RULES = [
@@ -159,7 +171,7 @@ function readBody(req: import('http').IncomingMessage): Promise<string> {
   })
 }
 
-function buildPrompt(body: ExplainRequest): string {
+function buildPrompt(body: ExplainRequest, openingBrief?: string): string {
   const side = body.fen.trim().split(/\s+/)[1] === 'b' ? 'Black' : 'White'
   const optionBlocks = body.options.map((opt, i) =>
     [
@@ -176,6 +188,13 @@ function buildPrompt(body: ExplainRequest): string {
   return [
     COACH_RULES,
     '',
+    openingBrief
+      ? [
+          '--- Opening practice context (use lightly; still coach THIS move) ---',
+          openingBrief,
+          '',
+        ].join('\n')
+      : null,
     '--- Current position (same game as prior tips in this chat) ---',
     body.plyHint ? `Progress: ${body.plyHint}` : null,
     `FEN: ${body.fen}`,
@@ -230,7 +249,7 @@ function buildReviewPrompt(body: ReviewRequest): string {
   ].join('\n')
 }
 
-function buildChatPrompt(body: CoachChatRequest): string {
+function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string {
   const engineBlock =
     body.engineLines && body.engineLines.length > 0
       ? [
@@ -245,6 +264,13 @@ function buildChatPrompt(body: CoachChatRequest): string {
   return [
     COACH_CHAT_RULES,
     '',
+    openingBrief
+      ? [
+          '--- Opening practice context (use lightly) ---',
+          openingBrief,
+          '',
+        ].join('\n')
+      : null,
     '--- Current position (authoritative) ---',
     `FEN: ${body.fen}`,
     positionFacts(body.fen),
@@ -266,157 +292,15 @@ function buildChatPrompt(body: CoachChatRequest): string {
     .join('\n')
 }
 
-function isGreetingNoise(text: string): boolean {
-  const t = text.trim()
-  return (
-    /^hello boss man/i.test(t) ||
-    /vamos a la playa/i.test(t) ||
-    /let'?s get crackin/i.test(t)
-  )
-}
-
-type StreamEvent = {
-  type?: string
-  subtype?: string
-  timestamp_ms?: number
-  message?: {
-    content?: Array<{ type?: string; text?: string }>
-  }
-  result?: string
-  is_error?: boolean
-}
-
-function createCursorChat(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('agent', ['create-chat'], {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let out = ''
-    let err = ''
-    child.stdout.on('data', (d) => {
-      out += d.toString()
-    })
-    child.stderr.on('data', (d) => {
-      err += d.toString()
-    })
-    child.on('error', reject)
-    child.on('close', (code) => {
-      const id = out.trim().split(/\s+/)[0]
-      if (code === 0 && id && /^[0-9a-f-]{36}$/i.test(id)) {
-        resolve(id)
-        return
-      }
-      reject(new Error(err.trim() || `create-chat failed (${code})`))
-    })
-  })
-}
-
-/** Stream Cursor CLI ask-mode tokens via SSE, resuming the game chat. */
-function streamCursorAsk(
-  gameId: string,
-  prompt: string,
-  onDelta: (text: string) => void,
-  onDone: (fullText: string) => void,
-  onError: (err: Error) => void,
-): () => void {
-  const args = [
-    '-p',
-    '-f',
-    '--resume',
-    gameId,
-    '--mode',
-    'ask',
-    '--model',
-    EXPLAIN_MODEL,
-    '--output-format',
-    'stream-json',
-    '--stream-partial-output',
-    prompt,
-  ]
-
-  const child = spawn('agent', args, {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
-  let buffer = ''
-  let assembled = ''
-  let stderr = ''
-  let settled = false
-
-  const finishOk = () => {
-    if (settled) return
-    settled = true
-    onDone(assembled.trim() || 'No explanation returned.')
-  }
-
-  const finishErr = (err: Error) => {
-    if (settled) return
-    settled = true
-    onError(err)
-  }
-
-  child.stderr.on('data', (d) => {
-    stderr += d.toString()
-  })
-
-  child.stdout.on('data', (d) => {
-    buffer += d.toString()
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      let event: StreamEvent
-      try {
-        event = JSON.parse(trimmed) as StreamEvent
-      } catch {
-        continue
-      }
-
-      if (event.type === 'assistant' && event.message?.content) {
-        if (typeof event.timestamp_ms !== 'number') continue
-        for (const block of event.message.content) {
-          if (block.type !== 'text' || !block.text) continue
-          if (isGreetingNoise(block.text)) continue
-          assembled += block.text
-          onDelta(block.text)
-        }
-      }
-
-      if (event.type === 'result') {
-        if (event.is_error) {
-          finishErr(new Error(event.result || 'Cursor agent failed'))
-          return
-        }
-        if (!assembled.trim() && event.result) {
-          assembled = event.result
-          onDelta(event.result)
-        }
-        finishOk()
-      }
-    }
-  })
-
-  child.on('error', (err) => finishErr(err))
-  child.on('close', (code) => {
-    if (settled) return
-    if (code !== 0) {
-      finishErr(
-        new Error(stderr.trim() || `Cursor agent exited with code ${code}`),
-      )
-      return
-    }
-    finishOk()
-  })
-
-  return () => {
-    settled = true
-    child.kill('SIGTERM')
+async function openingBriefFor(lineId?: string): Promise<string | undefined> {
+  if (!lineId?.trim()) return undefined
+  try {
+    const card = await getCachedOpeningCard(lineId.trim())
+    if (!card) return undefined
+    return formatOpeningCardForCoach(card)
+  } catch (err) {
+    console.warn('[opening-cards] brief load failed:', err)
+    return undefined
   }
 }
 
@@ -620,6 +504,54 @@ export function explainApiPlugin(): Plugin {
           return
         }
 
+        if (url === '/api/opening-card') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          try {
+            const rawBody = await readBody(req)
+            const body = JSON.parse(rawBody || '{}') as {
+              line?: OpeningLineInput
+              lineId?: string
+            }
+            const line = body.line
+            if (
+              !line?.id?.trim() ||
+              !line.name?.trim() ||
+              !Array.isArray(line.moves) ||
+              line.moves.length === 0
+            ) {
+              sendJson(res, 400, {
+                error: 'line { id, name, summary, moves[{san}] } required',
+              })
+              return
+            }
+            const card = await getOrCreateOpeningCard({
+              id: line.id,
+              name: line.name,
+              eco: line.eco,
+              summary: line.summary ?? '',
+              moves: line.moves,
+            })
+            sendJson(res, 200, card)
+          } catch (err) {
+            sendJson(res, 500, {
+              error:
+                err instanceof Error
+                  ? err.message
+                  : 'opening-card failed',
+            })
+          }
+          return
+        }
+
         const isExplain = url.startsWith('/api/explain')
         const isCoachChat = url.startsWith('/api/coach-chat')
         const isReview = url.startsWith('/api/review')
@@ -650,6 +582,8 @@ export function explainApiPlugin(): Plugin {
               return
             }
 
+            const openingBrief = await openingBriefFor(body.openingLineId)
+
             res.writeHead(200, {
               'Content-Type': 'text/event-stream; charset=utf-8',
               'Cache-Control': 'no-cache, no-transform',
@@ -667,7 +601,7 @@ export function explainApiPlugin(): Plugin {
 
             cancel = streamCursorAsk(
               body.gameId,
-              buildChatPrompt(body),
+              buildChatPrompt(body, openingBrief),
               (text) => send({ type: 'delta', text }),
               (fullText) => {
                 send({ type: 'done', text: fullText })
@@ -745,6 +679,8 @@ export function explainApiPlugin(): Plugin {
             return
           }
 
+          const openingBrief = await openingBriefFor(body.openingLineId)
+
           res.writeHead(200, {
             'Content-Type': 'text/event-stream; charset=utf-8',
             'Cache-Control': 'no-cache, no-transform',
@@ -762,7 +698,7 @@ export function explainApiPlugin(): Plugin {
 
           cancel = streamCursorAsk(
             body.gameId,
-            buildPrompt(body),
+            buildPrompt(body, openingBrief),
             (text) => send({ type: 'delta', text }),
             (fullText) => {
               send({ type: 'done', text: fullText })

@@ -32,6 +32,12 @@ Registry config: `components.json` (`@cult-ui` + default `@shadcn`).
 - Uses **`@shadcn/select`** in `DrillDialog` (`src/components/ui/select.tsx`).
 - Cult **Animated Select** is Pro-only — call that out if upgrading later.
 
+### Opening coach cards (Turso)
+
+- Lazy per-line briefing: `POST /api/opening-card` with `{ line: { id, name, eco, summary, moves[{san}] } }`.
+- Stored in Turso (`TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`) or local `.data/opening-cards.db`.
+- Prefetched when a drill line starts; coach `/api/explain` + `/api/coach-chat` inject the **cached** card only (never the whole pack).
+
 ### Enabling MCP in Cursor
 
 1. `.cursor/mcp.json` → `shadcn`

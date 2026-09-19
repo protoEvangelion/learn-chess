@@ -27,6 +27,7 @@ export const useGameState = create<{
   setMovingTo: (move: MovingTo | null) => void
   history: HistoryItem[]
   addHistory: (item: HistoryItem) => void
+  popHistory: () => void
   resetHistory: () => void
 }>((set) => ({
   turn: 'white',
@@ -36,6 +37,7 @@ export const useGameState = create<{
   setMovingTo: (movingTo) => set({ movingTo }),
   history: [],
   addHistory: (item) => set((s) => ({ history: [...s.history, item] })),
+  popHistory: () => set((s) => ({ history: s.history.slice(0, -1) })),
   resetHistory: () => set({ history: [] }),
 }))
 

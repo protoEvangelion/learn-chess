@@ -53,6 +53,10 @@ type Props = {
   onFenChange: (fen: string) => void
   onFenCommit: () => void
   onDumpView: () => void
+  onSetDefaultAngle: () => void
+  onClearDefaultAngle: () => void
+  hasDefaultAngle: boolean
+  defaultAngleStatus?: string | null
   onShowBestMoveChange: (show: boolean) => void
   onBestMoveDelaySecChange: (sec: number) => void
   onShowFpsChange: (show: boolean) => void
@@ -136,6 +140,10 @@ export const SettingsDrawer: FC<Props> = ({
   onFenChange,
   onFenCommit,
   onDumpView,
+  onSetDefaultAngle,
+  onClearDefaultAngle,
+  hasDefaultAngle,
+  defaultAngleStatus = null,
   onShowBestMoveChange,
   onBestMoveDelaySecChange,
   onShowFpsChange,
@@ -216,7 +224,7 @@ export const SettingsDrawer: FC<Props> = ({
             />
           </div>
           <div className="settings-row">
-            <span id="settings-best-move-label">Show best move</span>
+            <span id="settings-best-move-label">Show Stockfish best move</span>
             <AnimatedSwitch
               checked={showBestMove}
               aria-labelledby="settings-best-move-label"
@@ -379,6 +387,34 @@ export const SettingsDrawer: FC<Props> = ({
             rows={3}
             spellCheck={false}
           />
+        </section>
+
+        <section className="settings-section">
+          <h3>Camera</h3>
+          <PixelButton
+            ghost
+            className="settings-full-btn"
+            onClick={onSetDefaultAngle}
+          >
+            Set default angle
+          </PixelButton>
+          {hasDefaultAngle ? (
+            <PixelButton
+              ghost
+              className="settings-full-btn"
+              onClick={onClearDefaultAngle}
+            >
+              Clear default angle
+            </PixelButton>
+          ) : null}
+          {defaultAngleStatus ? (
+            <p className="settings-import-status">{defaultAngleStatus}</p>
+          ) : (
+            <p className="settings-import-status">
+              Saves the current view for this room (used when the sidebar
+              refits).
+            </p>
+          )}
         </section>
 
         <section className="settings-section">

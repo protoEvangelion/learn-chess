@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import { loadDefaultCamera } from '@/lib/cameraPrefs'
 
 type OrbitLike = {
   target: THREE.Vector3
@@ -61,8 +62,9 @@ function projectBounds(
 
 /**
  * Refit the orbit camera so the board fills the free strip beside a right
- * drawer (pan to center, dolly in/out to fit). Restores the pre-panel view
- * when the drawer closes.
+ * drawer (pan to center, dolly in/out to fit). Uses the saved default angle
+ * for this room when present; otherwise keeps the pre-panel viewing angle.
+ * Restores the pre-panel view when the drawer closes.
  */
 export function PanelViewFit({
   active,
@@ -70,6 +72,7 @@ export function PanelViewFit({
   fitEpoch,
   boardOrigin,
   sceneKey,
+  roomId,
 }: {
   active: boolean
   panelWidth: number
@@ -77,6 +80,7 @@ export function PanelViewFit({
   boardOrigin: [number, number, number]
   /** Room / board / pieces — clears baseline so fit restarts from the new framing. */
   sceneKey: string
+  roomId: string
 }) {
   const { camera, controls, size, invalidate, gl } = useThree()
   const baseline = useRef<Baseline | null>(null)
@@ -138,11 +142,26 @@ export function PanelViewFit({
     const origin = new THREE.Vector3(...boardOrigin)
     const corners = boardCorners(origin)
     const base = baseline.current
-    orbit.target.copy(base.target)
-    let offset = base.position.clone().sub(base.target)
+
+    const pref = loadDefaultCamera(roomId)
+    const anglePos = pref
+      ? new THREE.Vector3(...pref.position)
+      : base.position
+    const angleTarget = pref
+      ? new THREE.Vector3(...pref.target)
+      : base.target
+
+    orbit.target.copy(angleTarget)
+    let offset = anglePos.clone().sub(angleTarget)
+    if (offset.lengthSq() < 1e-8) {
+      offset = base.position.clone().sub(base.target)
+    }
 
     const minD = orbit.minDistance ?? 2
     const maxD = orbit.maxDistance ?? 80
+    offset.setLength(
+      THREE.MathUtils.clamp(offset.length(), minD, maxD),
+    )
 
     for (let i = 0; i < 18; i++) {
       cam.position.copy(orbit.target).add(offset)
@@ -171,7 +190,6 @@ export function PanelViewFit({
       cam.updateMatrixWorld(true)
       const b2 = projectBounds(cam, corners, fullW, fullH)
 
-      // Target ~92% of the free strip so the board reads as "refit"
       const targetW = freeAvailW * 0.92
       const targetH = freeAvailH * 0.9
       const scaleW = b2.w / targetW
@@ -222,6 +240,7 @@ export function PanelViewFit({
     fitEpoch,
     boardOrigin,
     sceneKey,
+    roomId,
     camera,
     controls,
     size.width,

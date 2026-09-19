@@ -144,6 +144,36 @@ const OppCheckRing: FC = () => (
   <BorderLayer y={RING_Y + 0.008} color="#2dd4bf" />
 )
 
+const WrongMoveWash: FC = () => (
+  <mesh position={[0, 0.29, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+    <planeGeometry args={[0.92, 0.92]} />
+    <meshBasicMaterial
+      color="#c4a035"
+      transparent
+      opacity={0.45}
+      depthWrite={false}
+      toneMapped={false}
+    />
+  </mesh>
+)
+
+const PremoveWash: FC = () => (
+  <mesh position={[0, 0.295, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+    <planeGeometry args={[0.92, 0.92]} />
+    <meshBasicMaterial
+      color="#7c3aed"
+      transparent
+      opacity={0.38}
+      depthWrite={false}
+      toneMapped={false}
+    />
+  </mesh>
+)
+
+const PremoveBorder: FC = () => (
+  <BorderLayer y={RING_Y + 0.01} color="#a78bfa" />
+)
+
 const TradeMarker: FC<{ preview: MovePreview }> = ({ preview }) => {
   const trade = preview.captureTrade
   if (!trade) return null
@@ -172,6 +202,8 @@ export const TileComponent: FC<{
   isTip?: boolean
   isCheck?: boolean
   isLastMove?: boolean
+  isWrongAttempt?: boolean
+  isPremove?: boolean
   pieceSafety?: PieceSafety | null
   /** Hovered legal move would check — ring their king */
   isOppCheckPreview?: boolean
@@ -191,6 +223,8 @@ export const TileComponent: FC<{
   isTip = false,
   isCheck = false,
   isLastMove = false,
+  isWrongAttempt = false,
+  isPremove = false,
   pieceSafety = null,
   isOppCheckPreview = false,
   mode = 'solid',
@@ -243,7 +277,14 @@ export const TileComponent: FC<{
 
   const overlays = (
     <>
-      {isLastMove && <LastMoveBorder />}
+      {isWrongAttempt && <WrongMoveWash />}
+      {isPremove && !isWrongAttempt && (
+        <>
+          <PremoveWash />
+          <PremoveBorder />
+        </>
+      )}
+      {isLastMove && !isWrongAttempt && !isPremove && <LastMoveBorder />}
       {isTip && <BestMoveBorder />}
       {isOppCheckPreview && <OppCheckRing />}
       {pieceSafety && <PieceSafetyBadge safety={pieceSafety} />}

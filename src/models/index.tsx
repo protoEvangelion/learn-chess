@@ -53,6 +53,10 @@ export type ModelProps = {
   pieceIsBeingReplaced: boolean
   wasSelected: boolean
   onClick?: (e: { stopPropagation: () => void }) => void
+  onPointerDown?: (e: {
+    stopPropagation: () => void
+    nativeEvent: PointerEvent
+  }) => void
   children?: ReactNode
   movePreview?: MovePreview | null
   onPreviewHover?: (
@@ -61,6 +65,11 @@ export type ModelProps = {
     clientY: number,
     destKey?: string | null,
   ) => void
+  /** While dragging: board-local xz under the cursor (file/rank space). */
+  dragBoardRef?: { current: { x: number; z: number } | null }
+  /** Home square in board-local file/rank (MeshWrapper x/z). */
+  homeSquare?: { x: number; z: number }
+  isDragging?: boolean
 }
 
 const SELECT_LIFT = 0.35
@@ -96,6 +105,7 @@ export const MeshWrapper: FC<ModelProps> = ({
   wasSelected: _wasSelected,
   color,
   onClick,
+  onPointerDown,
   position,
   scale = [0.15, 0.15, 0.15],
   meshScale = 0.03,
@@ -103,6 +113,9 @@ export const MeshWrapper: FC<ModelProps> = ({
   canMoveHere,
   movePreview = null,
   onPreviewHover,
+  dragBoardRef,
+  homeSquare,
+  isDragging = false,
 }) => {
   const pieceRef = useRef<Group>(null)
   const finishRef = useRef(finishMovingPiece)
@@ -114,6 +127,8 @@ export const MeshWrapper: FC<ModelProps> = ({
   selectedRef.current = isSelected
   const replacingRef = useRef(pieceIsBeingReplaced)
   replacingRef.current = pieceIsBeingReplaced
+  const draggingRef = useRef(isDragging)
+  draggingRef.current = isDragging
 
   const moveAnim = useRef<MoveAnim | null>(null)
   const captureAnim = useRef<CaptureAnim | null>(null)
@@ -133,6 +148,7 @@ export const MeshWrapper: FC<ModelProps> = ({
       !!captureAnim.current ||
       !!moveAnim.current ||
       selectedRef.current ||
+      draggingRef.current ||
       !settled.current
 
     if (!busy) return
@@ -173,9 +189,11 @@ export const MeshWrapper: FC<ModelProps> = ({
     } else if (!moveAnim.current) {
       settled.current = false
       const travel = Math.hypot(target.x, target.y)
+      const lifted = mesh.position.y > 0.02 * tile
       moveAnim.current = {
         start: performance.now(),
-        duration: 260 + travel * 95,
+        // Drag drop: snap down fast; click-move: keep a short hop travel.
+        duration: lifted ? 90 + travel * 35 : 220 + travel * 85,
         fromX: mesh.position.x,
         fromY: mesh.position.y,
         fromZ: mesh.position.z,
@@ -191,8 +209,10 @@ export const MeshWrapper: FC<ModelProps> = ({
       const e = easeInOutCubic(t)
       mesh.position.x = anim.fromX + (anim.toX - anim.fromX) * e
       mesh.position.z = anim.fromZ + (anim.toZ - anim.fromZ) * e
-      mesh.position.y =
-        anim.fromY + (0 - anim.fromY) * e + Math.sin(Math.PI * e) * LIFT * tile
+      // Already lifted from a drag → ease straight down; otherwise hop.
+      const hop =
+        anim.fromY > 0.02 * tile ? 0 : Math.sin(Math.PI * e) * LIFT * tile
+      mesh.position.y = anim.fromY + (0 - anim.fromY) * e + hop
 
       if (t >= 1) {
         anim.done = true
@@ -202,8 +222,20 @@ export const MeshWrapper: FC<ModelProps> = ({
       return
     }
 
+    // Chess.com-style drag: piece follows cursor on the board plane.
+    if (draggingRef.current && dragBoardRef?.current && homeSquare) {
+      const d = dragBoardRef.current
+      mesh.position.x = (d.x - homeSquare.x) * tile
+      mesh.position.z = (d.z - homeSquare.z) * tile
+      mesh.position.y = SELECT_LIFT * tile
+      settled.current = false
+      return
+    }
+
     const targetY = selectedRef.current ? SELECT_LIFT * tile : 0
-    const k = 1 - Math.exp(-14 * delta)
+    // Drop/settle after mouse-up should feel snappy; lift can stay a bit softer.
+    const settleRate = targetY < mesh.position.y ? 32 : 14
+    const k = 1 - Math.exp(-settleRate * delta)
     mesh.position.x += (0 - mesh.position.x) * k
     mesh.position.y += (targetY - mesh.position.y) * k
     mesh.position.z += (0 - mesh.position.z) * k
@@ -224,6 +256,7 @@ export const MeshWrapper: FC<ModelProps> = ({
       position={position}
       scale={scale}
       onClick={onClick}
+      onPointerDown={onPointerDown}
       dispose={null}
       onPointerOver={(e) => {
         e.stopPropagation()

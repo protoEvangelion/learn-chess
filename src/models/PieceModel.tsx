@@ -1,6 +1,7 @@
 import type { FC } from 'react'
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { Billboard, useGLTF, useTexture } from '@react-three/drei'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { GLTF } from 'three-stdlib'
 import type { PieceColorPaths, PieceSetTheme } from '@/lib/themes'
@@ -71,18 +72,44 @@ const FlatPiece: FC<{
   const texture = useTexture(path)
   texture.colorSpace = THREE.SRGBColorSpace
   texture.anisotropy = 8
+  const size = 1.12
+  const root = useRef<THREE.Group>(null)
+  const towardCam = useMemo(() => new THREE.Vector3(), [])
+  const origin = useMemo(() => new THREE.Vector3(), [])
+
+  // Sit on the near edge of the square — slide along ranks only (keep file-centered).
+  useFrame(({ camera }) => {
+    const g = root.current
+    const parent = g?.parent
+    if (!g || !parent) return
+    parent.getWorldPosition(origin)
+    towardCam.copy(camera.position).sub(origin)
+    const alongRank = towardCam.z
+    if (Math.abs(alongRank) < 1e-8) {
+      g.position.set(0, 0, 0)
+      return
+    }
+    g.position.set(0, 0, Math.sign(alongRank) * 0.38 / parent.scale.z)
+  })
+
   return (
-    <Billboard follow lockX={false} lockY={false} lockZ={false}>
-      <mesh position={[0, 0.52, 0]} castShadow={false} receiveShadow={false}>
-        <planeGeometry args={[1.12, 1.12]} />
-        <meshBasicMaterial
-          map={texture}
-          transparent
-          depthWrite={false}
-          alphaTest={0.05}
-        />
-      </mesh>
-    </Billboard>
+    <group ref={root}>
+      <Billboard follow lockX={false} lockY={false} lockZ={false}>
+        <mesh
+          position={[0, size * 0.5, 0]}
+          castShadow={false}
+          receiveShadow={false}
+        >
+          <planeGeometry args={[size, size]} />
+          <meshBasicMaterial
+            map={texture}
+            transparent
+            depthWrite={false}
+            alphaTest={0.05}
+          />
+        </mesh>
+      </Billboard>
+    </group>
   )
 }
 

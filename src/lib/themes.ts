@@ -375,7 +375,7 @@ export const PIECE_SETS: PieceSetTheme[] = [
   },
   {
     id: 'flat',
-    name: 'Flat (Neo-style)',
+    name: 'Flat',
     credit:
       'Kaneo — Neo-inspired set by SmallChess (CC BY 4.0), https://github.com/SmallChess/chess-pieces',
     license: 'CC-BY-4.0',
@@ -539,8 +539,8 @@ export function loadMuted(): boolean {
 }
 
 export function loadVolume(): number {
-  const v = Number(localStorage.getItem(VOLUME_KEY) ?? 0.7)
-  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.7
+  const v = Number(localStorage.getItem(VOLUME_KEY) ?? 0.45)
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.45
 }
 
 export function loadShowBestMove(): boolean {

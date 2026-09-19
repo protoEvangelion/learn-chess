@@ -5,6 +5,12 @@
 import { useEffect, useState, type FC, type ReactNode } from 'react'
 import { animate, LayoutGroup, useMotionValue } from 'motion/react'
 import * as motion from 'motion/react-client'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 export type GradientButtonItem = {
   id: string
@@ -72,99 +78,110 @@ export const GradientButtonGroup: FC<Props> = ({
   }, [activeId])
 
   return (
-    <LayoutGroup id={layoutGroupId}>
-      <div className={['gbg', className].filter(Boolean).join(' ')}>
-        <div className="gbg-tray" aria-hidden="true" />
-        <div className="gbg-raised">
-          <div className="gbg-bezel" aria-hidden="true" />
-          <nav className="gbg-nav" aria-label={ariaLabel}>
-            {items.map((item) => {
-              const isActive = activeId === item.id
-              const isOverlayActive = isActive && overlayReadyId === item.id
+    <TooltipProvider delayDuration={350}>
+      <LayoutGroup id={layoutGroupId}>
+        <div className={['gbg', className].filter(Boolean).join(' ')}>
+          <div className="gbg-tray" aria-hidden="true" />
+          <div className="gbg-raised">
+            <div className="gbg-bezel" aria-hidden="true" />
+            <nav className="gbg-nav" aria-label={ariaLabel}>
+              {items.map((item) => {
+                const isActive = activeId === item.id
+                const isOverlayActive = isActive && overlayReadyId === item.id
 
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={[
-                    'gbg-btn',
-                    isActive ? 'is-active' : '',
-                    item.disabled ? 'is-disabled' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  aria-label={item.label}
-                  title={item.label}
-                  aria-pressed={isActive || undefined}
-                  disabled={item.disabled}
-                  onClick={item.onClick}
-                >
-                  {isActive && (
-                    <>
-                      <motion.span
-                        layoutId={`${layoutGroupId}-well`}
-                        className="gbg-well"
-                        transition={{
-                          type: 'spring',
-                          stiffness: 400,
-                          damping: 30,
-                        }}
-                      />
-                      <motion.span
-                        layoutId={`${layoutGroupId}-gold-ring`}
-                        className="gbg-gold-ring"
-                        onLayoutAnimationComplete={() =>
-                          setOverlayReadyId(item.id)
-                        }
-                        transition={{
-                          type: 'spring',
-                          stiffness: 400,
-                          damping: 30,
-                        }}
+                return (
+                  <Tooltip key={item.id}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className={[
+                          'gbg-btn',
+                          isActive ? 'is-active' : '',
+                          item.disabled ? 'is-disabled' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        aria-label={item.label}
+                        aria-pressed={isActive || undefined}
+                        disabled={item.disabled}
+                        onClick={item.onClick}
                       >
-                        <span className="gbg-gold-spin" />
-                      </motion.span>
-                      <motion.span
-                        layoutId={`${layoutGroupId}-inner-ring`}
-                        className="gbg-inner-ring"
-                        transition={{
-                          type: 'spring',
-                          stiffness: 400,
-                          damping: 30,
-                        }}
-                      />
-                    </>
-                  )}
-                  <motion.span
-                    initial={false}
-                    className={[
-                      'gbg-btn-face',
-                      isActive ? 'is-active' : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    animate={
-                      isActive
-                        ? { scale: 1, opacity: 1 }
-                        : { scale: 0.985, opacity: 0.96 }
-                    }
-                    transition={{
-                      type: 'spring',
-                      stiffness: 380,
-                      damping: 30,
-                      delay: isActive ? 0.12 : 0,
-                    }}
-                  >
-                    <InnerButtonOverlay active={!!isOverlayActive} />
-                    <span className="gbg-icon">{item.icon}</span>
-                  </motion.span>
-                </button>
-              )
-            })}
-          </nav>
+                        {isActive && (
+                          <>
+                            <motion.span
+                              layoutId={`${layoutGroupId}-well`}
+                              className="gbg-well"
+                              transition={{
+                                type: 'spring',
+                                stiffness: 400,
+                                damping: 30,
+                              }}
+                            />
+                            <motion.span
+                              layoutId={`${layoutGroupId}-gold-ring`}
+                              className="gbg-gold-ring"
+                              onLayoutAnimationComplete={() =>
+                                setOverlayReadyId(item.id)
+                              }
+                              transition={{
+                                type: 'spring',
+                                stiffness: 400,
+                                damping: 30,
+                              }}
+                            >
+                              <span className="gbg-gold-spin" />
+                            </motion.span>
+                            <motion.span
+                              layoutId={`${layoutGroupId}-inner-ring`}
+                              className="gbg-inner-ring"
+                              transition={{
+                                type: 'spring',
+                                stiffness: 400,
+                                damping: 30,
+                              }}
+                            />
+                          </>
+                        )}
+                        <motion.span
+                          initial={false}
+                          className={[
+                            'gbg-btn-face',
+                            isActive ? 'is-active' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          animate={
+                            isActive
+                              ? { scale: 1, opacity: 1 }
+                              : { scale: 0.985, opacity: 0.96 }
+                          }
+                          transition={{
+                            type: 'spring',
+                            stiffness: 380,
+                            damping: 30,
+                            delay: isActive ? 0.12 : 0,
+                          }}
+                        >
+                          <InnerButtonOverlay active={!!isOverlayActive} />
+                          <span className="gbg-icon">{item.icon}</span>
+                        </motion.span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      sideOffset={8}
+                      className="z-[80]"
+                    >
+                      {item.label}
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              })}
+            </nav>
+          </div>
         </div>
-      </div>
-    </LayoutGroup>
+      </LayoutGroup>
+    </TooltipProvider>
   )
 }
 

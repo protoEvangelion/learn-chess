@@ -14,7 +14,8 @@ import type { Board } from '@logic/board'
 import type { Color, Move, Piece } from '@logic/pieces'
 import { getTile, movesForPiece } from '@logic/pieces'
 import { BoardComponent, type GameOver } from '@/components/Board'
-import { CoachDialog } from '@/components/CoachDialog'
+import { GamePanel, type GameTabId } from '@/components/GamePanel'
+import type { CoachChatMessage } from '@/components/CoachPane'
 import { AnalysisDialog } from '@/components/AnalysisDialog'
 import { DrillDialog } from '@/components/DrillDialog'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
@@ -25,6 +26,7 @@ import {
 import { HudEval } from '@/components/HudEval'
 import { SettingsDrawer } from '@/components/SettingsDrawer'
 import { PixelButton } from '@/components/ui/PixelButton'
+import { Joystick } from 'lucide-react'
 import { Border } from '@models/Border'
 import { BoardSurface, preloadBoard } from '@models/BoardSurface'
 import { RoomScene, preloadRoom } from '@models/RoomScene'
@@ -36,7 +38,10 @@ import {
   pushGameToUrl,
   readFenFromUrl,
   readGameIdFromUrl,
+  readLineFromUrl,
+  readOpeningFromUrl,
   readPanelFromUrl,
+  replaceDrillInUrl,
   replaceGameInUrl,
   replacePanelInUrl,
   squareToPosition,
@@ -86,6 +91,12 @@ import {
 } from '@/lib/music'
 import { formatViewForThemes, getLiveView } from '@/lib/viewDebug'
 import {
+  clearDefaultCamera,
+  hasDefaultCamera,
+  saveDefaultCamera,
+  loadDefaultCamera,
+} from '@/lib/cameraPrefs'
+import {
   applyPanelLayoutCss,
   loadPanelWidth,
 } from '@/lib/panelWidth'
@@ -94,8 +105,9 @@ import type { DrillLine, DrillProgress } from '@/lib/drills/types'
 import {
   expectedSan,
   hintForPly,
+  historyItemMatchesSan,
   isPlayerPly,
-  moveMatchesSan,
+  recommendPhrase,
   sanToBoardMove,
   squaresForSan,
 } from '@/lib/drills/engine'
@@ -104,6 +116,7 @@ import {
   recordLineClear,
   saveDrillProgress,
 } from '@/lib/drills/progress'
+import { fetchOpeningCard, type OpeningCard } from '@/lib/openingCard'
 import './App.css'
 
 const STRENGTH_KEY = 'chess-3d:strength'
@@ -127,7 +140,7 @@ function loadChessComUsername(): string {
 const DEFAULT_CAMERA_POS: [number, number, number] = [0, 12, 9]
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, 0, 0]
 
-/** Push camera to the active room's preset when the room theme changes. */
+/** Push camera to the active room's preset (or saved default) when the room changes. */
 function RoomCamera({
   roomId,
   position,
@@ -143,17 +156,20 @@ function RoomCamera({
   // Layout so PanelViewFit (sibling) sees the new framing in the same commit.
   // Only roomId: inline fallback arrays must not re-snap the camera on every click/re-render.
   useLayoutEffect(() => {
-    camera.position.set(...position)
+    const saved = loadDefaultCamera(roomId)
+    const pos = saved?.position ?? position
+    const tgt = saved?.target ?? target
+    camera.position.set(...pos)
     if ('fov' in camera) {
       ;(camera as typeof camera & { fov: number }).fov = fov
       ;(
         camera as typeof camera & { updateProjectionMatrix: () => void }
       ).updateProjectionMatrix()
     }
-    camera.lookAt(...target)
+    camera.lookAt(...tgt)
     const orbit = controls as { target?: THREE.Vector3; update?: () => void } | null
     if (orbit?.target) {
-      orbit.target.set(...target)
+      orbit.target.set(...tgt)
       orbit.update?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: room switch only
@@ -207,14 +223,13 @@ export default function App() {
     'idle',
   )
   const [coachError, setCoachError] = useState<string | null>(null)
-  const [coachChat, setCoachChat] = useState<
-    Array<{ id: string; role: 'user' | 'assistant'; text: string }>
-  >([])
+  const [coachChat, setCoachChat] = useState<CoachChatMessage[]>([])
   const [coachChatStatus, setCoachChatStatus] = useState<
     'idle' | 'loading' | 'error'
   >('idle')
   const [coachChatError, setCoachChatError] = useState<string | null>(null)
   const [coachReviewMode, setCoachReviewMode] = useState(false)
+  const [gameTab, setGameTab] = useState<GameTabId>('moves')
   const [reviewBusy, setReviewBusy] = useState(false)
   const [reviewProgress, setReviewProgress] = useState<string | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
@@ -246,11 +261,11 @@ export default function App() {
   )
   const [panel, setPanel] = useState<PanelId | null>(() => readPanelFromUrl())
   const settingsOpen = panel === 'settings'
-  const coachOpen = panel === 'coach'
+  const gameOpen = panel === 'game'
   const analysisOpen = panel === 'analysis'
   const drillOpen = panel === 'drill'
   const rightPanelOpen =
-    settingsOpen || coachOpen || analysisOpen || drillOpen
+    settingsOpen || gameOpen || analysisOpen || drillOpen
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const [panelFitEpoch, setPanelFitEpoch] = useState(0)
 
@@ -277,10 +292,14 @@ export default function App() {
     setPanelFitEpoch((n) => n + 1)
   }, [])
 
-  const [orbitDragMode, setOrbitDragMode] = useState<'rotate' | 'pan'>('rotate')
+  const [orbitDragMode, setOrbitDragMode] = useState<'move' | 'rotate' | 'pan'>(
+    'move',
+  )
   const skipEngineOnce = useRef(false)
   const coachAbortRef = useRef<AbortController | null>(null)
   const coachChatAbortRef = useRef<AbortController | null>(null)
+  /** Ephemeral Cursor chat id for drills — never written to the URL; reminted per line. */
+  const drillChatGameIdRef = useRef<string | null>(null)
   const reviewAbortRef = useRef<AbortController | null>(null)
   const syncingFromUrlRef = useRef(false)
   const urlReadyRef = useRef(false)
@@ -300,6 +319,11 @@ export default function App() {
   )
   const [drillWrongFlash, setDrillWrongFlash] = useState(false)
   const [drillHintRevealed, setDrillHintRevealed] = useState(false)
+  const [drillMistake, setDrillMistake] = useState<{
+    from: { x: number; y: number }
+    to: { x: number; y: number }
+    expectedSan: string
+  } | null>(null)
   const [drillMistakes, setDrillMistakes] = useState(false)
   const drillWrongTimerRef = useRef<number | null>(null)
   const drillLiveSnapshotRef = useRef<{
@@ -314,11 +338,19 @@ export default function App() {
     finalBoard: Board
     turn: Color
   } | null>(null)
+  const [openingCard, setOpeningCard] = useState<OpeningCard | null>(null)
+  const [openingCardStatus, setOpeningCardStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'error'
+  >('idle')
+  const openingCardReqRef = useRef(0)
+  const startDrillLineRef = useRef<(lineId: string) => void>(() => {})
+
 
   const turn = useGameState((s) => s.turn)
   const resetTurn = useGameState((s) => s.resetTurn)
   const history = useGameState((s) => s.history)
   const resetHistory = useGameState((s) => s.resetHistory)
+  const popHistory = useGameState((s) => s.popHistory)
   const setMovingTo = useGameState((s) => s.setMovingTo)
   const movingTo = useGameState((s) => s.movingTo)
 
@@ -353,12 +385,18 @@ export default function App() {
     setFenDraft(fen)
   }, [fen])
 
-  // Ensure a Cursor chat gameId exists in the URL for coach session resume.
+  // Mint a coach session id for free-play resume. Skip practice URLs; coach open/ask mints on demand.
   useEffect(() => {
     if (gameId) return
+    if (readPanelFromUrl() === 'drill') return
     const controller = new AbortController()
     mintGameId(controller.signal)
       .then((id) => {
+        // Panel may have switched to drill while the request was in flight.
+        if (readPanelFromUrl() === 'drill') {
+          setGameId(id)
+          return
+        }
         setGameId(id)
         replaceGameInUrl(fen, id, urlHistoryIndexRef.current)
       })
@@ -434,6 +472,12 @@ export default function App() {
       if (idFromUrl && idFromUrl !== gameIdRef.current) setGameId(idFromUrl)
       setPanel(readPanelFromUrl() ?? state?.panel ?? null)
       applyFen(fromUrl)
+      const lineRef = readLineFromUrl() ?? state?.line ?? null
+      const opening = readOpeningFromUrl() ?? state?.opening ?? null
+      const panelNow = readPanelFromUrl() ?? state?.panel ?? null
+      if (panelNow === 'drill' && lineRef && (!opening || opening === 'italian')) {
+        startDrillLineRef.current(lineRef)
+      }
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
@@ -441,8 +485,17 @@ export default function App() {
 
   const openPanel = useCallback((next: PanelId | null) => {
     setPanel(next)
+    // Re-open drill with the remembered line in the URL (and picker).
+    if (next === 'drill' && drillLine) {
+      replaceDrillInUrl('italian', drillLine.id)
+      return
+    }
     replacePanelInUrl(next)
-  }, [])
+    // Game panel coach needs gameId in the URL for session resume.
+    if (next === 'game' && gameId) {
+      replaceGameInUrl(fen, gameId, urlHistoryIndexRef.current)
+    }
+  }, [drillLine, fen, gameId])
 
   // Delay best-move arrow after analysis is ready (coach tip 3 still shows immediately).
   useEffect(() => {
@@ -460,7 +513,8 @@ export default function App() {
   }, [fen, showBestMove, bestMoveDelaySec, analysisReadyForFen])
 
   const showBestArrow =
-    (showBestMove && bestMoveDelayElapsed) || (coachOpen && !!best)
+    (showBestMove && bestMoveDelayElapsed) ||
+    (gameOpen && gameTab === 'coach' && !!best)
 
   const drillHintSquares = useMemo(() => {
     if (
@@ -632,7 +686,8 @@ export default function App() {
     drillOpen,
   ])
 
-  // Leave drill session cleanly when closing the panel — restore live game
+  // Leave drill session cleanly when closing the panel — restore live game,
+  // but keep the selected line so the picker still shows it on reopen.
   useEffect(() => {
     if (drillOpen) return
     const snap = drillLiveSnapshotRef.current
@@ -651,13 +706,15 @@ export default function App() {
       setMoves([])
       skipEngineOnce.current = true
     }
-    setDrillLine(null)
     setDrillPlyIndex(0)
     setDrillStatus('idle')
     setDrillHintRevealed(false)
     setDrillWrongFlash(false)
+    setDrillMistake(null)
     setDrillMistakes(false)
     setDrillReview(null)
+    clearCoachThread()
+    drillChatGameIdRef.current = null
     if (drillWrongTimerRef.current != null) {
       window.clearTimeout(drillWrongTimerRef.current)
       drillWrongTimerRef.current = null
@@ -667,7 +724,28 @@ export default function App() {
   // After each completed ply in a drill, advance index / finish line
   useEffect(() => {
     if (!drillLine || drillStatus !== 'playing' || movingTo) return
+    if (drillMistake) return
     if (history.length !== drillPlyIndex + 1) return
+
+    // Player just moved — Chessreps-style: land wrong moves, then coach + try again.
+    if (isPlayerPly(drillPlyIndex)) {
+      const expected = expectedSan(drillLine, drillPlyIndex)
+      const last = history[history.length - 1]
+      if (
+        expected &&
+        last &&
+        !historyItemMatchesSan(last, history.slice(0, -1), expected)
+      ) {
+        setDrillMistakes(true)
+        setDrillMistake({
+          from: last.from,
+          to: last.to,
+          expectedSan: expected,
+        })
+        return
+      }
+    }
+
     const next = drillPlyIndex + 1
     if (next >= drillLine.moves.length) {
       setDrillPlyIndex(next)
@@ -700,6 +778,7 @@ export default function App() {
     drillLine,
     drillStatus,
     drillPlyIndex,
+    drillMistake,
     drillMistakes,
     drillProgress,
     history,
@@ -709,6 +788,7 @@ export default function App() {
   // Auto-play Black replies from the drill line
   useEffect(() => {
     if (!drillLine || drillStatus !== 'playing') return
+    if (drillMistake) return
     if (movingTo || pendingEngineMove) return
     if (isPlayerPly(drillPlyIndex)) return
     if (history.length !== drillPlyIndex) return
@@ -720,6 +800,7 @@ export default function App() {
     board,
     drillLine,
     drillPlyIndex,
+    drillMistake,
     drillStatus,
     history,
     movingTo,
@@ -728,30 +809,49 @@ export default function App() {
   ])
 
   const validateDrillMove = useCallback(
-    (move: Move) => {
+    (_move: Move) => {
       if (!drillLine || drillStatus !== 'playing') return true
+      if (drillMistake) return false
       if (!isPlayerPly(drillPlyIndex)) return false
-      const expected = expectedSan(drillLine, drillPlyIndex)
-      if (!expected) return false
-      const ok = moveMatchesSan(board, history, turn, move, expected)
-      if (!ok) {
-        setDrillMistakes(true)
-        setDrillWrongFlash(true)
-        if (drillWrongTimerRef.current != null) {
-          window.clearTimeout(drillWrongTimerRef.current)
-        }
-        drillWrongTimerRef.current = window.setTimeout(() => {
-          setDrillWrongFlash(false)
-          drillWrongTimerRef.current = null
-        }, 1200)
-      }
-      return ok
+      // Allow any legal move — wrong book moves land, then coach asks to try again.
+      return true
     },
-    [board, drillLine, drillPlyIndex, drillStatus, history, turn],
+    [drillLine, drillMistake, drillPlyIndex, drillStatus],
   )
 
+  function retryDrillMistake() {
+    if (!drillMistake || history.length === 0) return
+    const last = history[history.length - 1]
+    skipEngineOnce.current = true
+    setBoard(copyBoard(last.board))
+    popHistory()
+    useGameState.setState({ turn: last.piece.color, movingTo: null })
+    setDrillMistake(null)
+    setDrillWrongFlash(false)
+    setSelected(null)
+    setMoves([])
+    setPendingEngineMove(null)
+  }
+
+  function clearCoachThread() {
+    coachAbortRef.current?.abort()
+    coachAbortRef.current = null
+    coachChatAbortRef.current?.abort()
+    coachChatAbortRef.current = null
+    setCoachChat([])
+    setCoachChatStatus('idle')
+    setCoachChatError(null)
+    setCoachExplanation(null)
+    setCoachStatus('idle')
+    setCoachError(null)
+    setCoachReviewMode(false)
+  }
+
   function startDrillLine(lineId: string) {
-    const line = ITALIAN_LINES.find((l) => l.id === lineId) ?? null
+    const line =
+      ITALIAN_LINES.find((l) => l.id === lineId) ??
+      ITALIAN_LINES.find((l) => l.name === lineId) ??
+      null
     if (!line) return
     if (!drillLiveSnapshotRef.current) {
       drillLiveSnapshotRef.current = {
@@ -763,6 +863,9 @@ export default function App() {
       }
     }
     skipEngineOnce.current = true
+    // Fresh chat UI + ephemeral session for this line (does not survive refresh).
+    clearCoachThread()
+    drillChatGameIdRef.current = null
     setReviewImport(null)
     setScrubIndex(0)
     setAnalysisReport(null)
@@ -782,8 +885,41 @@ export default function App() {
     setDrillMistakes(false)
     setDrillHintRevealed(false)
     setDrillWrongFlash(false)
+    setDrillMistake(null)
     setDrillReview(null)
+    setPanel('drill')
+    replaceDrillInUrl('italian', line.id)
+
+    const req = ++openingCardReqRef.current
+    // Keep the hand-authored summary visible; upgrade blurb when Turso/cache returns.
+    setOpeningCard(null)
+    setOpeningCardStatus('loading')
+    void fetchOpeningCard(line)
+      .then((card) => {
+        if (openingCardReqRef.current !== req) return
+        setOpeningCard(card)
+        setOpeningCardStatus('ready')
+      })
+      .catch(() => {
+        if (openingCardReqRef.current !== req) return
+        setOpeningCard(null)
+        setOpeningCardStatus('error')
+      })
   }
+
+  // Restore drill opening/line from the URL (refresh / shared link).
+  startDrillLineRef.current = startDrillLine
+  const drillBootstrapped = useRef(false)
+  useEffect(() => {
+    if (drillBootstrapped.current) return
+    drillBootstrapped.current = true
+    if (readPanelFromUrl() !== 'drill') return
+    const opening = readOpeningFromUrl()
+    const lineRef = readLineFromUrl()
+    if (!lineRef) return
+    if (opening && opening !== 'italian') return
+    startDrillLineRef.current(lineRef)
+  }, [])
 
   function restartDrill() {
     if (drillLine) startDrillLine(drillLine.id)
@@ -870,6 +1006,7 @@ export default function App() {
           options,
           gameId: id,
           plyHint: `about move ${fullmove}, White=${turn === 'white' ? 'to play' : 'waiting'}, Black=${turn === 'black' ? 'to play' : 'waiting'} (${turn} to play; ${history.length} plies recorded this session)`,
+          openingLineId: drillOpen && drillLine ? drillLine.id : undefined,
         }),
       })
       if (!res.ok || !res.body) throw new Error(`Explain failed (${res.status})`)
@@ -921,13 +1058,15 @@ export default function App() {
     history.length,
     playerColor,
     turn,
+    drillOpen,
+    drillLine,
   ])
 
   const sendCoachChat = useCallback(
     async (question: string) => {
       const q = question.trim()
       if (!q || coachChatStatus === 'loading') return
-      if (!coachReviewMode && turn !== playerColor) return
+      if (!coachReviewMode && !drillOpen && turn !== playerColor) return
 
       coachChatAbortRef.current?.abort()
       const controller = new AbortController()
@@ -944,11 +1083,17 @@ export default function App() {
       setCoachChatError(null)
 
       try {
-        let id = gameId
-        if (!id) {
-          id = await mintGameId(controller.signal)
-          setGameId(id)
-          replaceGameInUrl(fen, id, urlHistoryIndexRef.current)
+        let id: string
+        if (drillOpen) {
+          // Drill chats are ephemeral — never reuse free-play gameId or write to URL.
+          id = drillChatGameIdRef.current ?? (await mintGameId(controller.signal))
+          drillChatGameIdRef.current = id
+        } else {
+          id = gameId ?? (await mintGameId(controller.signal))
+          if (!gameId) {
+            setGameId(id)
+            replaceGameInUrl(fen, id, urlHistoryIndexRef.current)
+          }
         }
 
         const res = await fetch('/api/coach-chat', {
@@ -970,6 +1115,7 @@ export default function App() {
               to: l.to,
               evalLabel: l.evalLabel,
             })),
+            openingLineId: drillOpen && drillLine ? drillLine.id : undefined,
           }),
         })
         if (!res.ok || !res.body) {
@@ -1040,6 +1186,8 @@ export default function App() {
       lines,
       playerColor,
       turn,
+      drillOpen,
+      drillLine,
     ],
   )
 
@@ -1169,7 +1317,8 @@ export default function App() {
       setCoachChatError(null)
       setCoachStatus('loading')
       setCoachError(null)
-      openPanel('coach')
+      setGameTab('coach')
+      openPanel('game')
 
       try {
         let id = await mintGameId(controller.signal)
@@ -1508,6 +1657,36 @@ export default function App() {
     )
   }, [])
 
+  const [defaultAngleStatus, setDefaultAngleStatus] = useState<string | null>(
+    null,
+  )
+  const [defaultAngleSaved, setDefaultAngleSaved] = useState(() =>
+    hasDefaultCamera(roomId),
+  )
+  useEffect(() => {
+    setDefaultAngleSaved(hasDefaultCamera(roomId))
+    setDefaultAngleStatus(null)
+  }, [roomId])
+
+  const setDefaultAngle = useCallback(() => {
+    const snap = getLiveView()
+    if (!snap) {
+      setDefaultAngleStatus('Orbit the board once, then try again.')
+      return
+    }
+    saveDefaultCamera(roomId, snap.cameraPosition, snap.cameraTarget)
+    setDefaultAngleSaved(true)
+    setDefaultAngleStatus('Default angle saved for this room.')
+    setPanelFitEpoch((n) => n + 1)
+  }, [roomId])
+
+  const clearDefaultAngle = useCallback(() => {
+    clearDefaultCamera(roomId)
+    setDefaultAngleSaved(false)
+    setDefaultAngleStatus('Cleared — using the room’s built-in camera.')
+    setPanelFitEpoch((n) => n + 1)
+  }, [roomId])
+
   return (
     <div className="app" onPointerDown={() => unlockSfx()}>
       {endOutcome && !endgameDismissed && !drillOpen && (
@@ -1550,6 +1729,10 @@ export default function App() {
         onFenChange={onFenChange}
         onFenCommit={onFenCommit}
         onDumpView={dumpView}
+        onSetDefaultAngle={setDefaultAngle}
+        onClearDefaultAngle={clearDefaultAngle}
+        hasDefaultAngle={defaultAngleSaved}
+        defaultAngleStatus={defaultAngleStatus}
         onShowBestMoveChange={setShowBestMove}
         onBestMoveDelaySecChange={setBestMoveDelaySec}
         onShowFpsChange={setShowFps}
@@ -1598,39 +1781,52 @@ export default function App() {
             ? hintForPly(drillLine, Math.min(drillPlyIndex, drillLine.moves.length - 1))
             : 'Pick a line to start practicing the Italian Opening.'
         }
-        wrongFlash={drillWrongFlash}
+        wrongFlash={drillWrongFlash || !!drillMistake}
+        mistakeMessage={
+          drillMistake
+            ? `While fine, this course recommends playing ${recommendPhrase(drillMistake.expectedSan)}.`
+            : null
+        }
+        onTryAgain={drillMistake ? retryDrillMistake : undefined}
         progress={drillProgress}
         onSelectLine={startDrillLine}
         onRestart={restartDrill}
         onShowHint={() => setDrillHintRevealed(true)}
         hintRevealed={drillHintRevealed}
-        tipSquares={drillHintSquares?.label ?? null}
         status={drillStatus}
+        celebrate={drillStatus === 'complete' && !drillMistakes}
         onScrubPly={scrubDrillTo}
         scrubMax={drillReview?.history.length ?? 0}
         panelWidth={panelWidth}
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
+        openingCardBlurb={openingCard?.blurb ?? null}
+        openingCardStatus={openingCardStatus}
+        coachExplanation={coachExplanation}
+        coachStatus={coachStatus}
+        coachError={coachError}
+        coachChat={coachChat}
+        coachChatStatus={coachChatStatus}
+        coachChatError={coachChatError}
+        onSendCoachChat={sendCoachChat}
       />
 
-      <CoachDialog
-        open={coachOpen}
+      <GamePanel
+        open={gameOpen}
         onClose={() => openPanel(null)}
-        fen={fen}
-        lines={lines}
-        selectedIndex={clampedOptionIndex}
-        onSelectIndex={setMoveOptionIndex}
-        isPlayerTurn={turn === playerColor}
-        analysisStatus={analysisStatus}
-        analysisError={analysisError}
+        onNewGame={reset}
+        tab={gameTab}
+        onTabChange={setGameTab}
+        history={fenHistory}
+        playerColor={playerColor}
         explanation={coachExplanation}
         coachStatus={coachStatus}
         coachError={coachError}
-        onAskCoach={() => void askCoach()}
         chatMessages={coachChat}
         chatStatus={coachChatStatus}
         chatError={coachChatError}
         onSendChat={sendCoachChat}
+        isPlayerTurn={turn === playerColor}
         reviewMode={coachReviewMode}
         panelWidth={panelWidth}
         onPanelWidthChange={onPanelWidthChange}
@@ -1702,6 +1898,26 @@ export default function App() {
                 ariaLabel="Camera drag mode"
                 activeId={orbitDragMode}
                 items={[
+                  {
+                    id: 'move',
+                    label: 'Drag pieces',
+                    icon: (
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M4 4l7.07 17 2.51-7.39L21 11.07 4 4z" />
+                      </svg>
+                    ),
+                    onClick: () => setOrbitDragMode('move'),
+                  },
                   {
                     id: 'rotate',
                     label: 'Drag to rotate',
@@ -1802,27 +2018,6 @@ export default function App() {
                     disabled: urlHistoryIndex <= 0 || opponentThinking,
                   },
                   {
-                    id: 'new',
-                    label: 'New game',
-                    icon: (
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M5 12h14" />
-                        <path d="M12 5v14" />
-                      </svg>
-                    ),
-                    onClick: reset,
-                  },
-                  {
                     id: 'analysis',
                     label: 'Analysis',
                     icon: (
@@ -1873,34 +2068,21 @@ export default function App() {
                       openPanel(panel === 'drill' ? null : 'drill'),
                   },
                   {
-                    id: 'coach',
-                    label: 'Coach',
+                    id: 'game',
+                    label: 'Game',
                     icon: (
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                      <Joystick
+                        size={18}
+                        strokeWidth={2.25}
                         aria-hidden="true"
-                      >
-                        <path d="M12 8V4H8" />
-                        <rect width="16" height="12" x="4" y="8" rx="2" />
-                        <path d="M2 14h2" />
-                        <path d="M20 14h2" />
-                        <path d="M9 13v2" />
-                        <path d="M15 13v2" />
-                      </svg>
+                      />
                     ),
                     onClick: () => {
                       if (coachStatus === 'error') {
                         setCoachStatus('idle')
                         setCoachError(null)
                       }
-                      openPanel(panel === 'coach' ? null : 'coach')
+                      openPanel(panel === 'game' ? null : 'game')
                     },
                   },
                 ]}
@@ -1935,6 +2117,7 @@ export default function App() {
               fitEpoch={panelFitEpoch}
               boardOrigin={roomTheme.boardOffset ?? DEFAULT_CAMERA_TARGET}
               sceneKey={`${roomId}:${boardId}:${pieceSetId}:${drillOpen ? 'drill' : 'play'}`}
+              roomId={roomId}
             />
             <color attach="background" args={[roomTheme.background]} />
             <Environment files={roomTheme.hdr} environmentIntensity={0.6} />
@@ -1953,6 +2136,8 @@ export default function App() {
                 playerColor={playerColor}
                 tipFrom={tipFrom}
                 tipTo={tipTo}
+                wrongFrom={drillMistake?.from ?? null}
+                wrongTo={drillMistake?.to ?? null}
                 pendingEngineMove={pendingEngineMove}
                 onEngineMoveConsumed={onEngineMoveConsumed}
                 boardTheme={boardTheme}
@@ -1962,7 +2147,11 @@ export default function App() {
                 pieceSetId={pieceSetId}
                 orbitDragMode={orbitDragMode}
                 showMoveIndicators={showMoveIndicators}
-                readOnly={!!reviewImport || drillStatus === 'complete'}
+                readOnly={
+                  !!reviewImport ||
+                  drillStatus === 'complete' ||
+                  !!drillMistake
+                }
                 validateMove={
                   drillStatus === 'playing' ? validateDrillMove : undefined
                 }

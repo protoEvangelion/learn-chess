@@ -233,18 +233,39 @@ export function readGameIdFromUrl(
 }
 
 /** Which drawer is open — at most one. */
-export type PanelId = 'settings' | 'coach' | 'analysis' | 'drill'
+export type PanelId = 'settings' | 'game' | 'analysis' | 'drill'
+
+/** Opening drill pack id in the URL (e.g. italian). */
+export type OpeningId = 'italian'
 
 export function readPanelFromUrl(
   search = window.location.search,
 ): PanelId | null {
   const p = new URLSearchParams(search).get('panel')
-  // Legacy import panel folded into analysis
+  // Legacy import panel folded into analysis; coach → game (Moves|Coach tabs).
   if (p === 'import') return 'analysis'
-  if (p === 'settings' || p === 'coach' || p === 'analysis' || p === 'drill') {
+  if (p === 'coach') return 'game'
+  if (p === 'settings' || p === 'game' || p === 'analysis' || p === 'drill') {
     return p
   }
   return null
+}
+
+export function readOpeningFromUrl(
+  search = window.location.search,
+): OpeningId | null {
+  const o = new URLSearchParams(search).get('opening')?.trim().toLowerCase()
+  if (o === 'italian') return o
+  return null
+}
+
+/** Drill line id (e.g. rook-bait). */
+export function readLineFromUrl(
+  search = window.location.search,
+): string | null {
+  const line = new URLSearchParams(search).get('line')?.trim()
+  if (!line) return null
+  return line
 }
 
 export type UrlGameState = {
@@ -252,33 +273,114 @@ export type UrlGameState = {
   gameId: string
   idx: number
   panel?: PanelId | null
+  opening?: OpeningId | null
+  line?: string | null
+}
+
+/**
+ * URL param policy by panel:
+ *
+ * | panel     | gameId                                      | opening/line |
+ * |-----------|---------------------------------------------|--------------|
+ * | drill     | never (shareable practice)                  | yes when set |
+ * | game      | session id for Cursor chat resume           | never        |
+ * | analysis  | session id                                  | never        |
+ * | settings  | leave alone — panel switch must not inject  | never        |
+ * | (none)    | session id for free-play resume             | never        |
+ *
+ * Panel switches only change `panel` (+ clear drill keys when leaving drill).
+ * They read gameId from the current URL only — never from React memory —
+ * so drill → settings cannot suddenly grow a gameId.
+ */
+export function resolveGameIdForUrl(
+  panel: PanelId | null,
+  requested: string,
+): string {
+  if (panel === 'drill') return ''
+  return requested
+}
+
+function normalizeDrillKeys(
+  panel: PanelId | null,
+  opening: OpeningId | null,
+  line: string | null,
+): { opening: OpeningId | null; line: string | null } {
+  if (panel !== 'drill') return { opening: null, line: null }
+  return { opening, line }
 }
 
 function toLocation(
   fen: string,
   gameId: string,
-  panel: PanelId | null | undefined = undefined,
+  panel: PanelId | null,
+  opening: OpeningId | null,
+  line: string | null,
 ): string {
   const url = new URL(window.location.href)
   if (fen === START_FEN) url.searchParams.delete('fen')
   else url.searchParams.set('fen', fen)
+
   if (gameId) url.searchParams.set('gameId', gameId)
   else url.searchParams.delete('gameId')
-  // undefined = keep whatever is already in the URL
-  const nextPanel =
-    panel === undefined ? readPanelFromUrl(url.search) : panel
-  if (nextPanel) url.searchParams.set('panel', nextPanel)
+
+  if (panel) url.searchParams.set('panel', panel)
   else url.searchParams.delete('panel')
+
+  const drill = normalizeDrillKeys(panel, opening, line)
+  if (drill.opening) url.searchParams.set('opening', drill.opening)
+  else url.searchParams.delete('opening')
+  if (drill.line) url.searchParams.set('line', drill.line)
+  else url.searchParams.delete('line')
+
   return `${url.pathname}${url.search}${url.hash}`
 }
 
+function historyIdx(): number {
+  return typeof (window.history.state as UrlGameState | null)?.idx === 'number'
+    ? (window.history.state as UrlGameState).idx
+    : 0
+}
+
+function writeUrlState(state: UrlGameState, mode: 'replace' | 'push'): boolean {
+  const panel = state.panel ?? null
+  const drill = normalizeDrillKeys(
+    panel,
+    state.opening ?? null,
+    state.line ?? null,
+  )
+  const gameId = resolveGameIdForUrl(panel, state.gameId)
+  const next = toLocation(state.fen, gameId, panel, drill.opening, drill.line)
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  const payload: UrlGameState = {
+    fen: state.fen,
+    gameId,
+    idx: state.idx,
+    panel,
+    opening: drill.opening,
+    line: drill.line,
+  }
+  if (mode === 'push') {
+    if (next === current) return false
+    window.history.pushState(payload, '', next)
+    return true
+  }
+  window.history.replaceState(payload, '', next)
+  return true
+}
+
+/** Sync board position (+ coach gameId when the active panel allows it). */
 export function replaceGameInUrl(fen: string, gameId: string, idx = 0) {
   const panel = readPanelFromUrl()
-  const next = toLocation(fen, gameId, panel)
-  window.history.replaceState(
-    { fen, gameId, idx, panel } satisfies UrlGameState,
-    '',
-    next,
+  writeUrlState(
+    {
+      fen,
+      gameId,
+      idx,
+      panel,
+      opening: readOpeningFromUrl(),
+      line: readLineFromUrl(),
+    },
+    'replace',
   )
 }
 
@@ -289,29 +391,52 @@ export function pushGameToUrl(
   idx: number,
 ): boolean {
   const panel = readPanelFromUrl()
-  const next = toLocation(fen, gameId, panel)
-  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
-  if (next === current) return false
-  window.history.pushState(
-    { fen, gameId, idx, panel } satisfies UrlGameState,
-    '',
-    next,
+  return writeUrlState(
+    {
+      fen,
+      gameId,
+      idx,
+      panel,
+      opening: readOpeningFromUrl(),
+      line: readLineFromUrl(),
+    },
+    'push',
   )
-  return true
 }
 
-/** Open/close settings or coach without adding a history entry. */
+/**
+ * Open/close a panel without adding a history entry.
+ * Preserves fen + whatever gameId is already in the URL (stripped only for drill).
+ * Does not inject an in-memory gameId — that was causing settings to suddenly grow a gameId after practice.
+ */
 export function replacePanelInUrl(panel: PanelId | null) {
-  const fen = readFenFromUrl() ?? START_FEN
-  const gameId = readGameIdFromUrl() ?? ''
-  const idx =
-    typeof (window.history.state as UrlGameState | null)?.idx === 'number'
-      ? (window.history.state as UrlGameState).idx
-      : 0
-  const next = toLocation(fen, gameId, panel)
-  window.history.replaceState(
-    { fen, gameId, idx, panel } satisfies UrlGameState,
-    '',
-    next,
+  writeUrlState(
+    {
+      fen: readFenFromUrl() ?? START_FEN,
+      gameId: readGameIdFromUrl() ?? '',
+      idx: historyIdx(),
+      panel,
+      opening: panel === 'drill' ? readOpeningFromUrl() : null,
+      line: panel === 'drill' ? readLineFromUrl() : null,
+    },
+    'replace',
+  )
+}
+
+/** Persist the active opening drill line (implies panel=drill, no gameId). */
+export function replaceDrillInUrl(
+  opening: OpeningId | null,
+  line: string | null,
+) {
+  writeUrlState(
+    {
+      fen: readFenFromUrl() ?? START_FEN,
+      gameId: '',
+      idx: historyIdx(),
+      panel: 'drill',
+      opening,
+      line,
+    },
+    'replace',
   )
 }

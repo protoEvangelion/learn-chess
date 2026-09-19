@@ -52,6 +52,7 @@ Curated themes live under `public/assets/` (boards, pieces, rooms) and `public/s
 
 ```bash
 node scripts/generate-assets.mjs
+node scripts/generate-assets.mjs --sfx-only   # quiet CC0 wood taps only
 ```
 
 | Theme | Notes |
@@ -79,4 +80,4 @@ When adding Sketchfab models: download a redistributable license (CC-BY/CC0), no
 
 ## License
 
-See upstream [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) for original board asset licensing; this project’s app code is provided as-is for learning use. Project-generated GLBs/SFX are CC0. Sketchfab assets retain their listed licenses (credit required for CC-BY).
+See upstream [joshwrn/3d-chess](https://github.com/joshwrn/3d-chess) for original board asset licensing; this project’s app code is provided as-is for learning use. Project-generated GLBs/SFX are CC0 (soft board taps in `public/sfx/`). Sketchfab assets retain their listed licenses (credit required for CC-BY).

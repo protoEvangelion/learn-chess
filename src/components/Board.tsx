@@ -1,5 +1,5 @@
 import type { Dispatch, FC, SetStateAction } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Board, Position, Tile } from '@logic/board'
 import { checkIfPositionsMatch, copyBoard } from '@logic/board'
 import type { Color, GameOverType, Move, Piece } from '@logic/pieces'
@@ -25,7 +25,8 @@ import { animated, useSpring } from '@react-spring/three'
 import { OrbitControls } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
-import { type MovingTo, useGameState } from '@/state/game'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+import { useGameState } from '@/state/game'
 import type { BoardTheme, PieceSetTheme, RoomTheme } from '@/lib/themes'
 import { playSfx } from '@/lib/sfx'
 import { setLiveView } from '@/lib/viewDebug'
@@ -40,7 +41,10 @@ import {
 
 const ZERO_OFFSET: [number, number, number] = [0, 0, 0]
 
-type ThreeMouseEvent = { stopPropagation: () => void }
+type ThreePointerEvent = {
+  stopPropagation: () => void
+  nativeEvent: PointerEvent
+}
 
 export type GameOver = {
   /** checkmate/stalemate from live play; resign/draw from imported PGN. */
@@ -60,6 +64,9 @@ export const BoardComponent: FC<{
   playerColor: Color
   tipFrom?: Position | null
   tipTo?: Position | null
+  /** Chessreps-style wrong drill attempt (from/to). */
+  wrongFrom?: Position | null
+  wrongTo?: Position | null
   pendingEngineMove?: Move | null
   onEngineMoveConsumed?: () => void
   boardTheme: BoardTheme
@@ -67,8 +74,8 @@ export const BoardComponent: FC<{
   roomTheme: RoomTheme
   boardId?: string
   pieceSetId?: string
-  /** Left-drag: orbit vs screen pan */
-  orbitDragMode?: 'rotate' | 'pan'
+  /** Left-drag: move pieces / orbit / screen pan */
+  orbitDragMode?: 'move' | 'rotate' | 'pan'
   /** Move-safety cues + threatened-piece rings */
   showMoveIndicators?: boolean
   /** When true, ignore piece clicks / engine animation (imported review). */
@@ -86,6 +93,8 @@ export const BoardComponent: FC<{
   playerColor,
   tipFrom = null,
   tipTo = null,
+  wrongFrom = null,
+  wrongTo = null,
   pendingEngineMove = null,
   onEngineMoveConsumed,
   boardTheme,
@@ -93,7 +102,7 @@ export const BoardComponent: FC<{
   roomTheme,
   boardId = boardTheme.id,
   pieceSetId = pieceSet.id,
-  orbitDragMode = 'rotate',
+  orbitDragMode = 'move',
   showMoveIndicators = true,
   readOnly = false,
   validateMove,
@@ -106,6 +115,11 @@ export const BoardComponent: FC<{
   const history = useGameState((s) => s.history)
   const addHistory = useGameState((s) => s.addHistory)
   const sfxPlayedForMove = useRef<string | null>(null)
+  const [premove, setPremove] = useState<{
+    pieceId: string
+    from: Position
+    to: Position
+  } | null>(null)
 
   const lastOpponentMove = (() => {
     for (let i = history.length - 1; i >= 0; i--) {
@@ -203,25 +217,21 @@ export const BoardComponent: FC<{
     })
   }
 
-  const selectThisPiece = (e: ThreeMouseEvent, tile: Tile | null) => {
-    e.stopPropagation()
+  const selectThisPiece = (tile: Tile | null) => {
     if (readOnly) return
-    if (turn !== playerColor) return
-    if (!tile?.piece?.type && !selected) return
+    if (!tile?.piece?.type && !selected) {
+      setPremove(null)
+      return
+    }
     if (!tile?.piece) {
       setSelected(null)
       setMoves([])
+      setPremove(null)
       return
     }
     if (tile.piece.color !== playerColor) return
-    // Second click on the same piece cancels selection / move preview
-    if (selected && selected.getId() === tile.piece.getId()) {
-      setSelected(null)
-      setMoves([])
-      setMovingTo(null)
-      return
-    }
-    setMovingTo(null)
+    // Keep an in-flight opponent move animating — don't cancel it to pick up.
+    if (!movingTo) setMovingTo(null)
     setMoves(
       movesForPiece({ piece: tile.piece, board, propagateDetectCheck: true }),
     )
@@ -229,6 +239,174 @@ export const BoardComponent: FC<{
     setLastSelected(tile)
     setRedLightPosition(tile.position)
   }
+
+  const controlsRef = useRef<OrbitControlsImpl>(null)
+  const boardGroupRef = useRef<THREE.Group>(null)
+  const [dragging, setDragging] = useState(false)
+  const draggingRef = useRef(false)
+  const dragPieceIdRef = useRef<string | null>(null)
+  const [dragPieceId, setDragPieceId] = useState<string | null>(null)
+  const dragBoardRef = useRef<{ x: number; z: number } | null>(null)
+  const lastDragSquareRef = useRef<Position | null>(null)
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  const movesRef = useRef(moves)
+  movesRef.current = moves
+  const boardRef = useRef(board)
+  boardRef.current = board
+  const turnRef = useRef(turn)
+  turnRef.current = turn
+  const playerColorRef = useRef(playerColor)
+  playerColorRef.current = playerColor
+  const movingToRef = useRef(movingTo)
+  movingToRef.current = movingTo
+  const validateMoveRef = useRef(validateMove)
+  validateMoveRef.current = validateMove
+  const endDragRef = useRef<() => void>(() => {})
+  const dragListenersRef = useRef<{
+    onUp: () => void
+    onCancel: () => void
+  } | null>(null)
+
+  const { camera, pointer, raycaster } = useThree()
+  const hitPoint = useMemo(() => new THREE.Vector3(), [])
+  const planeNormal = useMemo(() => new THREE.Vector3(0, 1, 0), [])
+  const planePoint = useMemo(() => new THREE.Vector3(), [])
+  const dragPlane = useMemo(() => new THREE.Plane(), [])
+
+  const squareFromLocal = useCallback((local: THREE.Vector3): Position | null => {
+    const file = Math.round(local.x)
+    const rank = Math.round(local.z)
+    if (file < 0 || file > 7 || rank < 0 || rank > 7) return null
+    return { x: file, y: rank }
+  }, [])
+
+  const raycastBoardLocal = useCallback((): THREE.Vector3 | null => {
+    const group = boardGroupRef.current
+    if (!group) return null
+    planePoint.set(0, 0.5, 0)
+    group.localToWorld(planePoint)
+    planeNormal.set(0, 1, 0).transformDirection(group.matrixWorld).normalize()
+    dragPlane.setFromNormalAndCoplanarPoint(planeNormal, planePoint)
+    raycaster.setFromCamera(pointer, camera)
+    if (!raycaster.ray.intersectPlane(dragPlane, hitPoint)) return null
+    return group.worldToLocal(hitPoint.clone())
+  }, [camera, dragPlane, hitPoint, planeNormal, planePoint, pointer, raycaster])
+
+  useFrame(() => {
+    if (!draggingRef.current) return
+    const local = raycastBoardLocal()
+    if (!local) return
+    dragBoardRef.current = { x: local.x, z: local.z }
+    const sq = squareFromLocal(local)
+    lastDragSquareRef.current = sq
+    const key =
+      sq &&
+      movesRef.current.some((m) => positionKey(m.newPosition) === positionKey(sq))
+        ? positionKey(sq)
+        : null
+    setHoveredDestKey((prev) => (prev === key ? prev : key))
+  })
+
+  const clearSelection = useCallback(() => {
+    setSelected(null)
+    setMoves([])
+    setLastSelected(null)
+    // Never clear movingTo here — that would abort an in-flight opponent
+    // (or own) piece animation when queueing a premove / deselecting.
+  }, [setMoves, setSelected])
+
+  const detachDragListeners = useCallback(() => {
+    const listeners = dragListenersRef.current
+    if (!listeners) return
+    window.removeEventListener('pointerup', listeners.onUp)
+    window.removeEventListener('pointercancel', listeners.onCancel)
+    dragListenersRef.current = null
+  }, [])
+
+  const endDrag = useCallback(() => {
+    if (!draggingRef.current) return
+    detachDragListeners()
+    draggingRef.current = false
+    setDragging(false)
+    dragPieceIdRef.current = null
+    setDragPieceId(null)
+    dragBoardRef.current = null
+    if (controlsRef.current) controlsRef.current.enabled = true
+
+    // Prefer the square tracked while dragging — R3F pointer can be stale on window pointerup.
+    const local = raycastBoardLocal()
+    const sq = lastDragSquareRef.current ?? (local ? squareFromLocal(local) : null)
+    lastDragSquareRef.current = null
+    const piece = selectedRef.current
+    const legalMoves = movesRef.current
+
+    if (!piece || !sq) {
+      clearSelection()
+      setHoveredDestKey(null)
+      return
+    }
+
+    // Dropped back on origin — cancel (also clears a queued premove).
+    if (sq.x === piece.position.x && sq.y === piece.position.y) {
+      setPremove(null)
+      clearSelection()
+      setHoveredDestKey(null)
+      return
+    }
+
+    const move = legalMoves.find(
+      (m) => m.newPosition.x === sq.x && m.newPosition.y === sq.y,
+    )
+    if (!move) {
+      setPremove(null)
+      clearSelection()
+      setHoveredDestKey(null)
+      return
+    }
+
+    const destTile = getTile(boardRef.current, sq)
+    if (!destTile) {
+      clearSelection()
+      return
+    }
+
+    const validate = validateMoveRef.current
+    if (validate && !validate(move)) {
+      playSfx('check')
+      clearSelection()
+      return
+    }
+
+    // Opponent's turn (or their piece still settling) → queue a premove.
+    // Also queue if an opponent move is still animating even if turn already
+    // flipped (shouldn't normally happen, but keep the animation alive).
+    const opponentMoving =
+      !!movingToRef.current &&
+      movingToRef.current.move.piece.color !== playerColorRef.current
+    if (turnRef.current !== playerColorRef.current || opponentMoving) {
+      setPremove({
+        pieceId: piece.getId(),
+        from: { ...piece.position },
+        to: { ...sq },
+      })
+      clearSelection()
+      setHoveredDestKey(null)
+      return
+    }
+
+    setPremove(null)
+    setMovingTo({ move, tile: destTile })
+    setHoveredDestKey(null)
+  }, [
+    clearSelection,
+    detachDragListeners,
+    raycastBoardLocal,
+    setMovingTo,
+    squareFromLocal,
+  ])
+
+  endDragRef.current = endDrag
 
   useEffect(() => {
     if (readOnly || !pendingEngineMove || movingTo) return
@@ -245,6 +423,59 @@ export const BoardComponent: FC<{
     movingTo,
     board,
     onEngineMoveConsumed,
+    setMovingTo,
+  ])
+
+  // Fire queued premove as soon as it's our turn and the board is idle.
+  useEffect(() => {
+    if (readOnly || !premove || movingTo || pendingEngineMove) return
+    if (turn !== playerColor) return
+
+    let pieceTile: Tile | null = null
+    for (const row of board) {
+      for (const t of row) {
+        if (t.piece?.getId() === premove.pieceId) {
+          pieceTile = t
+          break
+        }
+      }
+      if (pieceTile) break
+    }
+    if (!pieceTile?.piece) {
+      setPremove(null)
+      return
+    }
+
+    const legal = movesForPiece({
+      piece: pieceTile.piece,
+      board,
+      propagateDetectCheck: true,
+    })
+    const match = legal.find(
+      (m) =>
+        m.newPosition.x === premove.to.x && m.newPosition.y === premove.to.y,
+    )
+    const dest = match ? getTile(board, premove.to) : null
+    if (!match || !dest) {
+      setPremove(null)
+      return
+    }
+    if (validateMove && !validateMove(match)) {
+      setPremove(null)
+      return
+    }
+
+    setPremove(null)
+    setMovingTo({ move: match, tile: dest })
+  }, [
+    readOnly,
+    premove,
+    movingTo,
+    pendingEngineMove,
+    turn,
+    playerColor,
+    board,
+    validateMove,
     setMovingTo,
   ])
 
@@ -275,58 +506,79 @@ export const BoardComponent: FC<{
       type: movingTo.move.type,
       piece: movingTo.move.piece,
     })
-    setBoard((prev) => {
-      const newBoard = copyBoard(prev)
-      if (!movingTo.move.piece) return prev
-      const selectedTile = getTile(newBoard, movingTo.move.piece.position)
-      const tileToMoveTo = getTile(newBoard, tile.position)
-      if (!selectedTile || !tileToMoveTo) return prev
 
-      if (
-        isPawn(selectedTile.piece) ||
-        isKing(selectedTile.piece) ||
-        isRook(selectedTile.piece)
-      ) {
-        selectedTile.piece = { ...selectedTile.piece, hasMoved: true }
+    const newBoard = copyBoard(board)
+    if (!movingTo.move.piece) return
+    const fromTile = getTile(newBoard, movingTo.move.piece.position)
+    const tileToMoveTo = getTile(newBoard, tile.position)
+    if (!fromTile || !tileToMoveTo) return
+
+    if (
+      isPawn(fromTile.piece) ||
+      isKing(fromTile.piece) ||
+      isRook(fromTile.piece)
+    ) {
+      fromTile.piece = { ...fromTile.piece, hasMoved: true }
+    }
+    if (isPawn(fromTile.piece) && shouldPromotePawn({ tile })) {
+      fromTile.piece.type = `queen`
+      fromTile.piece.id = fromTile.piece.id + 1
+    }
+
+    if (
+      isPawn(fromTile.piece) &&
+      movingTo.move.type === `captureEnPassant`
+    ) {
+      const latestMove = history[history.length - 1]
+      if (latestMove) {
+        const enPassantTile = newBoard[latestMove.to.y][latestMove.to.x]
+        enPassantTile.piece = null
       }
-      if (isPawn(selectedTile.piece) && shouldPromotePawn({ tile })) {
-        selectedTile.piece.type = `queen`
-        selectedTile.piece.id = selectedTile.piece.id + 1
+    }
+
+    if (movingTo.move.castling) {
+      const { rook, rookNewPosition } = movingTo.move.castling
+      const rookTile = newBoard[rook.position.y][rook.position.x]
+      const rookTileToMoveTo = newBoard[rookNewPosition.y][rookNewPosition.x]
+      if (!isRook(rookTile.piece)) return
+      rookTileToMoveTo.piece = {
+        ...rookTile.piece,
+        hasMoved: true,
+        position: rookTileToMoveTo.position,
       }
+      rookTile.piece = null
+    }
 
-      if (
-        isPawn(selectedTile.piece) &&
-        movingTo.move.type === `captureEnPassant`
-      ) {
-        const latestMove = history[history.length - 1]
-        if (latestMove) {
-          const enPassantTile = newBoard[latestMove.to.y][latestMove.to.x]
-          enPassantTile.piece = null
-        }
-      }
+    tileToMoveTo.piece = fromTile.piece
+      ? { ...fromTile.piece, position: tile.position }
+      : null
+    fromTile.piece = null
 
-      if (movingTo.move.castling) {
-        const { rook, rookNewPosition } = movingTo.move.castling
-        const rookTile = newBoard[rook.position.y][rook.position.x]
-        const rookTileToMoveTo = newBoard[rookNewPosition.y][rookNewPosition.x]
-        if (!isRook(rookTile.piece)) return prev
-        rookTileToMoveTo.piece = {
-          ...rookTile.piece,
-          hasMoved: true,
-          position: rookTileToMoveTo.position,
-        }
-        rookTile.piece = null
-      }
-
-      tileToMoveTo.piece = selectedTile.piece
-        ? { ...selectedTile.piece, position: tile.position }
-        : null
-      selectedTile.piece = null
-      return newBoard
-    })
-
+    setBoard(newBoard)
     setTurn()
     setMovingTo(null)
+
+    // Keep a held piece in-hand across the opponent's (or own) move settle.
+    const heldId = draggingRef.current ? dragPieceIdRef.current : null
+    if (heldId) {
+      for (const row of newBoard) {
+        for (const t of row) {
+          if (t.piece?.getId() !== heldId) continue
+          setSelected(t.piece)
+          setLastSelected(t)
+          setRedLightPosition(t.position)
+          setMoves(
+            movesForPiece({
+              piece: t.piece,
+              board: newBoard,
+              propagateDetectCheck: true,
+            }),
+          )
+          return
+        }
+      }
+    }
+
     setMoves([])
     setSelected(null)
     setLastSelected(null)
@@ -351,17 +603,49 @@ export const BoardComponent: FC<{
     prevCheckRef.current = inCheck
   }, [board, turn, setGameOver])
 
-  const startMovingPiece = (e: ThreeMouseEvent, tile: Tile, nextTile: Move) => {
+  const beginDrag = (e: ThreePointerEvent, tile: Tile) => {
     e.stopPropagation()
     if (readOnly) return
-    if (validateMove && !validateMove(nextTile)) {
-      playSfx('check')
-      setSelected(null)
-      setMoves([])
+    if (!tile.piece || tile.piece.color !== playerColor) return
+    // Don't grab a piece that is currently animating a move.
+    if (
+      movingTo &&
+      movingTo.move.piece.getId() === tile.piece.getId()
+    ) {
       return
     }
-    const newMovingTo: MovingTo = { move: nextTile, tile }
-    setMovingTo(newMovingTo)
+    selectThisPiece(tile)
+    draggingRef.current = true
+    dragPieceIdRef.current = tile.piece.getId()
+    setDragPieceId(tile.piece.getId())
+    setDragging(true)
+    lastDragSquareRef.current = {
+      x: tile.position.x,
+      y: tile.position.y,
+    }
+    dragBoardRef.current = {
+      x: tile.position.x,
+      z: tile.position.y,
+    }
+    if (controlsRef.current) controlsRef.current.enabled = false
+
+    // Attach immediately — a useEffect listener misses quick click-releases.
+    detachDragListeners()
+    const onUp = () => endDragRef.current()
+    const onCancel = () => {
+      detachDragListeners()
+      draggingRef.current = false
+      setDragging(false)
+      dragPieceIdRef.current = null
+      setDragPieceId(null)
+      dragBoardRef.current = null
+      lastDragSquareRef.current = null
+      clearSelection()
+      if (controlsRef.current) controlsRef.current.enabled = true
+    }
+    dragListenersRef.current = { onUp, onCancel }
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   const { intensity } = useSpring({
@@ -404,24 +688,34 @@ export const BoardComponent: FC<{
   const target = roomTheme.boardOffset ?? ZERO_OFFSET
 
   return (
-    <group position={[-3.5, -0.5, -3.5]}>
+    <group ref={boardGroupRef} position={[-3.5, -0.5, -3.5]}>
       <OrbitControls
+        ref={controlsRef}
         makeDefault
         target={target}
         maxDistance={maxDist}
         minDistance={minDist}
         maxPolarAngle={maxPolar}
         minPolarAngle={minPolar}
-        enableZoom
-        enablePan
-        enableRotate
+        enableZoom={!dragging}
+        enablePan={!dragging && orbitDragMode !== 'move'}
+        enableRotate={!dragging}
+        enabled={!dragging}
         screenSpacePanning
         mouseButtons={{
           LEFT:
-            orbitDragMode === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+            orbitDragMode === 'move'
+              ? (-1 as THREE.MOUSE)
+              : orbitDragMode === 'pan'
+                ? THREE.MOUSE.PAN
+                : THREE.MOUSE.ROTATE,
           MIDDLE: THREE.MOUSE.DOLLY,
           RIGHT:
-            orbitDragMode === 'pan' ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN,
+            orbitDragMode === 'move'
+              ? THREE.MOUSE.ROTATE
+              : orbitDragMode === 'pan'
+                ? THREE.MOUSE.ROTATE
+                : THREE.MOUSE.PAN,
         }}
       />
       <ViewProbe
@@ -485,21 +779,13 @@ export const BoardComponent: FC<{
             !!lastOpponentMove &&
             (checkIfPositionsMatch(tile.position, lastOpponentMove.from) ||
               checkIfPositionsMatch(tile.position, lastOpponentMove.to))
-
-          const handleClick = (e: ThreeMouseEvent) => {
-            if (movingTo) return
-            if (turn !== playerColor) return
-            const tileContainsOtherPlayersPiece =
-              tile.piece && tile.piece?.color !== turn
-            if (tileContainsOtherPlayersPiece && !canMoveHere) {
-              setSelected(null)
-              setMoves([])
-              return
-            }
-            canMoveHere
-              ? startMovingPiece(e, tile, canMoveHere)
-              : selectThisPiece(e, tile)
-          }
+          const isWrongAttempt =
+            checkIfPositionsMatch(tile.position, wrongFrom) ||
+            checkIfPositionsMatch(tile.position, wrongTo)
+          const isPremove =
+            !!premove &&
+            (checkIfPositionsMatch(tile.position, premove.from) ||
+              checkIfPositionsMatch(tile.position, premove.to))
 
           const pieceId = tile.piece
             ? `${tile.piece.type}-${tile.piece.color}-${tile.piece.id}-${j}-${i}-${pieceSet.id}`
@@ -511,11 +797,12 @@ export const BoardComponent: FC<{
                 color={bg}
                 mode={boardTheme.tileMode}
                 position={[j, 0.25, i]}
-                onClick={handleClick}
                 canMoveHere={canMoveHere?.newPosition ?? null}
                 isTip={isTip}
                 isCheck={isCheck}
                 isLastMove={isLastMove}
+                isWrongAttempt={isWrongAttempt}
+                isPremove={isPremove}
                 pieceSafety={
                   safetyBySquare?.get(positionKey(tile.position)) ?? null
                 }
@@ -540,8 +827,11 @@ export const BoardComponent: FC<{
                   meshScale={pieceSet.meshScale}
                   materialVariant={materialVariant}
                   color={tile.piece.color}
-                  onClick={handleClick}
+                  onPointerDown={(e) => beginDrag(e, tile)}
                   isSelected={!!isSelected}
+                  isDragging={dragPieceId === tile.piece.getId()}
+                  dragBoardRef={dragBoardRef}
+                  homeSquare={{ x: j, z: i }}
                   wasSelected={
                     lastSelected
                       ? lastSelected?.piece?.getId() === tile.piece.getId()
