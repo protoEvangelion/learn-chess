@@ -18,7 +18,7 @@ export type OpeningCard = {
 const memory = new Map<string, OpeningCard>()
 const inflight = new Map<string, Promise<OpeningCard>>()
 
-/** Lazy fetch / generate opening briefing for a drill line (Turso-backed). */
+/** Fetch a pregenerated, Turso-backed opening briefing. */
 export async function fetchOpeningCard(line: DrillLine): Promise<OpeningCard> {
   const hit = memory.get(line.id)
   if (hit) return hit
@@ -36,7 +36,7 @@ export async function fetchOpeningCard(line: DrillLine): Promise<OpeningCard> {
           name: line.name,
           eco: line.eco,
           summary: line.summary,
-          moves: line.moves.map((m) => ({ san: m.san })),
+          moves: line.moves.map((m) => ({ san: m.san, hint: m.hint })),
         },
       }),
     })

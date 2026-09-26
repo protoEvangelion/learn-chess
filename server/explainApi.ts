@@ -13,7 +13,7 @@ type OpeningLineInput = {
   name: string
   eco?: string
   summary: string
-  moves: Array<{ san: string }>
+  moves: Array<{ san: string; hint?: string }>
 }
 
 export type ExplainOption = {

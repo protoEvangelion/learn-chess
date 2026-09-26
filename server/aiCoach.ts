@@ -42,20 +42,3 @@ export function streamCoachAsk(
     done,
   }
 }
-
-/** One-shot generation for Turso-cached opening briefings. */
-export async function askCoachOnce(prompt: string): Promise<string> {
-  const result = streamText({
-    model: EXPLAIN_MODEL,
-    prompt,
-    maxOutputTokens: 4_000,
-    timeout: 55_000,
-  })
-  let assembled = ''
-  for await (const part of result.stream) {
-    if (part.type === 'error') throw part.error
-    if (part.type === 'text-delta') assembled += part.text
-  }
-  if (!assembled.trim()) throw new Error('AI Gateway returned no text')
-  return assembled.trim()
-}

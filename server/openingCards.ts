@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto'
 import { getTurso } from './turso.js'
-import { askCoachOnce, EXPLAIN_MODEL } from './aiCoach.js'
 
 export type OpeningLineInput = {
   id: string
   name: string
   eco?: string
   summary: string
-  moves: Array<{ san: string }>
+  moves: Array<{ san: string; hint?: string }>
 }
 
 export type OpeningCard = {
@@ -27,33 +26,48 @@ export type OpeningCard = {
 
 type StoredCard = Omit<OpeningCard, 'cached'>
 
-const inflight = new Map<string, Promise<OpeningCard>>()
-
+const CURATION_VERSION = 'curated-v1'
 let schemaReady: Promise<void> | null = null
 
+const TWO_KNIGHTS_IDS = new Set([
+  'fork-check',
+  'central-clamp',
+  'loose-queen',
+  'pin-royal',
+  'structure-crunch',
+  'quiet-queen',
+])
+const PHILIDOR_IDS = new Set([
+  'long-castle-battery',
+  'trade-and-castle',
+  'pinpoint-attack',
+])
+
 export function lineContentHash(line: OpeningLineInput): string {
-  const payload = [
-    line.id,
-    line.name,
-    line.eco ?? '',
-    line.summary,
-    line.moves.map((m) => m.san).join(' '),
-  ].join('\n')
-  return createHash('sha256').update(payload).digest('hex').slice(0, 24)
+  return createHash('sha256')
+    .update(
+      [
+        line.id,
+        line.name,
+        line.eco ?? '',
+        line.summary,
+        line.moves.map((move) => move.san).join(' '),
+      ].join('\n'),
+    )
+    .digest('hex')
+    .slice(0, 24)
 }
 
 export function formatOpeningCardForCoach(card: OpeningCard): string {
-  const themes = card.themes.length ? card.themes.join('; ') : '—'
-  const points = card.talkingPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')
   return [
     `OPENING LINE BRIEF (${card.name}${card.eco ? ` · ${card.eco}` : ''}):`,
     card.blurb,
-    `Themes: ${themes}`,
+    `Themes: ${card.themes.join('; ')}`,
     `White plan: ${card.whitePlan}`,
     `Black plan: ${card.blackPlan}`,
     card.traps ? `Traps / pitfalls: ${card.traps}` : null,
     'Coach talking points (use lightly, do not dump all):',
-    points,
+    ...card.talkingPoints.map((point, index) => `${index + 1}. ${point}`),
   ]
     .filter(Boolean)
     .join('\n')
@@ -61,9 +75,8 @@ export function formatOpeningCardForCoach(card: OpeningCard): string {
 
 async function ensureSchema() {
   if (!schemaReady) {
-    schemaReady = (async () => {
-      const db = getTurso()
-      await db.execute(`
+    schemaReady = getTurso()
+      .execute(`
         CREATE TABLE IF NOT EXISTS opening_cards (
           line_id TEXT PRIMARY KEY,
           content_hash TEXT NOT NULL,
@@ -75,156 +88,100 @@ async function ensureSchema() {
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
-    })()
+      .then(() => undefined)
   }
   await schemaReady
 }
 
-function fallbackCard(line: OpeningLineInput, contentHash: string): StoredCard {
+function familyDetails(line: OpeningLineInput) {
+  if (PHILIDOR_IDS.has(line.id)) {
+    return {
+      label: 'Philidor',
+      themes: ['central break', 'development lead', 'queenside castling'],
+      whitePlan:
+        'Challenge e5 with d4, develop with tempo, and use long castling to launch the kingside pieces.',
+      blackPlan:
+        'Black reinforces e5 with …d6, develops compactly, and tries to blunt the d-file and diagonal pressure.',
+    }
+  }
+  if (TWO_KNIGHTS_IDS.has(line.id)) {
+    return {
+      label: 'Two Knights',
+      themes: ['open center', 'e-file pressure', 'f7 tactics'],
+      whitePlan:
+        'Strike with d4, castle quickly, and use the open e-file plus pressure on f7 before Black consolidates.',
+      blackPlan:
+        'Black attacks e4 with …Nf6 and looks for central pawn grabs while developing with tempo.',
+    }
+  }
+  return {
+    label: 'Giuoco Piano',
+    themes: ['c3 and d4 break', 'rapid castling', 'initiative'],
+    whitePlan:
+      'Build the c3–d4 center, castle, and use the open e-file or pressure on f7 while Black’s king is unsettled.',
+    blackPlan:
+      'Black pressures e4, uses …Bb4 checks, and tries to exchange attackers before completing development.',
+  }
+}
+
+function curateCard(line: OpeningLineInput): StoredCard {
+  const family = familyDetails(line)
+  const tactical = /trap|mate|bait|fork|pin|skewer|sacrifice|hunt|attack/i.test(
+    `${line.name} ${line.summary}`,
+  )
+  const hinted = line.moves
+    .filter((_, index) => index % 2 === 0)
+    .map((move) => move.hint?.trim())
+    .filter((hint): hint is string => Boolean(hint))
+  const talkingPoints = [...new Set(hinted)].slice(0, 4)
+
   return {
     lineId: line.id,
     name: line.name,
     eco: line.eco,
     blurb: line.summary,
-    themes: [line.name],
-    whitePlan: line.summary,
-    blackPlan: 'Contest the center and complete development.',
-    traps: '',
-    talkingPoints: [line.summary],
-    contentHash,
-    model: 'fallback',
+    themes: [family.label, ...family.themes],
+    whitePlan: family.whitePlan,
+    blackPlan: family.blackPlan,
+    traps: tactical
+      ? line.summary
+      : 'Do not rush the attack: finish development and verify checks, captures, and threats before committing.',
+    talkingPoints: talkingPoints.length
+      ? talkingPoints
+      : [line.summary, family.whitePlan, 'Keep king safety ahead of material grabs.'],
+    contentHash: lineContentHash(line),
+    model: CURATION_VERSION,
   }
 }
 
-function parseCardJson(
-  raw: string,
-  line: OpeningLineInput,
-  contentHash: string,
-): StoredCard {
-  const cleaned = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-  const starts = [...cleaned.matchAll(/\{/g)].map((match) => match.index)
-  const ends = [...cleaned.matchAll(/\}/g)].map((match) => match.index).reverse()
-  let parsed: Partial<StoredCard> | null = null
-  for (const start of starts.reverse()) {
-    for (const end of ends) {
-      if (end <= start) continue
-      try {
-        parsed = JSON.parse(
-          cleaned.slice(start, end + 1),
-        ) as Partial<StoredCard>
-        break
-      } catch {
-        // DeepSeek can include reasoning with JSON-like examples before the answer.
-      }
-    }
-    if (parsed) break
-  }
-  if (!parsed) {
-    const field = (label: string) =>
-      cleaned.match(new RegExp(`^${label}:\\s*(.*)$`, 'im'))?.[1]?.trim() ?? ''
-    const blurb = field('BLURB')
-    const whitePlan = field('WHITE_PLAN')
-    const blackPlan = field('BLACK_PLAN')
-    if (blurb && whitePlan && blackPlan) {
-      parsed = {
-        blurb,
-        themes: field('THEMES')
-          .split('|')
-          .map((value) => value.trim())
-          .filter(Boolean),
-        whitePlan,
-        blackPlan,
-        traps: field('TRAPS'),
-        talkingPoints: field('TALKING_POINTS')
-          .split('|')
-          .map((value) => value.trim())
-          .filter(Boolean),
-      }
-    }
-  }
-  if (!parsed) throw new Error('No valid opening-card fields in reply')
-
-  const themes = Array.isArray(parsed.themes)
-    ? parsed.themes.map(String).filter(Boolean).slice(0, 6)
-    : []
-  const talkingPoints = Array.isArray(parsed.talkingPoints)
-    ? parsed.talkingPoints.map(String).filter(Boolean).slice(0, 5)
-    : []
-
-  return {
-    lineId: line.id,
-    name: line.name,
-    eco: line.eco,
-    blurb: String(parsed.blurb || line.summary).trim(),
-    themes: themes.length ? themes : [line.name],
-    whitePlan: String(parsed.whitePlan || '').trim() || line.summary,
-    blackPlan:
-      String(parsed.blackPlan || '').trim() ||
-      'Contest the center and complete development.',
-    traps: String(parsed.traps || '').trim(),
-    talkingPoints: talkingPoints.length ? talkingPoints : [line.summary],
-    contentHash,
-    model: EXPLAIN_MODEL,
-  }
-}
-
-function buildGeneratePrompt(line: OpeningLineInput): string {
-  const moves = line.moves.map((m, i) => `${i + 1}. ${m.san}`).join(' ')
-  return [
-    'You are a chess opening coach writing a SHORT briefing card for one drill line.',
-    'Be accurate, concrete, and concise. No fluff, no move-by-move novel.',
-    'Audience: beginner–club player practicing this line as White.',
-    '',
-    'Reply with ONLY these six one-line fields. Separate list items with |.',
-    'BLURB: 2–3 short sentences: what this line is and the main idea',
-    'THEMES: 3–5 short theme labels separated by |',
-    'WHITE_PLAN: 1–2 sentences describing White’s plan',
-    'BLACK_PLAN: 1–2 sentences describing Black’s plan',
-    'TRAPS: 1–2 sentences on key traps/pitfalls, or none',
-    'TALKING_POINTS: 3–5 one-sentence tips separated by |',
-    '',
-    `Line id: ${line.id}`,
-    `Name: ${line.name}`,
-    `ECO: ${line.eco ?? 'unknown'}`,
-    `Summary: ${line.summary}`,
-    `Moves (SAN): ${moves}`,
-  ].join('\n')
-}
-
-async function readCached(
+async function readCard(
   lineId: string,
-  contentHash: string,
+  contentHash?: string,
 ): Promise<StoredCard | null> {
   await ensureSchema()
-  const db = getTurso()
-  const result = await db.execute({
-    sql: `SELECT line_id, content_hash, name, eco, card_json, model
+  const result = await getTurso().execute({
+    sql: `SELECT content_hash, card_json, model
           FROM opening_cards WHERE line_id = ?`,
     args: [lineId],
   })
   const row = result.rows[0]
-  if (!row) return null
-  if (String(row.content_hash) !== contentHash) return null
+  if (!row || (contentHash && String(row.content_hash) !== contentHash)) return null
   try {
     const card = JSON.parse(String(row.card_json)) as StoredCard
     return {
       ...card,
       lineId,
-      contentHash,
-      model: String(row.model || card.model || EXPLAIN_MODEL),
+      contentHash: String(row.content_hash),
+      model: String(row.model || card.model || CURATION_VERSION),
     }
   } catch {
     return null
   }
 }
 
-async function writeCached(card: StoredCard) {
+async function writeCard(card: StoredCard) {
   await ensureSchema()
-  const db = getTurso()
-  await db.execute({
+  await getTurso().execute({
     sql: `
       INSERT INTO opening_cards (line_id, content_hash, name, eco, card_json, model, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
@@ -247,23 +204,6 @@ async function writeCached(card: StoredCard) {
   })
 }
 
-async function generateCard(
-  line: OpeningLineInput,
-  contentHash: string,
-): Promise<StoredCard> {
-  try {
-    const raw = await askCoachOnce(buildGeneratePrompt(line))
-    return parseCardJson(raw, line, contentHash)
-  } catch (err) {
-    console.warn('[opening-cards] LLM generate failed, using fallback:', err)
-    const reason = err instanceof Error ? err.message : String(err)
-    return {
-      ...fallbackCard(line, contentHash),
-      model: `fallback: ${reason.slice(0, 180)}`,
-    }
-  }
-}
-
 function normalizeLine(input: OpeningLineInput): OpeningLineInput {
   return {
     id: input.id.trim(),
@@ -271,12 +211,15 @@ function normalizeLine(input: OpeningLineInput): OpeningLineInput {
     eco: input.eco?.trim() || undefined,
     summary: input.summary.trim(),
     moves: input.moves
-      .map((m) => ({ san: String(m.san || '').trim() }))
-      .filter((m) => m.san),
+      .map((move) => ({
+        san: String(move.san || '').trim(),
+        hint: move.hint?.trim() || undefined,
+      }))
+      .filter((move) => move.san),
   }
 }
 
-/** Lazy get-or-generate opening briefing for a drill line. */
+/** Read a pregenerated card, reseeding deterministically if its line changed. */
 export async function getOrCreateOpeningCard(
   input: OpeningLineInput,
 ): Promise<OpeningCard> {
@@ -284,55 +227,20 @@ export async function getOrCreateOpeningCard(
   if (!line.id || !line.name || line.moves.length === 0) {
     throw new Error('line id, name, and moves required')
   }
-
   const contentHash = lineContentHash(line)
-  const cached = await readCached(line.id, contentHash)
+  const cached = await readCard(line.id, contentHash)
   if (cached) return { ...cached, cached: true }
 
-  if (!inflight.has(line.id)) {
-    const job = (async () => {
-      const card = await generateCard(line, contentHash)
-      await writeCached(card)
-      return { ...card, cached: false }
-    })()
-      .catch((err) => {
-        console.warn('[opening-cards] background generate failed:', err)
-        return { ...fallbackCard(line, contentHash), cached: false }
-      })
-      .finally(() => {
-        inflight.delete(line.id)
-      })
-    inflight.set(line.id, job)
-  }
-
-  // Await the first generation so serverless runtimes cannot freeze before Turso is written.
-  return inflight.get(line.id)!
+  const card = curateCard(line)
+  await writeCard(card)
+  return { ...card, cached: false }
 }
 
-/** Load a previously cached card by id (no generate). Used for coach inject. */
 export async function getCachedOpeningCard(
   lineId: string,
 ): Promise<OpeningCard | null> {
   const id = lineId.trim()
   if (!id) return null
-  await ensureSchema()
-  const db = getTurso()
-  const result = await db.execute({
-    sql: `SELECT line_id, content_hash, card_json, model FROM opening_cards WHERE line_id = ?`,
-    args: [id],
-  })
-  const row = result.rows[0]
-  if (!row) return null
-  try {
-    const card = JSON.parse(String(row.card_json)) as StoredCard
-    return {
-      ...card,
-      lineId: id,
-      contentHash: String(row.content_hash),
-      model: String(row.model || card.model || EXPLAIN_MODEL),
-      cached: true,
-    }
-  } catch {
-    return null
-  }
+  const card = await readCard(id)
+  return card ? { ...card, cached: true } : null
 }

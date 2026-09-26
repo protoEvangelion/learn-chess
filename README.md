@@ -39,9 +39,15 @@ AI_COACH_MODEL=deepseek/deepseek-v4.1-flash npm run dev
 Each game gets a `gameId` in the URL, and recent visible chat turns are sent
 with follow-up questions so the stateless model can follow the conversation.
 
-Production opening cards use Turso. Configure `TURSO_DATABASE_URL` and
-`TURSO_AUTH_TOKEN` in the Vercel project; local development falls back to
-`.data/opening-cards.db`.
+Production opening cards are curated ahead of time and stored in Turso;
+DeepSeek is used only for live coaching. After deploying card changes, seed
+the database with:
+
+```bash
+OPENING_CARD_BASE_URL=https://your-project.vercel.app npm run seed:opening-cards
+```
+
+Local development falls back to `.data/opening-cards.db`.
 
 ## Features
 
