@@ -105,12 +105,24 @@ function parseCardJson(
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '')
-  const start = cleaned.indexOf('{')
-  const end = cleaned.lastIndexOf('}')
-  if (start < 0 || end <= start) {
-    throw new Error('No JSON object in opening-card reply')
+  const starts = [...cleaned.matchAll(/\{/g)].map((match) => match.index)
+  const ends = [...cleaned.matchAll(/\}/g)].map((match) => match.index).reverse()
+  let parsed: Partial<StoredCard> | null = null
+  for (const start of starts.reverse()) {
+    for (const end of ends) {
+      if (end <= start) continue
+      try {
+        parsed = JSON.parse(
+          cleaned.slice(start, end + 1),
+        ) as Partial<StoredCard>
+        break
+      } catch {
+        // DeepSeek can include reasoning with JSON-like examples before the answer.
+      }
+    }
+    if (parsed) break
   }
-  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as Partial<StoredCard>
+  if (!parsed) throw new Error('No valid JSON object in opening-card reply')
 
   const themes = Array.isArray(parsed.themes)
     ? parsed.themes.map(String).filter(Boolean).slice(0, 6)
