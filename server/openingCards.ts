@@ -122,7 +122,30 @@ function parseCardJson(
     }
     if (parsed) break
   }
-  if (!parsed) throw new Error('No valid JSON object in opening-card reply')
+  if (!parsed) {
+    const field = (label: string) =>
+      cleaned.match(new RegExp(`^${label}:\\s*(.*)$`, 'im'))?.[1]?.trim() ?? ''
+    const blurb = field('BLURB')
+    const whitePlan = field('WHITE_PLAN')
+    const blackPlan = field('BLACK_PLAN')
+    if (blurb && whitePlan && blackPlan) {
+      parsed = {
+        blurb,
+        themes: field('THEMES')
+          .split('|')
+          .map((value) => value.trim())
+          .filter(Boolean),
+        whitePlan,
+        blackPlan,
+        traps: field('TRAPS'),
+        talkingPoints: field('TALKING_POINTS')
+          .split('|')
+          .map((value) => value.trim())
+          .filter(Boolean),
+      }
+    }
+  }
+  if (!parsed) throw new Error('No valid opening-card fields in reply')
 
   const themes = Array.isArray(parsed.themes)
     ? parsed.themes.map(String).filter(Boolean).slice(0, 6)
@@ -155,15 +178,13 @@ function buildGeneratePrompt(line: OpeningLineInput): string {
     'Be accurate, concrete, and concise. No fluff, no move-by-move novel.',
     'Audience: beginner–club player practicing this line as White.',
     '',
-    'Reply with ONLY a single JSON object (no markdown fences):',
-    '{',
-    '  "blurb": "2–3 short sentences: what this line is and the main idea",',
-    '  "themes": ["3–5 short theme labels"],',
-    '  "whitePlan": "1–2 sentences: White’s plan in this line",',
-    '  "blackPlan": "1–2 sentences: what Black is trying",',
-    '  "traps": "1–2 sentences on key traps/pitfalls, or empty string",',
-    '  "talkingPoints": ["3–5 one-sentence coach tips for this line"]',
-    '}',
+    'Reply with ONLY these six one-line fields. Separate list items with |.',
+    'BLURB: 2–3 short sentences: what this line is and the main idea',
+    'THEMES: 3–5 short theme labels separated by |',
+    'WHITE_PLAN: 1–2 sentences describing White’s plan',
+    'BLACK_PLAN: 1–2 sentences describing Black’s plan',
+    'TRAPS: 1–2 sentences on key traps/pitfalls, or none',
+    'TALKING_POINTS: 3–5 one-sentence tips separated by |',
     '',
     `Line id: ${line.id}`,
     `Name: ${line.name}`,
