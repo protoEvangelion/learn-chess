@@ -5,14 +5,16 @@ import {
   EXPLAIN_MODEL,
   streamCoachAsk,
 } from './aiCoach.ts'
-import {
-  formatOpeningCardForCoach,
-  getCachedOpeningCard,
-  getOrCreateOpeningCard,
-  type OpeningLineInput,
-} from './openingCards.ts'
 
 export { EXPLAIN_MODEL } from './aiCoach.ts'
+
+type OpeningLineInput = {
+  id: string
+  name: string
+  eco?: string
+  summary: string
+  moves: Array<{ san: string }>
+}
 
 export type ExplainOption = {
   bestMove: string
@@ -363,6 +365,8 @@ function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string 
 async function openingBriefFor(lineId?: string): Promise<string | undefined> {
   if (!lineId?.trim()) return undefined
   try {
+    const { formatOpeningCardForCoach, getCachedOpeningCard } =
+      await import('./openingCards.ts')
     const card = await getCachedOpeningCard(lineId.trim())
     if (!card) return undefined
     return formatOpeningCardForCoach(card)
@@ -796,6 +800,8 @@ export async function handleExplainApi(
               })
               return
             }
+            const { getOrCreateOpeningCard } =
+              await import('./openingCards.ts')
             const card = await getOrCreateOpeningCard({
               id: line.id,
               name: line.name,
