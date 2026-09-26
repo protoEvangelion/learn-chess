@@ -7,7 +7,10 @@ let client: Client | null = null
 function resolveEnv() {
   return {
     url: process.env.TURSO_DATABASE_URL || '',
-    authToken: process.env.TURSO_AUTH_TOKEN || '',
+    authToken:
+      process.env.TURSO_AUTH_TOKEN ||
+      process.env.TURSO_DATABASE_TURSO_AUTH_TOKEN ||
+      '',
   }
 }
 
@@ -26,7 +29,7 @@ export function getTurso(): Client {
 
   if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
     throw new Error(
-      'TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are required in production',
+      'TURSO_DATABASE_URL and a Turso auth token are required in production',
     )
   }
 
