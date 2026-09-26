@@ -1,16 +1,13 @@
 import { createClient, type Client } from '@libsql/client'
-import { loadEnv } from 'vite'
 import fs from 'node:fs'
 import path from 'node:path'
 
 let client: Client | null = null
 
 function resolveEnv() {
-  const mode = process.env.NODE_ENV === 'production' ? 'production' : 'development'
-  const loaded = loadEnv(mode, process.cwd(), '')
   return {
-    url: process.env.TURSO_DATABASE_URL || loaded.TURSO_DATABASE_URL || '',
-    authToken: process.env.TURSO_AUTH_TOKEN || loaded.TURSO_AUTH_TOKEN || '',
+    url: process.env.TURSO_DATABASE_URL || '',
+    authToken: process.env.TURSO_AUTH_TOKEN || '',
   }
 }
 
