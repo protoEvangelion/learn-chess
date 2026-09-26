@@ -1,4 +1,5 @@
-import { streamText } from 'ai'
+import { Output, streamText } from 'ai'
+import { z } from 'zod'
 
 /** Cheap, fast model for Stockfish-grounded coaching. */
 export const EXPLAIN_MODEL =
@@ -48,17 +49,20 @@ export async function askCoachOnce(prompt: string): Promise<string> {
   const result = streamText({
     model: EXPLAIN_MODEL,
     prompt,
+    output: Output.object({
+      name: 'opening_card',
+      schema: z.object({
+        blurb: z.string(),
+        themes: z.array(z.string()).min(1).max(6),
+        whitePlan: z.string(),
+        blackPlan: z.string(),
+        traps: z.string(),
+        talkingPoints: z.array(z.string()).min(1).max(5),
+      }),
+    }),
     maxOutputTokens: 1_200,
     timeout: 55_000,
   })
-  let assembled = ''
-  let reasoning = ''
-  for await (const part of result.stream) {
-    if (part.type === 'error') throw part.error
-    if (part.type === 'text-delta') assembled += part.text
-    if (part.type === 'reasoning-delta') reasoning += part.text
-  }
-  const text = assembled.trim() || reasoning.trim()
-  if (!text) throw new Error('AI Gateway returned no text')
-  return text
+  await result.consumeStream()
+  return JSON.stringify(await result.output)
 }
