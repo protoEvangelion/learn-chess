@@ -1,0 +1,10 @@
+---
+description: Commit and push directly to main
+alwaysApply: true
+---
+
+# Git
+
+- Commit and push directly to `main`.
+- Never create a feature branch.
+- Never open a pull request.
