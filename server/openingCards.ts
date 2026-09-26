@@ -235,7 +235,11 @@ async function generateCard(
     return parseCardJson(raw, line, contentHash)
   } catch (err) {
     console.warn('[opening-cards] LLM generate failed, using fallback:', err)
-    return fallbackCard(line, contentHash)
+    const reason = err instanceof Error ? err.message : String(err)
+    return {
+      ...fallbackCard(line, contentHash),
+      model: `fallback: ${reason.slice(0, 180)}`,
+    }
   }
 }
 
