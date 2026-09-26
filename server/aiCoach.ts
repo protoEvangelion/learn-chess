@@ -48,17 +48,14 @@ export async function askCoachOnce(prompt: string): Promise<string> {
   const result = streamText({
     model: EXPLAIN_MODEL,
     prompt,
-    maxOutputTokens: 1_200,
+    maxOutputTokens: 4_000,
     timeout: 55_000,
   })
   let assembled = ''
-  let reasoning = ''
   for await (const part of result.stream) {
     if (part.type === 'error') throw part.error
     if (part.type === 'text-delta') assembled += part.text
-    if (part.type === 'reasoning-delta') reasoning += part.text
   }
-  const text = assembled.trim() || reasoning.trim()
-  if (!text) throw new Error('AI Gateway returned no text')
-  return text
+  if (!assembled.trim()) throw new Error('AI Gateway returned no text')
+  return assembled.trim()
 }
