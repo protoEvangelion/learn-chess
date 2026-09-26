@@ -52,10 +52,13 @@ export async function askCoachOnce(prompt: string): Promise<string> {
     timeout: 55_000,
   })
   let assembled = ''
+  let reasoning = ''
   for await (const part of result.stream) {
     if (part.type === 'error') throw part.error
     if (part.type === 'text-delta') assembled += part.text
+    if (part.type === 'reasoning-delta') reasoning += part.text
   }
-  if (!assembled.trim()) throw new Error('AI Gateway returned no text')
-  return assembled.trim()
+  const text = assembled.trim() || reasoning.trim()
+  if (!text) throw new Error('AI Gateway returned no text')
+  return text
 }
