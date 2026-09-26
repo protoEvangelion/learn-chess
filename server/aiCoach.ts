@@ -23,11 +23,14 @@ export function streamCoachAsk(
       })
 
       let assembled = ''
-      for await (const text of result.textStream) {
-        assembled += text
-        onDelta(text)
+      for await (const part of result.stream) {
+        if (part.type === 'error') throw part.error
+        if (part.type !== 'text-delta') continue
+        assembled += part.text
+        onDelta(part.text)
       }
-      onDone(assembled.trim() || 'No explanation returned.')
+      if (!assembled.trim()) throw new Error('AI Gateway returned no text')
+      onDone(assembled.trim())
     } catch (error) {
       if (controller.signal.aborted) return
       onError(error instanceof Error ? error : new Error(String(error)))
