@@ -1,10 +1,10 @@
 import { Chess } from 'chess.js'
+import { randomUUID } from 'node:crypto'
 import type { Plugin } from 'vite'
 import {
-  createCursorChat,
   EXPLAIN_MODEL,
-  streamCursorAsk,
-} from './cursorAsk.ts'
+  streamCoachAsk,
+} from './aiCoach.ts'
 import {
   formatOpeningCardForCoach,
   getCachedOpeningCard,
@@ -12,7 +12,7 @@ import {
   type OpeningLineInput,
 } from './openingCards.ts'
 
-export { EXPLAIN_MODEL } from './cursorAsk.ts'
+export { EXPLAIN_MODEL } from './aiCoach.ts'
 
 export type ExplainOption = {
   bestMove: string
@@ -66,6 +66,8 @@ export type CoachChatRequest = {
   openingCatalog?: OpeningCatalogEntry[]
   /** Short game-review context when chatting from the analysis report tab. */
   reviewBrief?: string
+  /** Recent visible chat turns; AI Gateway requests are stateless. */
+  messages?: Array<{ role: 'user' | 'assistant'; text: string }>
 }
 
 export type ReviewPlyPayload = {
@@ -112,7 +114,7 @@ const COACH_RULES = [
   'explanation: 4–8 short sentences, plain English, no markdown headings or bullet lists.',
 ].join('\n')
 
-/** Follow-up Q&A about the position / tips / recommended move (same Cursor chat session). */
+/** Follow-up Q&A about the position, tips, and recommended move. */
 const COACH_CHAT_RULES = [
   'You are a friendly chess coach helping a beginner–club player.',
   'You are coaching ONE ongoing game. Earlier messages may be tips for OLDER positions.',
@@ -305,6 +307,25 @@ function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string 
         ].join('\n')
       : null
 
+  const recentMessages = (body.messages ?? [])
+    .filter(
+      (message) =>
+        (message.role === 'user' || message.role === 'assistant') &&
+        message.text?.trim(),
+    )
+    .slice(-8)
+  const conversation =
+    recentMessages.length > 0
+      ? [
+          '--- Recent conversation (oldest to newest) ---',
+          ...recentMessages.map(
+            (message) =>
+              `${message.role === 'user' ? 'Player' : 'Coach'}: ${message.text.trim()}`,
+          ),
+          '',
+        ].join('\n')
+      : null
+
   return [
     COACH_CHAT_RULES,
     '',
@@ -317,6 +338,7 @@ function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string 
       : null,
     catalog,
     review,
+    conversation,
     '--- Current position (authoritative) ---',
     `FEN: ${body.fen}`,
     positionFacts(body.fen),
@@ -646,23 +668,16 @@ async function importChessComPgn(urlOrId: string): Promise<{
   }
 }
 
-/** Vite middleware: coach explain + gameId minting. */
-export function explainApiPlugin(): Plugin {
-  return {
-    name: 'chess-coach-explain-api',
-    configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
+/** Shared Node handler used by Vite locally and Vercel Functions in production. */
+export async function handleExplainApi(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+  next: () => void = () => {},
+): Promise<void> {
         const url = req.url?.split('?')[0] ?? ''
 
         if (url === '/api/game-id' && req.method === 'POST') {
-          try {
-            const gameId = await createCursorChat()
-            sendJson(res, 200, { gameId })
-          } catch (err) {
-            sendJson(res, 500, {
-              error: err instanceof Error ? err.message : 'create-chat failed',
-            })
-          }
+          sendJson(res, 200, { gameId: randomUUID() })
           return
         }
 
@@ -847,8 +862,7 @@ export function explainApiPlugin(): Plugin {
 
             send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
 
-            cancel = streamCursorAsk(
-              body.gameId,
+            const stream = streamCoachAsk(
               buildChatPrompt(body, openingBrief),
               (text) => send({ type: 'delta', text }),
               (fullText) => {
@@ -860,8 +874,12 @@ export function explainApiPlugin(): Plugin {
                 res.end()
               },
             )
+            cancel = stream.cancel
 
-            req.on('close', () => cancel?.())
+            res.on('close', () => {
+              if (!res.writableEnded) cancel?.()
+            })
+            await stream.done
             return
           }
 
@@ -895,8 +913,7 @@ export function explainApiPlugin(): Plugin {
 
             send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
 
-            cancel = streamCursorAsk(
-              body.gameId,
+            const stream = streamCoachAsk(
               buildReviewPrompt(body),
               (text) => send({ type: 'delta', text }),
               (fullText) => {
@@ -908,8 +925,12 @@ export function explainApiPlugin(): Plugin {
                 res.end()
               },
             )
+            cancel = stream.cancel
 
-            req.on('close', () => cancel?.())
+            res.on('close', () => {
+              if (!res.writableEnded) cancel?.()
+            })
+            await stream.done
             return
           }
 
@@ -944,8 +965,7 @@ export function explainApiPlugin(): Plugin {
 
           send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
 
-          cancel = streamCursorAsk(
-            body.gameId,
+          const stream = streamCoachAsk(
             buildPrompt(body, openingBrief),
             (text) => send({ type: 'delta', text }),
             (fullText) => {
@@ -957,8 +977,12 @@ export function explainApiPlugin(): Plugin {
               res.end()
             },
           )
+          cancel = stream.cancel
 
-          req.on('close', () => cancel?.())
+          res.on('close', () => {
+            if (!res.writableEnded) cancel?.()
+          })
+          await stream.done
         } catch (err) {
           cancel?.()
           if (!res.headersSent) {
@@ -975,7 +999,14 @@ export function explainApiPlugin(): Plugin {
             res.end()
           }
         }
-      })
+}
+
+/** Vite development middleware. */
+export function explainApiPlugin(): Plugin {
+  return {
+    name: 'chess-coach-explain-api',
+    configureServer(server) {
+      server.middlewares.use(handleExplainApi)
     },
   }
 }

@@ -27,6 +27,12 @@ export function getTurso(): Client {
     return client
   }
 
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are required in production',
+    )
+  }
+
   const dir = path.join(process.cwd(), '.data')
   fs.mkdirSync(dir, { recursive: true })
   const fileUrl = `file:${path.join(dir, 'opening-cards.db')}`

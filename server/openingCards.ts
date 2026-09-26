@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { getTurso } from './turso.ts'
-import { askCursorOnce, EXPLAIN_MODEL } from './cursorAsk.ts'
+import { askCoachOnce, EXPLAIN_MODEL } from './aiCoach.ts'
 
 export type OpeningLineInput = {
   id: string
@@ -219,7 +219,7 @@ async function generateCard(
   contentHash: string,
 ): Promise<StoredCard> {
   try {
-    const raw = await askCursorOnce(buildGeneratePrompt(line))
+    const raw = await askCoachOnce(buildGeneratePrompt(line))
     return parseCardJson(raw, line, contentHash)
   } catch (err) {
     console.warn('[opening-cards] LLM generate failed, using fallback:', err)
@@ -252,7 +252,6 @@ export async function getOrCreateOpeningCard(
   const cached = await readCached(line.id, contentHash)
   if (cached) return { ...cached, cached: true }
 
-  // Never block the UI on LLM — return the hand summary now, fill Turso in background.
   if (!inflight.has(line.id)) {
     const job = (async () => {
       const card = await generateCard(line, contentHash)
@@ -269,7 +268,8 @@ export async function getOrCreateOpeningCard(
     inflight.set(line.id, job)
   }
 
-  return { ...fallbackCard(line, contentHash), cached: false }
+  // Await the first generation so serverless runtimes cannot freeze before Turso is written.
+  return inflight.get(line.id)!
 }
 
 /** Load a previously cached card by id (no generate). Used for coach inject. */

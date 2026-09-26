@@ -7,7 +7,6 @@ Local 3D chess with a Stockfish opponent and an LLM coach that gives progressive
 ## Requirements
 
 - **Node.js** 20+ (npm)
-- **[Cursor CLI](https://cursor.com/docs/cli/overview)** (`agent` on your `PATH`) — used by the coach (`Ask coach`)
 - A machine that can run WebAssembly (Stockfish in the browser)
 
 ## Run
@@ -29,13 +28,20 @@ npm run dev -- --host 127.0.0.1 --port 5174
 
 ### Coach (optional)
 
-`Ask coach` shells out to Cursor CLI in ask mode. Sign in / configure the CLI first so `agent` works in a terminal. Override the model with:
+`Ask coach` calls DeepSeek V4.1 Flash through Vercel AI Gateway. Link the
+project to Vercel and run `vercel env pull .env.local` for local Gateway
+authentication, or set `AI_GATEWAY_API_KEY`. Override the model with:
 
 ```bash
-CURSOR_EXPLAIN_MODEL=gpt-5.6-luna-low-fast npm run dev
+AI_COACH_MODEL=deepseek/deepseek-v4.1-flash npm run dev
 ```
 
-Each game gets a `gameId` in the URL so the coach resumes the same CLI chat and can follow how the game is progressing.
+Each game gets a `gameId` in the URL, and recent visible chat turns are sent
+with follow-up questions so the stateless model can follow the conversation.
+
+Production opening cards use Turso. Configure `TURSO_DATABASE_URL` and
+`TURSO_AUTH_TOKEN` in the Vercel project; local development falls back to
+`.data/opening-cards.db`.
 
 ## Features
 

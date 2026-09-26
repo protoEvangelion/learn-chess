@@ -300,7 +300,7 @@ export default function App() {
   const skipEngineOnce = useRef(false)
   const coachAbortRef = useRef<AbortController | null>(null)
   const coachChatAbortRef = useRef<AbortController | null>(null)
-  /** Ephemeral Cursor chat id for drills — never written to the URL; reminted per line. */
+  /** Ephemeral drill session id — never written to the URL; reminted per line. */
   const drillChatGameIdRef = useRef<string | null>(null)
   const reviewAbortRef = useRef<AbortController | null>(null)
   const syncingFromUrlRef = useRef(false)
@@ -1134,6 +1134,10 @@ export default function App() {
             reviewBrief: analysisCoach
               ? formatReviewBriefForCoach(analysisReport)
               : undefined,
+            messages: coachChat.slice(-8).map(({ role, text }) => ({
+              role,
+              text,
+            })),
           }),
         })
         if (!res.ok || !res.body) {
@@ -1199,6 +1203,7 @@ export default function App() {
       analysisReport,
       best,
       coachChatStatus,
+      coachChat,
       coachExplanation,
       coachReviewMode,
       fen,

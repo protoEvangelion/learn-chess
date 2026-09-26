@@ -283,7 +283,7 @@ export type UrlGameState = {
  * | panel     | gameId                                      | opening/line |
  * |-----------|---------------------------------------------|--------------|
  * | drill     | never (shareable practice)                  | yes when set |
- * | game      | session id for Cursor chat resume           | never        |
+ * | game      | coach session id                            | never        |
  * | analysis  | session id                                  | never        |
  * | settings  | leave alone — panel switch must not inject  | never        |
  * | (none)    | session id for free-play resume             | never        |
