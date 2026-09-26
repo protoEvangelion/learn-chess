@@ -16,7 +16,9 @@ type EtchedLabelProps = {
   rotation: [number, number, number]
 }
 
-const EtchedLabel: FC<EtchedLabelProps> = ({ text, position, rotation }) => (
+const EtchedLabel: FC<
+  EtchedLabelProps & { color: string; outline: string }
+> = ({ text, position, rotation, color, outline }) => (
   <Text
     position={position}
     rotation={rotation}
@@ -25,10 +27,10 @@ const EtchedLabel: FC<EtchedLabelProps> = ({ text, position, rotation }) => (
     anchorX="center"
     anchorY="middle"
     letterSpacing={0.08}
-    color="#0d0a09"
+    color={color}
     fillOpacity={0.88}
     outlineWidth={0.004}
-    outlineColor="#3a3330"
+    outlineColor={outline}
     outlineOpacity={0.25}
     depthOffset={-2}
   >
@@ -40,7 +42,10 @@ const EtchedLabel: FC<EtchedLabelProps> = ({ text, position, rotation }) => (
  * a–h / 1–8 on the marble border — dark, flat, etched into the stone.
  * Oriented so each edge reads correctly from that side of the board.
  */
-export const BoardCoordinates: FC = () => (
+export const BoardCoordinates: FC<{ label?: string; outline?: string }> = ({
+  label = '#0d0a09',
+  outline = '#3a3330',
+}) => (
   <group>
     {FILES.map((file, i) => (
       <EtchedLabel
@@ -48,6 +53,8 @@ export const BoardCoordinates: FC = () => (
         text={file}
         position={[SQUARE(i), LABEL_Y, RIM]}
         rotation={[-Math.PI / 2, 0, 0]}
+        color={label}
+        outline={outline}
       />
     ))}
     {FILES.map((file, i) => (
@@ -56,6 +63,8 @@ export const BoardCoordinates: FC = () => (
         text={file}
         position={[SQUARE(i), LABEL_Y, -RIM]}
         rotation={[-Math.PI / 2, 0, Math.PI]}
+        color={label}
+        outline={outline}
       />
     ))}
     {RANKS.map((rank, i) => (
@@ -64,6 +73,8 @@ export const BoardCoordinates: FC = () => (
         text={rank}
         position={[-RIM, LABEL_Y, SQUARE(7 - i)]}
         rotation={[-Math.PI / 2, 0, -Math.PI / 2]}
+        color={label}
+        outline={outline}
       />
     ))}
     {RANKS.map((rank, i) => (
@@ -72,12 +83,24 @@ export const BoardCoordinates: FC = () => (
         text={rank}
         position={[RIM, LABEL_Y, SQUARE(7 - i)]}
         rotation={[-Math.PI / 2, 0, Math.PI / 2]}
+        color={label}
+        outline={outline}
       />
     ))}
   </group>
 )
 
-export const Border: FC = () => (
+export const Border: FC<{
+  color?: string
+  emissive?: string
+  label?: string
+  labelOutline?: string
+}> = ({
+  color = '#c6c6c6',
+  emissive = '#323232',
+  label = '#0d0a09',
+  labelOutline = '#3a3330',
+}) => (
   <group>
     <mesh
       onClick={(e) => e.stopPropagation()}
@@ -86,13 +109,13 @@ export const Border: FC = () => (
     >
       <boxGeometry args={[9, 0.5, 9]} />
       <meshStandardMaterial
-        color="#c6c6c6"
-        emissive="#323232"
+        color={color}
+        emissive={emissive}
         metalness={0.55}
         roughness={0.65}
         envMapIntensity={0.2}
       />
     </mesh>
-    <BoardCoordinates />
+    <BoardCoordinates label={label} outline={labelOutline} />
   </group>
 )

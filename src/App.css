@@ -150,8 +150,31 @@
   box-shadow: none;
 }
 
+.pixel-btn.is-busy:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+.import-spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: import-spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes import-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .pixel-btn-label {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   font-size: 0.7rem;
   font-weight: 700;
   line-height: 1;
@@ -296,11 +319,33 @@ body,
 
 .hud-brand {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.12rem;
-  min-width: 7.5rem;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
   height: 2.5rem;
+}
+
+.hud-brand-mark {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  display: block;
+  pointer-events: auto;
+  user-select: none;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .hud-orbit {
@@ -875,20 +920,6 @@ body.is-panel-resizing canvas {
   color: var(--sw-muted);
 }
 
-.hud-scrub {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.35rem;
-}
-
-.hud-scrub-label {
-  font-size: 0.72rem;
-  color: var(--sw-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 4.5rem;
-}
-
 .settings-select {
   width: 100%;
   margin-top: 0.25rem;
@@ -1127,6 +1158,53 @@ body.is-panel-resizing canvas {
   padding-right: 0.1rem;
 }
 
+.analysis-dialog-body:has(.analysis-report) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.analysis-report {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.analysis-report-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding-right: 0.1rem;
+}
+
+.analysis-coach-embed {
+  flex: 0 1 auto;
+  max-height: 46%;
+  min-height: 11rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--sw-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.analysis-coach-embed .coach-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.analysis-coach-embed .coach-pane .coach-chat {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
 .analysis-status {
   margin: 0.35rem 0;
   font-size: 0.88rem;
@@ -1149,12 +1227,6 @@ body.is-panel-resizing canvas {
   font-size: 0.88rem;
   line-height: 1.45;
   color: var(--sw-muted);
-}
-
-.analysis-report {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
 }
 
 .analysis-graph {
@@ -1342,6 +1414,72 @@ body.is-panel-resizing canvas {
 
 .analysis-moves {
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.analysis-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--sw-border);
+}
+
+.analysis-replies-label {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-muted);
+}
+
+.analysis-replies-note {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--sw-muted);
+}
+
+.analysis-replies-note.is-error {
+  color: #f87171;
+}
+
+.analysis-reply-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.analysis-reply {
+  display: grid;
+  grid-template-columns: 3.2rem 2.6rem minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: baseline;
+  padding: 0.2rem 0.35rem;
+  border-radius: 7px;
+}
+
+.analysis-reply.is-played {
+  background: color-mix(in srgb, var(--sw-teal) 16%, transparent);
+}
+
+.analysis-reply-san {
+  font-weight: 650;
+}
+
+.analysis-reply-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--sw-teal);
+}
+
+.analysis-reply-meta {
+  font-size: 0.78rem;
+  color: var(--sw-muted);
 }
 
 .analysis-move-list {

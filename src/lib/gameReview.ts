@@ -388,3 +388,40 @@ export function pliesForCoachApi(plies: ReviewPly[]): Array<{
     bestEval: p.by === 'player' ? p.bestEval : undefined,
   }))
 }
+
+/** Compact review text for analysis-report coach chat. */
+export function formatReviewBriefForCoach(report: AnalysisReport): string {
+  const you = report.playerColor === 'white' ? 'White' : 'Black'
+  const wAcc =
+    report.summary.whiteAccuracy != null
+      ? `${report.summary.whiteAccuracy}%`
+      : 'n/a'
+  const bAcc =
+    report.summary.blackAccuracy != null
+      ? `${report.summary.blackAccuracy}%`
+      : 'n/a'
+  const notable = report.plies
+    .filter(
+      (p) =>
+        p.by === 'player' &&
+        p.tag &&
+        (p.tag === 'best' ||
+          p.tag === 'inaccuracy' ||
+          p.tag === 'mistake' ||
+          p.tag === 'blunder'),
+    )
+    .slice(0, 20)
+    .map((p) => {
+      const alt = p.bestSan ? ` (engine ${p.bestSan})` : ''
+      return `Ply ${p.ply}: YOU ${p.san} [${p.tag}]${alt}`
+    })
+
+  return [
+    `You played as ${you}.`,
+    `Players: ${report.whiteName ?? 'White'} vs ${report.blackName ?? 'Black'}.`,
+    `Accuracy — White ${wAcc}, Black ${bAcc}.`,
+    notable.length
+      ? `Notable player moves:\n${notable.join('\n')}`
+      : 'No tagged player moves to highlight.',
+  ].join('\n')
+}

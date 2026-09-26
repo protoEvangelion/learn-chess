@@ -2,12 +2,17 @@ import { useEffect, useMemo, useRef, useState, type FC } from 'react'
 import { PixelButton } from '@/components/ui/PixelButton'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
 import {
+  CoachPane,
+  type CoachChatMessage,
+} from '@/components/CoachPane'
+import {
   REPORT_TAG_ORDER,
   TAG_LABEL,
   type AnalysisReport,
   type MoveQualityTag,
   type ReviewPly,
 } from '@/lib/gameReview'
+import { arrowsForReplies, type FrequencyArrow } from '@/lib/replyArrows'
 
 type TabId = 'import' | 'report' | 'analysis'
 
@@ -20,8 +25,13 @@ type Props = {
   analyzing?: boolean
   analyzeProgress?: string | null
   analyzeError?: string | null
-  onAskCoachRecap?: () => void
-  coachRecapBusy?: boolean
+  coachExplanation?: string | null
+  coachStatus?: 'idle' | 'loading' | 'error'
+  coachError?: string | null
+  coachChat?: CoachChatMessage[]
+  coachChatStatus?: 'idle' | 'loading' | 'error'
+  coachChatError?: string | null
+  onSendCoachChat?: (question: string) => void
   chessComUsername: string
   onChessComUsernameChange: (username: string) => void
   importDraft: string
@@ -35,6 +45,7 @@ type Props = {
   panelWidth: number
   onPanelWidthChange: (width: number) => void
   onPanelResizeEnd?: (width: number) => void
+  onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
 }
 
 function TagGlyph({ tag }: { tag: MoveQualityTag }) {
@@ -168,8 +179,13 @@ export const AnalysisDialog: FC<Props> = ({
   analyzing = false,
   analyzeProgress = null,
   analyzeError = null,
-  onAskCoachRecap,
-  coachRecapBusy = false,
+  coachExplanation = null,
+  coachStatus = 'idle',
+  coachError = null,
+  coachChat = [],
+  coachChatStatus = 'idle',
+  coachChatError = null,
+  onSendCoachChat,
   chessComUsername,
   onChessComUsernameChange,
   importDraft,
@@ -183,6 +199,7 @@ export const AnalysisDialog: FC<Props> = ({
   panelWidth,
   onPanelWidthChange,
   onPanelResizeEnd,
+  onFrequencyArrows,
 }) => {
   const [tab, setTab] = useState<TabId>(() => (report ? 'report' : 'import'))
   const [playing, setPlaying] = useState(false)
@@ -195,6 +212,31 @@ export const AnalysisDialog: FC<Props> = ({
   const maxPly = report?.plies.length ?? 0
   const whiteLabel = report?.whiteName ?? 'White'
   const blackLabel = report?.blackName ?? 'Black'
+  const replyPrefix = useMemo(
+    () => (report ? report.plies.slice(0, scrubIndex).map((p) => p.san) : []),
+    [report, scrubIndex],
+  )
+  const playedNext =
+    report && scrubIndex < report.plies.length
+      ? report.plies[scrubIndex].san
+      : null
+  const [replies, setReplies] = useState<{
+    scanned: number
+    reached: number
+    moves: Array<{
+      san: string
+      count: number
+      wins: number
+      draws: number
+      losses: number
+    }>
+  } | null>(null)
+  const [repliesStatus, setRepliesStatus] = useState<
+    'idle' | 'loading' | 'error'
+  >('idle')
+  const [repliesError, setRepliesError] = useState<string | null>(null)
+  const onFrequencyArrowsRef = useRef(onFrequencyArrows)
+  onFrequencyArrowsRef.current = onFrequencyArrows
 
   useEffect(() => {
     if (!open) return
@@ -216,6 +258,73 @@ export const AnalysisDialog: FC<Props> = ({
   useEffect(() => {
     if (!open) setPlaying(false)
   }, [open])
+
+  useEffect(() => {
+    if (!open || tab !== 'analysis' || !report) {
+      onFrequencyArrowsRef.current?.([])
+      return
+    }
+    const username = chessComUsername.trim()
+    if (!username) {
+      setReplies(null)
+      setRepliesStatus('idle')
+      setRepliesError(null)
+      onFrequencyArrowsRef.current?.([])
+      return
+    }
+    const controller = new AbortController()
+    setReplies(null)
+    setRepliesStatus('loading')
+    setRepliesError(null)
+    const timer = window.setTimeout(() => {
+      void fetch('/api/opening-replies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({ username, moves: replyPrefix }),
+      })
+        .then(async (res) => {
+          const data = (await res.json()) as {
+            error?: string
+            scanned?: number
+            reached?: number
+            moves?: Array<{
+              san: string
+              count: number
+              wins: number
+              draws: number
+              losses: number
+            }>
+          }
+          if (controller.signal.aborted) return
+          if (!res.ok) throw new Error(data.error || `Replies failed (${res.status})`)
+          const moves = data.moves ?? []
+          setReplies({
+            scanned: data.scanned ?? 0,
+            reached: data.reached ?? 0,
+            moves,
+          })
+          setRepliesStatus('idle')
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return
+          setRepliesStatus('error')
+          setRepliesError(err instanceof Error ? err.message : 'Replies failed')
+        })
+    }, 250)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [open, tab, report, chessComUsername, replyPrefix])
+
+  useEffect(() => {
+    if (!open || tab !== 'analysis' || !replies) {
+      onFrequencyArrowsRef.current?.([])
+      return
+    }
+    onFrequencyArrowsRef.current?.(arrowsForReplies(replyPrefix, replies.moves))
+  }, [open, tab, replies, replyPrefix])
 
   return (
     <div
@@ -280,8 +389,7 @@ export const AnalysisDialog: FC<Props> = ({
           {tab === 'import' && (
             <div className="analysis-import">
               <p className="analysis-import-lead">
-                Paste a finished game as PGN or a chess.com live/daily link, then
-                run a coach review on the board.
+                Enter your chess.com username to review your latest game, or paste a PGN or game link.
               </p>
 
               <label className="slider-label" htmlFor="analysis-chesscom-user">
@@ -321,11 +429,27 @@ export const AnalysisDialog: FC<Props> = ({
               {importError && <p className="error">{importError}</p>}
 
               <PixelButton
-                className="settings-full-btn"
+                className={
+                  importBusy ? 'settings-full-btn is-busy' : 'settings-full-btn'
+                }
                 onClick={onImportGame}
-                disabled={importBusy || analyzing || !importDraft.trim()}
+                aria-busy={importBusy}
+                disabled={
+                  importBusy ||
+                  analyzing ||
+                  (!importDraft.trim() && !chessComUsername.trim())
+                }
               >
-                {importBusy ? 'Importing…' : 'Import & review'}
+                {importBusy ? (
+                  <>
+                    <span className="import-spinner" aria-hidden />
+                    {analyzing ? 'Analyzing…' : 'Importing…'}
+                  </>
+                ) : importDraft.trim() ? (
+                  'Import & review'
+                ) : (
+                  'Review latest game'
+                )}
               </PixelButton>
 
               {onReviewCurrent && (
@@ -357,66 +481,126 @@ export const AnalysisDialog: FC<Props> = ({
 
           {report && tab === 'report' && (
             <div className="analysis-report">
-              <EvalGraph
-                series={report.summary.evalSeries}
-                scrubIndex={scrubIndex}
-                onScrubTo={onScrubTo}
-              />
+              <div className="analysis-report-scroll">
+                <EvalGraph
+                  series={report.summary.evalSeries}
+                  scrubIndex={scrubIndex}
+                  onScrubTo={onScrubTo}
+                />
 
-              <section className="analysis-accuracies">
-                <h3>Accuracies</h3>
-                <div className="analysis-accuracy-row">
-                  <div className="analysis-accuracy is-white">
-                    <span className="analysis-accuracy-name">{whiteLabel}</span>
-                    <strong>
-                      {report.summary.whiteAccuracy != null
-                        ? `${report.summary.whiteAccuracy}%`
-                        : 'N/A'}
-                    </strong>
+                <section className="analysis-accuracies">
+                  <h3>Accuracies</h3>
+                  <div className="analysis-accuracy-row">
+                    <div className="analysis-accuracy is-white">
+                      <span className="analysis-accuracy-name">{whiteLabel}</span>
+                      <strong>
+                        {report.summary.whiteAccuracy != null
+                          ? `${report.summary.whiteAccuracy}%`
+                          : 'N/A'}
+                      </strong>
+                    </div>
+                    <div className="analysis-accuracy is-black">
+                      <span className="analysis-accuracy-name">{blackLabel}</span>
+                      <strong>
+                        {report.summary.blackAccuracy != null
+                          ? `${report.summary.blackAccuracy}%`
+                          : 'N/A'}
+                      </strong>
+                    </div>
                   </div>
-                  <div className="analysis-accuracy is-black">
-                    <span className="analysis-accuracy-name">{blackLabel}</span>
-                    <strong>
-                      {report.summary.blackAccuracy != null
-                        ? `${report.summary.blackAccuracy}%`
-                        : 'N/A'}
-                    </strong>
+                </section>
+
+                <section className="analysis-counts">
+                  <div className="analysis-counts-head">
+                    <span />
+                    <span title={whiteLabel}>{whiteLabel}</span>
+                    <span title={blackLabel}>{blackLabel}</span>
                   </div>
+                  {REPORT_TAG_ORDER.map((tag) => (
+                    <div key={tag} className="analysis-counts-row">
+                      <span className="analysis-counts-label">
+                        <TagGlyph tag={tag} />
+                        {TAG_LABEL[tag]}
+                      </span>
+                      <span>{report.summary.whiteCounts[tag]}</span>
+                      <span>{report.summary.blackCounts[tag]}</span>
+                    </div>
+                  ))}
+                </section>
+              </div>
+
+              {onSendCoachChat && (
+                <div className="analysis-coach-embed">
+                  <CoachPane
+                    explanation={coachExplanation}
+                    coachStatus={coachStatus}
+                    coachError={coachError}
+                    chatMessages={coachChat}
+                    chatStatus={coachChatStatus}
+                    chatError={coachChatError}
+                    onSendChat={onSendCoachChat}
+                    isPlayerTurn
+                    reviewMode
+                    emptyHint=""
+                  />
                 </div>
-              </section>
-
-              <section className="analysis-counts">
-                <div className="analysis-counts-head">
-                  <span />
-                  <span title={whiteLabel}>{whiteLabel}</span>
-                  <span title={blackLabel}>{blackLabel}</span>
-                </div>
-                {REPORT_TAG_ORDER.map((tag) => (
-                  <div key={tag} className="analysis-counts-row">
-                    <span className="analysis-counts-label">
-                      <TagGlyph tag={tag} />
-                      {TAG_LABEL[tag]}
-                    </span>
-                    <span>{report.summary.whiteCounts[tag]}</span>
-                    <span>{report.summary.blackCounts[tag]}</span>
-                  </div>
-                ))}
-              </section>
-
-              {onAskCoachRecap && (
-                <PixelButton
-                  className="settings-full-btn"
-                  onClick={onAskCoachRecap}
-                  disabled={coachRecapBusy || analyzing}
-                >
-                  {coachRecapBusy ? 'Writing recap…' : 'Ask coach for recap'}
-                </PixelButton>
               )}
             </div>
           )}
 
           {report && tab === 'analysis' && (
             <div className="analysis-moves">
+              <section className="analysis-replies" aria-label="Common replies">
+                <p className="analysis-replies-label">Common next moves</p>
+                {!chessComUsername.trim() && (
+                  <p className="analysis-replies-note">
+                    Add your chess.com username on Import to see what people played against you from here.
+                  </p>
+                )}
+                {chessComUsername.trim() && repliesStatus === 'loading' && !replies && (
+                  <p className="analysis-replies-note">Reading your recent games…</p>
+                )}
+                {repliesError && (
+                  <p className="analysis-replies-note is-error">{repliesError}</p>
+                )}
+                {replies && replies.moves.length === 0 && repliesStatus !== 'loading' && (
+                  <p className="analysis-replies-note">
+                    None of your last {replies.scanned} games reached this position.
+                  </p>
+                )}
+                {replies && replies.moves.length > 0 && (
+                  <ul className="analysis-reply-list">
+                    {replies.moves.map((move) => {
+                      const pct = replies.reached
+                        ? Math.round((100 * move.count) / replies.reached)
+                        : 0
+                      const scored = move.wins + move.draws + move.losses
+                      const score =
+                        scored > 0
+                          ? Math.round((100 * (move.wins + move.draws * 0.5)) / scored)
+                          : null
+                      return (
+                        <li
+                          key={move.san}
+                          className={[
+                            'analysis-reply',
+                            playedNext === move.san ? 'is-played' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                        >
+                          <span className="analysis-reply-san">{move.san}</span>
+                          <span className="analysis-reply-pct">{pct}%</span>
+                          <span className="analysis-reply-meta">
+                            {move.count} game{move.count === 1 ? '' : 's'}
+                            {score != null ? ` · you ${score}%` : ''}
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </section>
               <ul className="analysis-move-list">
                 {moveRows.map((row) => (
                   <li key={row.moveNo} className="analysis-move-row">

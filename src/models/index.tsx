@@ -158,7 +158,7 @@ export const MeshWrapper: FC<ModelProps> = ({
       settled.current = false
       captureAnim.current = {
         start: performance.now(),
-        duration: 280,
+        duration: 140,
         fromScale: 1,
       }
     } else if (!replacingRef.current && wasReplacing.current) {
@@ -193,7 +193,7 @@ export const MeshWrapper: FC<ModelProps> = ({
       moveAnim.current = {
         start: performance.now(),
         // Drag drop: snap down fast; click-move: keep a short hop travel.
-        duration: lifted ? 90 + travel * 35 : 220 + travel * 85,
+        duration: lifted ? 45 + travel * 17 : 110 + travel * 42,
         fromX: mesh.position.x,
         fromY: mesh.position.y,
         fromZ: mesh.position.z,
@@ -234,7 +234,7 @@ export const MeshWrapper: FC<ModelProps> = ({
 
     const targetY = selectedRef.current ? SELECT_LIFT * tile : 0
     // Drop/settle after mouse-up should feel snappy; lift can stay a bit softer.
-    const settleRate = targetY < mesh.position.y ? 32 : 14
+    const settleRate = targetY < mesh.position.y ? 64 : 28
     const k = 1 - Math.exp(-settleRate * delta)
     mesh.position.x += (0 - mesh.position.x) * k
     mesh.position.y += (targetY - mesh.position.y) * k

@@ -16,6 +16,17 @@ export type BoardTheme = {
   tileMode: 'solid' | 'hit'
   previewColor: string
   preview: string
+  /** Procedural tile colors. Defaults to the grey Classic pair. */
+  squares?: { light: string; dark: string }
+  /** Marble rim + file/rank labels on procedural boards. */
+  frame?: {
+    color: string
+    emissive: string
+    label: string
+    labelOutline: string
+  }
+  squareMetalness?: number
+  squareRoughness?: number
 }
 
 export type PieceColorPaths = {
@@ -121,6 +132,40 @@ export const BOARD_THEMES: BoardTheme[] = [
     tileMode: 'solid',
     previewColor: '#8a8a8a',
     preview: '/assets/previews/boards/classic.png',
+  },
+  {
+    id: 'chesscom',
+    name: 'Classic Brown',
+    credit: 'Classic board, brown squares',
+    license: 'N/A',
+    modelPath: null,
+    scale: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    showProceduralBorder: true,
+    tileMode: 'solid',
+    previewColor: '#c5a076',
+    preview: '/assets/previews/boards/classic-brown.png',
+    squares: { light: '#eddab9', dark: '#c5a076' },
+    squareMetalness: 0.04,
+    squareRoughness: 0.86,
+  },
+  {
+    id: 'chessrep',
+    name: 'Classic Green',
+    credit: 'Classic board, green squares',
+    license: 'N/A',
+    modelPath: null,
+    scale: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    showProceduralBorder: true,
+    tileMode: 'solid',
+    previewColor: '#749451',
+    preview: '/assets/previews/boards/classic-green.png',
+    squares: { light: '#ececd0', dark: '#749451' },
+    squareMetalness: 0.04,
+    squareRoughness: 0.86,
   },
   {
     id: 'wood',

@@ -20,6 +20,8 @@ import { isRook } from '@logic/pieces/rook'
 import { MeshWrapper } from '@models/index'
 import { PieceModel } from '@models/PieceModel'
 import { TileComponent } from '@models/Tile'
+import { FrequencyArrows } from '@models/FrequencyArrows'
+import type { FrequencyArrow } from '@/lib/replyArrows'
 import { CaptureBurst } from '@models/CaptureBurst'
 import { animated, useSpring } from '@react-spring/three'
 import { OrbitControls } from '@react-three/drei'
@@ -82,6 +84,8 @@ export const BoardComponent: FC<{
   readOnly?: boolean
   /** Return false to reject a player move attempt (e.g. drill mode). */
   validateMove?: (move: Move) => boolean
+  /** Opening-tree arrows: more frequent moves are more opaque. */
+  frequencyArrows?: FrequencyArrow[]
 }> = ({
   selected,
   setSelected,
@@ -106,6 +110,7 @@ export const BoardComponent: FC<{
   showMoveIndicators = true,
   readOnly = false,
   validateMove,
+  frequencyArrows = [],
 }) => {
   const [lastSelected, setLastSelected] = useState<Tile | null>(null)
   const turn = useGameState((s) => s.turn)
@@ -650,7 +655,7 @@ export const BoardComponent: FC<{
 
   const { intensity } = useSpring({
     intensity: selected ? 0.35 : 0,
-    config: { tension: 200, friction: 24 },
+    config: { tension: 400, friction: 28 },
   })
 
   const kingInCheck = isKingInCheck(board, turn)
@@ -752,6 +757,7 @@ export const BoardComponent: FC<{
           active
         />
       )}
+      <FrequencyArrows arrows={frequencyArrows} />
       {board.map((row, i) =>
         row.map((tile, j) => {
           const bg = `${(i + j) % 2 === 0 ? `white` : `black`}`
@@ -796,6 +802,10 @@ export const BoardComponent: FC<{
               <TileComponent
                 color={bg}
                 mode={boardTheme.tileMode}
+                squareLight={boardTheme.squares?.light}
+                squareDark={boardTheme.squares?.dark}
+                squareMetalness={boardTheme.squareMetalness}
+                squareRoughness={boardTheme.squareRoughness}
                 position={[j, 0.25, i]}
                 canMoveHere={canMoveHere?.newPosition ?? null}
                 isTip={isTip}

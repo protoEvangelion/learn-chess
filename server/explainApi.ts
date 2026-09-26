@@ -33,6 +33,15 @@ export type ExplainRequest = {
   openingLineId?: string
 }
 
+export type OpeningCatalogEntry = {
+  id: string
+  name: string
+  eco?: string
+  summary: string
+  /** Space-joined SAN path for the drill line. */
+  moves: string
+}
+
 export type CoachChatRequest = {
   gameId: string
   fen: string
@@ -50,6 +59,13 @@ export type CoachChatRequest = {
   }>
   /** Drill / opening practice line — injects a cached briefing into the prompt. */
   openingLineId?: string
+  /**
+   * Compact catalog of practiced opening drills (e.g. Italian pack).
+   * Lets post-game chat answer “could I have used my lines better?”.
+   */
+  openingCatalog?: OpeningCatalogEntry[]
+  /** Short game-review context when chatting from the analysis report tab. */
+  reviewBrief?: string
 }
 
 export type ReviewPlyPayload = {
@@ -249,6 +265,15 @@ function buildReviewPrompt(body: ReviewRequest): string {
   ].join('\n')
 }
 
+function formatOpeningCatalog(entries: OpeningCatalogEntry[]): string {
+  return entries
+    .map((e, i) => {
+      const eco = e.eco?.trim() ? ` (${e.eco.trim()})` : ''
+      return `${i + 1}. ${e.name}${eco} [id=${e.id}]\n   ${e.summary}\n   Moves: ${e.moves}`
+    })
+    .join('\n')
+}
+
 function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string {
   const engineBlock =
     body.engineLines && body.engineLines.length > 0
@@ -258,6 +283,25 @@ function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string 
             (l, i) =>
               `${i + 1}. ${l.uci} (${l.from}→${l.to}) eval ${l.evalLabel}`,
           ),
+        ].join('\n')
+      : null
+
+  const catalog =
+    body.openingCatalog && body.openingCatalog.length > 0
+      ? [
+          '--- Opening drills this player practices in the app (use when relevant) ---',
+          'These are the concrete lines they study. Relate advice to them when asked about openings / Italian / drills.',
+          formatOpeningCatalog(body.openingCatalog),
+          '',
+        ].join('\n')
+      : null
+
+  const review =
+    body.reviewBrief?.trim()
+      ? [
+          '--- Game review context (post-game analysis) ---',
+          body.reviewBrief.trim(),
+          '',
         ].join('\n')
       : null
 
@@ -271,6 +315,8 @@ function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string 
           '',
         ].join('\n')
       : null,
+    catalog,
+    review,
     '--- Current position (authoritative) ---',
     `FEN: ${body.fen}`,
     positionFacts(body.fen),
@@ -347,6 +393,153 @@ async function fetchJson(url: string): Promise<unknown> {
     throw new Error(`Fetch failed ${res.status} for ${url}`)
   }
   return res.json()
+}
+
+type OpeningReplyMove = {
+  san: string
+  count: number
+  wins: number
+  draws: number
+  losses: number
+}
+
+type CachedChessComGame = {
+  sans: string[]
+  white: string
+  black: string
+  result: string
+}
+
+const chessComGameCache = new Map<string, { at: number; games: CachedChessComGame[] }>()
+const CHESSCOM_CACHE_MS = 10 * 60 * 1000
+
+function recentChessComMonths(count: number): Array<{ yyyy: string; mm: string }> {
+  const out: Array<{ yyyy: string; mm: string }> = []
+  const d = new Date()
+  for (let i = 0; i < count; i++) {
+    const cursor = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - i, 1))
+    out.push({
+      yyyy: String(cursor.getUTCFullYear()),
+      mm: String(cursor.getUTCMonth() + 1).padStart(2, '0'),
+    })
+  }
+  return out
+}
+
+function userResult(
+  game: CachedChessComGame,
+  username: string,
+): 'win' | 'draw' | 'loss' | null {
+  const me = username.toLowerCase()
+  const side =
+    game.white.toLowerCase() === me
+      ? 'white'
+      : game.black.toLowerCase() === me
+        ? 'black'
+        : null
+  if (!side) return null
+  if (game.result === '1/2-1/2') return 'draw'
+  if (game.result === '1-0') return side === 'white' ? 'win' : 'loss'
+  if (game.result === '0-1') return side === 'black' ? 'win' : 'loss'
+  return null
+}
+
+/** Most common next moves in this player's recent chess.com games. */
+async function openingRepliesFor(
+  username: string,
+  prefix: string[],
+): Promise<{ scanned: number; reached: number; moves: OpeningReplyMove[] }> {
+  const user = username.trim().toLowerCase()
+  if (!user || !/^[a-z0-9_-]{2,25}$/i.test(username.trim())) {
+    throw new Error('Enter a chess.com username')
+  }
+
+  const cached = chessComGameCache.get(user)
+  let games = cached && Date.now() - cached.at < CHESSCOM_CACHE_MS ? cached.games : null
+  if (!games) {
+    const loaded: CachedChessComGame[] = []
+    for (const { yyyy, mm } of recentChessComMonths(3)) {
+      let archive: { games?: Array<{ pgn?: string }> }
+      try {
+        archive = (await fetchJson(
+          `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/${yyyy}/${mm}`,
+        )) as { games?: Array<{ pgn?: string }> }
+      } catch {
+        continue
+      }
+      const monthGames = archive.games ?? []
+      const recent = monthGames.slice(-120)
+      for (const g of recent) {
+        if (!g.pgn) continue
+        try {
+          const chess = new Chess()
+          chess.loadPgn(g.pgn)
+          const headers = chess.getHeaders()
+          loaded.push({
+            sans: chess.history(),
+            white: headers.White ?? '',
+            black: headers.Black ?? '',
+            result: headers.Result ?? '*',
+          })
+        } catch {
+          // Skip unreadable PGNs.
+        }
+      }
+    }
+    games = loaded
+    chessComGameCache.set(user, { at: Date.now(), games })
+  }
+
+  const counts = new Map<string, OpeningReplyMove>()
+  let reached = 0
+  for (const game of games) {
+    if (prefix.length > game.sans.length) continue
+    if (!prefix.every((san, i) => game.sans[i] === san)) continue
+    const next = game.sans[prefix.length]
+    if (!next) continue
+    reached += 1
+    const row = counts.get(next) ?? {
+      san: next,
+      count: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+    }
+    row.count += 1
+    const outcome = userResult(game, user)
+    if (outcome === 'win') row.wins += 1
+    else if (outcome === 'draw') row.draws += 1
+    else if (outcome === 'loss') row.losses += 1
+    counts.set(next, row)
+  }
+
+  const moves = [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.san.localeCompare(b.san))
+    .slice(0, 8)
+
+  return { scanned: games.length, reached, moves }
+}
+
+async function latestChessComPgn(username: string): Promise<{ pgn: string }> {
+  const user = username.trim().toLowerCase()
+  if (!user || !/^[a-z0-9_-]{2,25}$/i.test(username.trim())) {
+    throw new Error('Enter a chess.com username')
+  }
+  for (const { yyyy, mm } of recentChessComMonths(6)) {
+    try {
+      const archive = (await fetchJson(
+        `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/${yyyy}/${mm}`,
+      )) as { games?: Array<{ pgn?: string }> }
+      const games = archive.games ?? []
+      for (let i = games.length - 1; i >= 0; i--) {
+        const pgn = games[i]?.pgn
+        if (pgn?.trim()) return { pgn }
+      }
+    } catch {
+      continue
+    }
+  }
+  throw new Error('No recent chess.com games for that username')
 }
 
 function chessComMonthFromUnix(sec: number): { yyyy: string; mm: string } {
@@ -468,6 +661,61 @@ export function explainApiPlugin(): Plugin {
           } catch (err) {
             sendJson(res, 500, {
               error: err instanceof Error ? err.message : 'create-chat failed',
+            })
+          }
+          return
+        }
+
+        if (url === '/api/import-chesscom-latest') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          try {
+            const rawBody = await readBody(req)
+            const body = JSON.parse(rawBody || '{}') as { username?: string }
+            const result = await latestChessComPgn(body.username ?? '')
+            sendJson(res, 200, result)
+          } catch (err) {
+            sendJson(res, 404, {
+              error:
+                err instanceof Error ? err.message : 'latest game lookup failed',
+            })
+          }
+          return
+        }
+
+        if (url === '/api/opening-replies') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          try {
+            const rawBody = await readBody(req)
+            const body = JSON.parse(rawBody || '{}') as {
+              username?: string
+              moves?: string[]
+            }
+            const moves = Array.isArray(body.moves)
+              ? body.moves.filter((m) => typeof m === 'string').slice(0, 40)
+              : []
+            const result = await openingRepliesFor(body.username ?? '', moves)
+            sendJson(res, 200, result)
+          } catch (err) {
+            sendJson(res, 400, {
+              error: err instanceof Error ? err.message : 'opening replies failed',
             })
           }
           return

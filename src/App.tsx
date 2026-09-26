@@ -24,9 +24,10 @@ import {
   GradientButtonGroup,
 } from '@/components/ui/gradient-button-group'
 import { HudEval } from '@/components/HudEval'
+import { BrandMark } from '@/components/BrandMark'
 import { SettingsDrawer } from '@/components/SettingsDrawer'
-import { PixelButton } from '@/components/ui/PixelButton'
-import { Joystick } from 'lucide-react'
+import { Hammer, Joystick } from 'lucide-react'
+import type { FrequencyArrow } from '@/lib/replyArrows'
 import { Border } from '@models/Border'
 import { BoardSurface, preloadBoard } from '@models/BoardSurface'
 import { RoomScene, preloadRoom } from '@models/RoomScene'
@@ -60,7 +61,7 @@ import {
   analyzeGamePlies,
   buildPlyTimeline,
   buildReportSummary,
-  pliesForCoachApi,
+  formatReviewBriefForCoach,
   type AnalysisReport,
 } from '@/lib/gameReview'
 import {
@@ -243,6 +244,7 @@ export default function App() {
   const [importBusy, setImportBusy] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
   const [importStatus, setImportStatus] = useState<string | null>(null)
+  const [frequencyArrows, setFrequencyArrows] = useState<FrequencyArrow[]>([])
   const [opponentThinking, setOpponentThinking] = useState(false)
   const [pendingEngineMove, setPendingEngineMove] = useState<Move | null>(null)
   const [gameId, setGameId] = useState<string | null>(() => readGameIdFromUrl())
@@ -1066,7 +1068,9 @@ export default function App() {
     async (question: string) => {
       const q = question.trim()
       if (!q || coachChatStatus === 'loading') return
-      if (!coachReviewMode && !drillOpen && turn !== playerColor) return
+      const analysisCoach = analysisOpen && !!analysisReport
+      if (!coachReviewMode && !drillOpen && !analysisCoach && turn !== playerColor)
+        return
 
       coachChatAbortRef.current?.abort()
       const controller = new AbortController()
@@ -1096,6 +1100,16 @@ export default function App() {
           }
         }
 
+        const openingCatalog = analysisCoach
+          ? ITALIAN_LINES.map((line) => ({
+              id: line.id,
+              name: line.name,
+              eco: line.eco,
+              summary: line.summary,
+              moves: line.moves.map((m) => m.san).join(' '),
+            }))
+          : undefined
+
         const res = await fetch('/api/coach-chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1116,6 +1130,10 @@ export default function App() {
               evalLabel: l.evalLabel,
             })),
             openingLineId: drillOpen && drillLine ? drillLine.id : undefined,
+            openingCatalog,
+            reviewBrief: analysisCoach
+              ? formatReviewBriefForCoach(analysisReport)
+              : undefined,
           }),
         })
         if (!res.ok || !res.body) {
@@ -1177,6 +1195,8 @@ export default function App() {
       }
     },
     [
+      analysisOpen,
+      analysisReport,
       best,
       coachChatStatus,
       coachExplanation,
@@ -1229,6 +1249,7 @@ export default function App() {
       setReviewError(null)
       setReviewProgress('Building move list…')
       setAnalysisReport(null)
+      clearCoachThread()
 
       let session = override?.session ?? reviewImport
       if (!session) {
@@ -1294,108 +1315,6 @@ export default function App() {
     ],
   )
 
-  const askCoachRecap = useCallback(
-    async (override?: {
-      outcome?: 'win' | 'loss' | 'draw'
-    }) => {
-      if (!analysisReport || coachStatus === 'loading') return
-      const color = analysisReport.playerColor
-      const reviewFen = reviewImport?.finalFen ?? fen
-      const outcome =
-        override?.outcome ??
-        (endOutcome === 'win' || endOutcome === 'loss' || endOutcome === 'draw'
-          ? endOutcome
-          : 'draw')
-
-      reviewAbortRef.current?.abort()
-      const controller = new AbortController()
-      reviewAbortRef.current = controller
-      setCoachReviewMode(true)
-      setCoachExplanation(null)
-      setCoachChat([])
-      setCoachChatStatus('idle')
-      setCoachChatError(null)
-      setCoachStatus('loading')
-      setCoachError(null)
-      setGameTab('coach')
-      openPanel('game')
-
-      try {
-        let id = await mintGameId(controller.signal)
-        setGameId(id)
-        replaceGameInUrl(reviewFen, id, urlHistoryIndexRef.current)
-
-        const res = await fetch('/api/review', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            gameId: id,
-            playerColor: color,
-            outcome,
-            plies: pliesForCoachApi(analysisReport.plies),
-          }),
-        })
-        if (!res.ok || !res.body) {
-          throw new Error(`Review failed (${res.status})`)
-        }
-
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        let assembled = ''
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const parts = buffer.split('\n')
-          buffer = parts.pop() ?? ''
-          for (const line of parts) {
-            if (!line.startsWith('data:')) continue
-            const payload = JSON.parse(line.slice(5).trim()) as {
-              type: string
-              text?: string
-              error?: string
-            }
-            if (payload.type === 'delta' && payload.text) {
-              assembled += payload.text
-              const parsed = parseCoachExplain(assembled)
-              if (parsed) setCoachExplanation(parsed.explanation)
-            } else if (payload.type === 'done') {
-              if (payload.text) assembled = payload.text
-              const parsed = parseCoachExplain(assembled)
-              if (parsed) setCoachExplanation(parsed.explanation)
-              else if (assembled.trim()) setCoachExplanation(assembled.trim())
-            } else if (payload.type === 'error') {
-              throw new Error(payload.error || 'Review failed')
-            }
-          }
-        }
-
-        const parsed = parseCoachExplain(assembled)
-        setCoachExplanation(parsed?.explanation ?? (assembled.trim() || null))
-        if (!parsed && !assembled.trim()) {
-          throw new Error('Empty review')
-        }
-        setCoachStatus('idle')
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        setCoachStatus('error')
-        const msg = err instanceof Error ? err.message : 'Review failed'
-        setCoachError(msg)
-        setReviewError(msg)
-      }
-    },
-    [
-      analysisReport,
-      coachStatus,
-      endOutcome,
-      fen,
-      openPanel,
-      reviewImport?.finalFen,
-    ],
-  )
-
   const applyImportedGame = useCallback(
     (imported: ImportedGame) => {
       setReviewImport(imported)
@@ -1445,14 +1364,27 @@ export default function App() {
 
   const importGame = useCallback(async () => {
     const raw = importDraft.trim()
-    if (!raw || importBusy) return
+    const username = chessComUsername.trim()
+    if ((!raw && !username) || importBusy) return
     setImportBusy(true)
     setImportError(null)
     setImportStatus(null)
 
     try {
       let pgn = raw
-      if (isChessComGameUrl(raw)) {
+      if (!raw) {
+        setImportStatus('Fetching your latest chess.com game…')
+        const res = await fetch('/api/import-chesscom-latest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username }),
+        })
+        const data = (await res.json()) as { pgn?: string; error?: string }
+        if (!res.ok || !data.pgn) {
+          throw new Error(data.error || `Import failed (${res.status})`)
+        }
+        pgn = data.pgn
+      } else if (isChessComGameUrl(raw)) {
         setImportStatus('Fetching chess.com game…')
         const res = await fetch('/api/import-chesscom', {
           method: 'POST',
@@ -1494,8 +1426,7 @@ export default function App() {
 
       setImportStatus(null)
       setImportDraft('')
-      setImportBusy(false)
-      void reviewGame({
+      await reviewGame({
         playerColor: imported.playerColor,
         fen: imported.finalFen,
         whiteName: imported.whiteName,
@@ -1503,9 +1434,10 @@ export default function App() {
         session: imported,
       })
     } catch (err) {
-      setImportBusy(false)
       setImportStatus(null)
       setImportError(err instanceof Error ? err.message : 'Import failed')
+    } finally {
+      setImportBusy(false)
     }
   }, [
     applyImportedGame,
@@ -1751,8 +1683,13 @@ export default function App() {
         analyzing={reviewBusy}
         analyzeProgress={reviewProgress}
         analyzeError={reviewError}
-        onAskCoachRecap={() => void askCoachRecap()}
-        coachRecapBusy={coachStatus === 'loading'}
+        coachExplanation={coachExplanation}
+        coachStatus={coachStatus}
+        coachError={coachError}
+        coachChat={coachChat}
+        coachChatStatus={coachChatStatus}
+        coachChatError={coachChatError}
+        onSendCoachChat={sendCoachChat}
         chessComUsername={chessComUsername}
         onChessComUsernameChange={(username) => {
           setChessComUsername(username)
@@ -1769,6 +1706,7 @@ export default function App() {
         panelWidth={panelWidth}
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
+        onFrequencyArrows={setFrequencyArrows}
       />
 
       <DrillDialog
@@ -1838,47 +1776,8 @@ export default function App() {
           <header className="hud">
             <div className="hud-cluster">
               <div className="hud-brand">
-                <p className="eyebrow">3D Chess</p>
-                <p className="status">{status}</p>
-                {reviewImport && (
-                  <div className="hud-scrub" role="group" aria-label="Move scrub">
-                    <PixelButton
-                      ghost
-                      disabled={scrubIndex <= 0}
-                      onClick={() => scrubTo(scrubIndex - 1)}
-                      aria-label="Previous ply"
-                    >
-                      ‹
-                    </PixelButton>
-                    <span className="hud-scrub-label">
-                      {scrubIndex}/{reviewImport.history.length}
-                    </span>
-                    <PixelButton
-                      ghost
-                      disabled={scrubIndex >= reviewImport.history.length}
-                      onClick={() => scrubTo(scrubIndex + 1)}
-                      aria-label="Next ply"
-                    >
-                      ›
-                    </PixelButton>
-                    <PixelButton
-                      ghost
-                      disabled={scrubIndex === 0}
-                      onClick={() => scrubTo(0)}
-                      aria-label="Start position"
-                    >
-                      Start
-                    </PixelButton>
-                    <PixelButton
-                      ghost
-                      disabled={scrubIndex === reviewImport.history.length}
-                      onClick={() => scrubTo(reviewImport.history.length)}
-                      aria-label="Final position"
-                    >
-                      End
-                    </PixelButton>
-                  </div>
-                )}
+                <BrandMark title={`3D Chess · ${status}`} />
+                <span className="sr-only">{status}</span>
               </div>
               <div
                 className="fps-slot"
@@ -2046,23 +1945,11 @@ export default function App() {
                     id: 'drill',
                     label: 'Drill',
                     icon: (
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                      <Hammer
+                        size={18}
+                        strokeWidth={1.75}
                         aria-hidden="true"
-                      >
-                        <path d="M4 19 15 8" />
-                        <path d="m14 7 3 3" />
-                        <path d="M12 19h8" />
-                        <path d="m5 12 3 3" />
-                        <circle cx="6.5" cy="6.5" r="2.5" />
-                      </svg>
+                      />
                     ),
                     onClick: () =>
                       openPanel(panel === 'drill' ? null : 'drill'),
@@ -2124,7 +2011,14 @@ export default function App() {
             <RoomScene theme={roomTheme} />
             <group position={roomTheme.boardOffset ?? DEFAULT_CAMERA_TARGET}>
               <BoardSurface theme={boardTheme} />
-              {boardTheme.showProceduralBorder && <Border />}
+              {boardTheme.showProceduralBorder && (
+                <Border
+                  color={boardTheme.frame?.color}
+                  emissive={boardTheme.frame?.emissive}
+                  label={boardTheme.frame?.label}
+                  labelOutline={boardTheme.frame?.labelOutline}
+                />
+              )}
               <BoardComponent
                 selected={selected}
                 setSelected={setSelected}
@@ -2155,6 +2049,7 @@ export default function App() {
                 validateMove={
                   drillStatus === 'playing' ? validateDrillMove : undefined
                 }
+                frequencyArrows={frequencyArrows}
               />
             </group>
           </Canvas>

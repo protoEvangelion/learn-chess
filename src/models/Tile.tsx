@@ -17,12 +17,14 @@ const getColor = (
   canMoveHere: boolean,
   isCheck: boolean,
   previewWash: string | null,
+  light = `#aaaaaa`,
+  dark = `#5a5a5a`,
 ) => {
   if (canMoveHere && previewWash) return previewWash
   if (canMoveHere) return `#5eb0ff`
   if (isCheck) return `#e11d2e`
-  if (color === `white`) return `#aaaaaa`
-  if (color === `black`) return `#5a5a5a`
+  if (color === `white`) return light
+  if (color === `black`) return dark
   return `purple`
 }
 
@@ -208,6 +210,10 @@ export const TileComponent: FC<{
   /** Hovered legal move would check — ring their king */
   isOppCheckPreview?: boolean
   mode?: 'solid' | 'hit'
+  squareLight?: string
+  squareDark?: string
+  squareMetalness?: number
+  squareRoughness?: number
   position: [number, number, number]
   onClick?: (e: { stopPropagation: () => void }) => void
   movePreview?: MovePreview | null
@@ -228,6 +234,10 @@ export const TileComponent: FC<{
   pieceSafety = null,
   isOppCheckPreview = false,
   mode = 'solid',
+  squareLight,
+  squareDark,
+  squareMetalness = 0.35,
+  squareRoughness = 0.75,
   position,
   onClick,
   movePreview = null,
@@ -235,7 +245,14 @@ export const TileComponent: FC<{
 }) {
   const previewWash =
     canMoveHere && movePreview ? washColorForPreview(movePreview) : null
-  const tileColor = getColor(color, !!canMoveHere, isCheck, previewWash)
+  const tileColor = getColor(
+    color,
+    !!canMoveHere,
+    isCheck,
+    previewWash,
+    squareLight,
+    squareDark,
+  )
   const emissiveColor = getEmissive(color, !!canMoveHere, isCheck, previewWash)
   const showHighlight = !!canMoveHere || isCheck
   const destKey = canMoveHere
@@ -325,8 +342,8 @@ export const TileComponent: FC<{
           color={tileColor}
           emissive={emissiveColor}
           emissiveIntensity={showHighlight ? 0.55 : 0}
-          metalness={0.35}
-          roughness={0.75}
+          metalness={squareMetalness}
+          roughness={squareRoughness}
           envMapIntensity={0.1}
         />
       </mesh>
