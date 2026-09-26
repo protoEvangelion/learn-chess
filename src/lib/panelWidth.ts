@@ -1,5 +1,5 @@
 const KEY = 'chess-3d:panelWidth'
-export const DEFAULT_PANEL_WIDTH = 380
+export const DEFAULT_PANEL_WIDTH = 440
 export const MIN_PANEL_WIDTH = 280
 export const MAX_PANEL_WIDTH = 720
 

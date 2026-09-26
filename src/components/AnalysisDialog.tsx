@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type FC } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FC,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { PixelButton } from '@/components/ui/PixelButton'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
 import {
@@ -46,6 +55,89 @@ type Props = {
   onPanelWidthChange: (width: number) => void
   onPanelResizeEnd?: (width: number) => void
   onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
+}
+
+const DEFAULT_REVIEW_COACH_FRACTION = 0.42
+const EXPANDED_REVIEW_COACH_FRACTION = 2 / 3
+const MIN_REVIEW_COACH_FRACTION = 0.28
+const MAX_REVIEW_COACH_FRACTION = 0.8
+
+function clampReviewCoachFraction(fraction: number) {
+  return Math.min(
+    MAX_REVIEW_COACH_FRACTION,
+    Math.max(MIN_REVIEW_COACH_FRACTION, fraction),
+  )
+}
+
+function ReviewCoachResizeHandle({
+  fraction,
+  containerRef,
+  onFractionChange,
+}: {
+  fraction: number
+  containerRef: React.RefObject<HTMLDivElement | null>
+  onFractionChange: (fraction: number) => void
+}) {
+  const dragging = useRef(false)
+  const startY = useRef(0)
+  const startFraction = useRef(fraction)
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (!dragging.current) return
+      const height = containerRef.current?.getBoundingClientRect().height ?? 0
+      if (height <= 0) return
+      const delta = startY.current - event.clientY
+      onFractionChange(
+        clampReviewCoachFraction(startFraction.current + delta / height),
+      )
+    }
+    const onUp = () => {
+      if (!dragging.current) return
+      dragging.current = false
+      document.body.classList.remove('is-review-coach-resizing')
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      document.body.classList.remove('is-review-coach-resizing')
+    }
+  }, [containerRef, onFractionChange])
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    dragging.current = true
+    startY.current = event.clientY
+    startFraction.current = fraction
+    document.body.classList.add('is-review-coach-resizing')
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    const delta = event.key === 'ArrowUp' ? 0.05 : -0.05
+    onFractionChange(clampReviewCoachFraction(fraction + delta))
+  }
+
+  return (
+    <div
+      className="analysis-coach-resize-handle"
+      role="separator"
+      tabIndex={0}
+      aria-label="Resize coach area"
+      aria-orientation="horizontal"
+      aria-valuemin={Math.round(MIN_REVIEW_COACH_FRACTION * 100)}
+      aria-valuemax={Math.round(MAX_REVIEW_COACH_FRACTION * 100)}
+      aria-valuenow={Math.round(fraction * 100)}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+    />
+  )
 }
 
 function TagGlyph({ tag }: { tag: MoveQualityTag }) {
@@ -203,6 +295,11 @@ export const AnalysisDialog: FC<Props> = ({
 }) => {
   const [tab, setTab] = useState<TabId>(() => (report ? 'report' : 'import'))
   const [playing, setPlaying] = useState(false)
+  const [reviewCoachFraction, setReviewCoachFraction] = useState(
+    DEFAULT_REVIEW_COACH_FRACTION,
+  )
+  const reviewReportRef = useRef<HTMLDivElement>(null)
+  const previousCoachQuestionCount = useRef(0)
   const onScrubToRef = useRef(onScrubTo)
   onScrubToRef.current = onScrubTo
   const moveRows = useMemo(
@@ -237,6 +334,22 @@ export const AnalysisDialog: FC<Props> = ({
   const [repliesError, setRepliesError] = useState<string | null>(null)
   const onFrequencyArrowsRef = useRef(onFrequencyArrows)
   onFrequencyArrowsRef.current = onFrequencyArrows
+  const coachQuestionCount = useMemo(
+    () => coachChat.filter((message) => message.role === 'user').length,
+    [coachChat],
+  )
+
+  useEffect(() => {
+    if (coachQuestionCount === 0) {
+      previousCoachQuestionCount.current = 0
+      setReviewCoachFraction(DEFAULT_REVIEW_COACH_FRACTION)
+      return
+    }
+    if (previousCoachQuestionCount.current === 0) {
+      setReviewCoachFraction(EXPANDED_REVIEW_COACH_FRACTION)
+    }
+    previousCoachQuestionCount.current = coachQuestionCount
+  }, [coachQuestionCount])
 
   useEffect(() => {
     if (!open) return
@@ -480,7 +593,15 @@ export const AnalysisDialog: FC<Props> = ({
           )}
 
           {report && tab === 'report' && (
-            <div className="analysis-report">
+            <div
+              className="analysis-report"
+              ref={reviewReportRef}
+              style={
+                {
+                  '--review-coach-fraction': reviewCoachFraction,
+                } as CSSProperties
+              }
+            >
               <div className="analysis-report-scroll">
                 <EvalGraph
                   series={report.summary.evalSeries}
@@ -530,20 +651,27 @@ export const AnalysisDialog: FC<Props> = ({
               </div>
 
               {onSendCoachChat && (
-                <div className="analysis-coach-embed">
-                  <CoachPane
-                    explanation={coachExplanation}
-                    coachStatus={coachStatus}
-                    coachError={coachError}
-                    chatMessages={coachChat}
-                    chatStatus={coachChatStatus}
-                    chatError={coachChatError}
-                    onSendChat={onSendCoachChat}
-                    isPlayerTurn
-                    reviewMode
-                    emptyHint=""
+                <>
+                  <ReviewCoachResizeHandle
+                    fraction={reviewCoachFraction}
+                    containerRef={reviewReportRef}
+                    onFractionChange={setReviewCoachFraction}
                   />
-                </div>
+                  <div className="analysis-coach-embed">
+                    <CoachPane
+                      explanation={coachExplanation}
+                      coachStatus={coachStatus}
+                      coachError={coachError}
+                      chatMessages={coachChat}
+                      chatStatus={coachChatStatus}
+                      chatError={coachChatError}
+                      onSendChat={onSendCoachChat}
+                      isPlayerTurn
+                      reviewMode
+                      emptyHint=""
+                    />
+                  </div>
+                </>
               )}
             </div>
           )}
