@@ -1,4 +1,4 @@
-import { generateText, streamText } from 'ai'
+import { streamText } from 'ai'
 
 /** Cheap, fast model for Stockfish-grounded coaching. */
 export const EXPLAIN_MODEL =
@@ -45,11 +45,17 @@ export function streamCoachAsk(
 
 /** One-shot generation for Turso-cached opening briefings. */
 export async function askCoachOnce(prompt: string): Promise<string> {
-  const { text } = await generateText({
+  const result = streamText({
     model: EXPLAIN_MODEL,
     prompt,
     maxOutputTokens: 1_200,
     timeout: 55_000,
   })
-  return text
+  let assembled = ''
+  for await (const part of result.stream) {
+    if (part.type === 'error') throw part.error
+    if (part.type === 'text-delta') assembled += part.text
+  }
+  if (!assembled.trim()) throw new Error('AI Gateway returned no text')
+  return assembled.trim()
 }
