@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { handleExplainApi } from './explainApi.ts'
+import { handleExplainApi } from './explainApi.js'
 
 export default async function handler(
   req: IncomingMessage,

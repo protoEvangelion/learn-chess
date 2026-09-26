@@ -1,3 +1,3 @@
-import handler from '../server/vercelHandler.ts'
+import handler from '../server/vercelHandler.js'
 
 export default handler

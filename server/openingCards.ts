@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { getTurso } from './turso.ts'
-import { askCoachOnce, EXPLAIN_MODEL } from './aiCoach.ts'
+import { getTurso } from './turso.js'
+import { askCoachOnce, EXPLAIN_MODEL } from './aiCoach.js'
 
 export type OpeningLineInput = {
   id: string

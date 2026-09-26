@@ -4,9 +4,9 @@ import type { Plugin } from 'vite'
 import {
   EXPLAIN_MODEL,
   streamCoachAsk,
-} from './aiCoach.ts'
+} from './aiCoach.js'
 
-export { EXPLAIN_MODEL } from './aiCoach.ts'
+export { EXPLAIN_MODEL } from './aiCoach.js'
 
 type OpeningLineInput = {
   id: string
@@ -366,7 +366,7 @@ async function openingBriefFor(lineId?: string): Promise<string | undefined> {
   if (!lineId?.trim()) return undefined
   try {
     const { formatOpeningCardForCoach, getCachedOpeningCard } =
-      await import('./openingCards.ts')
+      await import('./openingCards.js')
     const card = await getCachedOpeningCard(lineId.trim())
     if (!card) return undefined
     return formatOpeningCardForCoach(card)
@@ -801,7 +801,7 @@ export async function handleExplainApi(
               return
             }
             const { getOrCreateOpeningCard } =
-              await import('./openingCards.ts')
+              await import('./openingCards.js')
             const card = await getOrCreateOpeningCard({
               id: line.id,
               name: line.name,
