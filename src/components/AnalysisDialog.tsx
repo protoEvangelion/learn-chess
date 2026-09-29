@@ -313,11 +313,13 @@ export const AnalysisDialog: FC<Props> = ({
     () => (report ? report.plies.slice(0, scrubIndex).map((p) => p.san) : []),
     [report, scrubIndex],
   )
+  const replyPrefixKey = replyPrefix.join('\n')
   const playedNext =
     report && scrubIndex < report.plies.length
       ? report.plies[scrubIndex].san
       : null
   const [replies, setReplies] = useState<{
+    prefixKey: string
     scanned: number
     reached: number
     moves: Array<{
@@ -386,6 +388,7 @@ export const AnalysisDialog: FC<Props> = ({
       return
     }
     const controller = new AbortController()
+    const prefixKey = replyPrefixKey
     setReplies(null)
     setRepliesStatus('loading')
     setRepliesError(null)
@@ -413,6 +416,7 @@ export const AnalysisDialog: FC<Props> = ({
           if (!res.ok) throw new Error(data.error || `Replies failed (${res.status})`)
           const moves = data.moves ?? []
           setReplies({
+            prefixKey,
             scanned: data.scanned ?? 0,
             reached: data.reached ?? 0,
             moves,
@@ -429,15 +433,20 @@ export const AnalysisDialog: FC<Props> = ({
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [open, tab, report, chessComUsername, replyPrefix])
+  }, [open, tab, report, chessComUsername, replyPrefix, replyPrefixKey])
 
   useEffect(() => {
-    if (!open || tab !== 'analysis' || !replies) {
+    if (
+      !open ||
+      tab !== 'analysis' ||
+      !replies ||
+      replies.prefixKey !== replyPrefixKey
+    ) {
       onFrequencyArrowsRef.current?.([])
       return
     }
     onFrequencyArrowsRef.current?.(arrowsForReplies(replyPrefix, replies.moves))
-  }, [open, tab, replies, replyPrefix])
+  }, [open, tab, replies, replyPrefix, replyPrefixKey])
 
   return (
     <div

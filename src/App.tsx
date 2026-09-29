@@ -12,7 +12,7 @@ import { Environment, Stats } from '@react-three/drei'
 import { copyBoard, createBoard } from '@logic/board'
 import type { Board } from '@logic/board'
 import type { Color, Move, Piece } from '@logic/pieces'
-import { getTile, movesForPiece } from '@logic/pieces'
+import { detectGameOver, getTile, movesForPiece } from '@logic/pieces'
 import { BoardComponent, type GameOver } from '@/components/Board'
 import { GamePanel, type GameTabId } from '@/components/GamePanel'
 import type { CoachChatMessage } from '@/components/CoachPane'
@@ -36,12 +36,14 @@ import { useGameState, type HistoryItem } from '@/state/game'
 import {
   boardToFen,
   fenToGame,
+  fenToSetupPgn,
   pushGameToUrl,
   readFenFromUrl,
   readGameIdFromUrl,
   readLineFromUrl,
   readOpeningFromUrl,
   readPanelFromUrl,
+  readPgnFromUrl,
   replaceDrillInUrl,
   replaceGameInUrl,
   replacePanelInUrl,
@@ -65,6 +67,7 @@ import {
   type AnalysisReport,
 } from '@/lib/gameReview'
 import {
+  historyToPgn,
   isChessComGameUrl,
   parsePgnToImportedGame,
   positionAtPly,
@@ -186,29 +189,107 @@ async function mintGameId(signal?: AbortSignal): Promise<string> {
   return data.gameId
 }
 
-function loadInitialBoard() {
-  const fromUrl = readFenFromUrl()
-  if (fromUrl) {
-    const parsed = fenToGame(fromUrl)
-    if (parsed) {
+function gameOverFromBoard(board: Board, turn: Color): GameOver | null {
+  const kind = detectGameOver(board, turn)
+  if (kind === 'checkmate') {
+    return { type: 'checkmate', winner: turn === 'white' ? 'black' : 'white' }
+  }
+  if (kind === 'stalemate') return { type: 'stalemate', winner: 'white' }
+  return null
+}
+
+type BootState = {
+  board: Board
+  imported: ImportedGame | null
+  gameOver: GameOver | null
+  playerColor: Color | null
+}
+
+function bootFromPgn(pgn: string): BootState | null {
+  try {
+    const imported = parsePgnToImportedGame(pgn, {
+      chessComUsername: loadChessComUsername() || null,
+    })
+    if (imported.history.length === 0) {
       useGameState.setState({
-        turn: parsed.turn,
-        history: parsed.history,
+        turn: imported.turn,
+        history: [],
         movingTo: null,
       })
-      return parsed.board
+      return {
+        board: imported.finalBoard,
+        imported: null,
+        gameOver: gameOverFromBoard(imported.finalBoard, imported.turn),
+        playerColor: null,
+      }
     }
+    useGameState.setState({
+      turn: imported.turn,
+      history: imported.history,
+      movingTo: null,
+    })
+    return {
+      board: imported.finalBoard,
+      imported,
+      gameOver: imported.gameOver,
+      playerColor: imported.playerColor,
+    }
+  } catch {
+    return null
   }
-  return createBoard()
+}
+
+function bootFromFen(fen: string): BootState | null {
+  const parsed = fenToGame(fen)
+  if (!parsed) return null
+  useGameState.setState({
+    turn: parsed.turn,
+    history: parsed.history,
+    movingTo: null,
+  })
+  return {
+    board: parsed.board,
+    imported: null,
+    gameOver: gameOverFromBoard(parsed.board, parsed.turn),
+    playerColor: null,
+  }
+}
+
+function computeBoot(): BootState {
+  const empty: BootState = {
+    board: createBoard(),
+    imported: null,
+    gameOver: null,
+    playerColor: null,
+  }
+  if (typeof window === 'undefined') return empty
+  if (readPanelFromUrl() === 'drill') return empty
+  const pgn = readPgnFromUrl()
+  if (pgn) {
+    const fromPgn = bootFromPgn(pgn)
+    if (fromPgn) return fromPgn
+  }
+  const fen = readFenFromUrl()
+  if (fen) {
+    const fromFen = bootFromFen(fen)
+    if (fromFen) return fromFen
+  }
+  return empty
 }
 
 export default function App() {
-  const [board, setBoard] = useState<Board>(loadInitialBoard)
+  const bootRef = useRef<BootState | null>(null)
+  if (!bootRef.current) bootRef.current = computeBoot()
+  const boot = bootRef.current
+
+  const [board, setBoard] = useState<Board>(boot.board)
   const [selected, setSelected] = useState<Piece | null>(null)
   const [moves, setMoves] = useState<Move[]>([])
-  const [gameOver, setGameOver] = useState<GameOver | null>(null)
-  const [endgameDismissed, setEndgameDismissed] = useState(false)
-  const [playerColor, setPlayerColor] = useState<Color>(loadPlayerColor)
+  const [gameOver, setGameOver] = useState<GameOver | null>(boot.gameOver)
+  const [endgameDismissed, setEndgameDismissed] = useState(!!boot.imported || !!boot.gameOver)
+  const [playerColor, setPlayerColor] = useState<Color>(
+    boot.playerColor ?? loadPlayerColor(),
+  )
   const [strength, setStrength] = useState<StrengthLevel>(loadStrength)
   const [analysis, setAnalysis] = useState<{
     fen: string
@@ -234,8 +315,10 @@ export default function App() {
   const [reviewBusy, setReviewBusy] = useState(false)
   const [reviewProgress, setReviewProgress] = useState<string | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
-  const [reviewImport, setReviewImport] = useState<ImportedGame | null>(null)
-  const [scrubIndex, setScrubIndex] = useState(0)
+  const [reviewImport, setReviewImport] = useState<ImportedGame | null>(
+    boot.imported,
+  )
+  const [scrubIndex, setScrubIndex] = useState(boot.imported?.history.length ?? 0)
   const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(
     null,
   )
@@ -304,6 +387,7 @@ export default function App() {
   const drillChatGameIdRef = useRef<string | null>(null)
   const reviewAbortRef = useRef<AbortController | null>(null)
   const syncingFromUrlRef = useRef(false)
+  const applyUrlPgnRef = useRef<(pgn: string) => boolean>(() => false)
   const urlReadyRef = useRef(false)
   const urlHistoryIndexRef = useRef(0)
   const gameIdRef = useRef<string | null>(gameId)
@@ -362,6 +446,10 @@ export default function App() {
     () => boardToFen(board, turn, fenHistory),
     [board, turn, fenHistory],
   )
+  const sharePgn = useMemo(() => {
+    if (reviewImport?.pgn) return reviewImport.pgn
+    return historyToPgn(history) || fenToSetupPgn(fen)
+  }, [fen, history, reviewImport])
 
   // Ignore analysis from a previous FEN (avoids one-frame stale lines after a move).
   const lines =
@@ -400,41 +488,41 @@ export default function App() {
           return
         }
         setGameId(id)
-        replaceGameInUrl(fen, id, urlHistoryIndexRef.current)
+        replaceGameInUrl(sharePgn, id, urlHistoryIndexRef.current)
       })
       .catch(() => {
         /* Ask coach will surface errors if mint still fails later */
       })
     return () => controller.abort()
-    // fen only used for initial URL write when id arrives
+    // sharePgn only used for the initial URL write when the id arrives
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId])
 
   useEffect(() => {
     if (!gameId) return
     if (reviewImport) {
-      // Scrubbing shouldn't flood browser history.
-      replaceGameInUrl(fen, gameId, urlHistoryIndexRef.current)
+      // Scrubbing shouldn't flood browser history — the URL keeps the full game PGN.
+      replaceGameInUrl(sharePgn, gameId, urlHistoryIndexRef.current)
       return
     }
     if (!urlReadyRef.current) {
       urlReadyRef.current = true
-      replaceGameInUrl(fen, gameId, 0)
+      replaceGameInUrl(sharePgn, gameId, 0)
       urlHistoryIndexRef.current = 0
       setUrlHistoryIndex(0)
       return
     }
     if (syncingFromUrlRef.current) {
       syncingFromUrlRef.current = false
-      replaceGameInUrl(fen, gameId, urlHistoryIndexRef.current)
+      replaceGameInUrl(sharePgn, gameId, urlHistoryIndexRef.current)
       return
     }
     const nextIdx = urlHistoryIndexRef.current + 1
-    if (pushGameToUrl(fen, gameId, nextIdx)) {
+    if (pushGameToUrl(sharePgn, gameId, nextIdx)) {
       urlHistoryIndexRef.current = nextIdx
       setUrlHistoryIndex(nextIdx)
     }
-  }, [fen, gameId, reviewImport])
+  }, [sharePgn, gameId, reviewImport])
 
   useEffect(() => {
     if (!gameOver) setEndgameDismissed(false)
@@ -465,7 +553,8 @@ export default function App() {
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       const state = event.state as UrlGameState | null
-      const fromUrl = readFenFromUrl() ?? START_FEN
+      const pgnFromUrl = readPgnFromUrl() ?? state?.pgn ?? ''
+      const fenFromUrl = readFenFromUrl() ?? state?.fen ?? ''
       const idFromUrl = readGameIdFromUrl() ?? state?.gameId ?? gameIdRef.current
       syncingFromUrlRef.current = true
       const idx = typeof state?.idx === 'number' ? state.idx : 0
@@ -473,7 +562,8 @@ export default function App() {
       setUrlHistoryIndex(idx)
       if (idFromUrl && idFromUrl !== gameIdRef.current) setGameId(idFromUrl)
       setPanel(readPanelFromUrl() ?? state?.panel ?? null)
-      applyFen(fromUrl)
+      const appliedPgn = pgnFromUrl ? applyUrlPgnRef.current(pgnFromUrl) : false
+      if (!appliedPgn) applyFen(fenFromUrl || START_FEN)
       const lineRef = readLineFromUrl() ?? state?.line ?? null
       const opening = readOpeningFromUrl() ?? state?.opening ?? null
       const panelNow = readPanelFromUrl() ?? state?.panel ?? null
@@ -495,9 +585,9 @@ export default function App() {
     replacePanelInUrl(next)
     // Game panel coach needs gameId in the URL for session resume.
     if (next === 'game' && gameId) {
-      replaceGameInUrl(fen, gameId, urlHistoryIndexRef.current)
+      replaceGameInUrl(sharePgn, gameId, urlHistoryIndexRef.current)
     }
-  }, [drillLine, fen, gameId])
+  }, [drillLine, sharePgn, gameId])
 
   // Delay best-move arrow after analysis is ready (coach tip 3 still shows immediately).
   useEffect(() => {
@@ -964,7 +1054,7 @@ export default function App() {
       if (!id) {
         id = await mintGameId(controller.signal)
         setGameId(id)
-        replaceGameInUrl(fen, id, urlHistoryIndexRef.current)
+        replaceGameInUrl(sharePgn, id, urlHistoryIndexRef.current)
       }
 
       const fullmove = fen.split(/\s+/)[5] ?? '?'
@@ -1057,6 +1147,7 @@ export default function App() {
     coachStatus,
     fen,
     gameId,
+    sharePgn,
     history.length,
     playerColor,
     turn,
@@ -1096,7 +1187,7 @@ export default function App() {
           id = gameId ?? (await mintGameId(controller.signal))
           if (!gameId) {
             setGameId(id)
-            replaceGameInUrl(fen, id, urlHistoryIndexRef.current)
+            replaceGameInUrl(sharePgn, id, urlHistoryIndexRef.current)
           }
         }
 
@@ -1208,6 +1299,7 @@ export default function App() {
       coachReviewMode,
       fen,
       gameId,
+      sharePgn,
       lines,
       playerColor,
       turn,
@@ -1268,6 +1360,7 @@ export default function App() {
           whiteName,
           blackName,
           result: null,
+          pgn: historyToPgn(hist) || fenToSetupPgn(reviewFen),
         }
       }
       setReviewImport(session)
@@ -1352,6 +1445,61 @@ export default function App() {
     [],
   )
 
+  applyUrlPgnRef.current = (raw: string) => {
+    try {
+      const imported = parsePgnToImportedGame(raw, {
+        preferColor: playerColor,
+        chessComUsername: chessComUsername.trim() || null,
+      })
+      if (imported.history.length === 0) {
+        applyFen(imported.finalFen)
+        return true
+      }
+      const named = /\[(?:White|Black)\s+"/i.test(raw)
+      if (named || readPanelFromUrl() === 'analysis') {
+        applyImportedGame(imported)
+        return true
+      }
+      setReviewImport(null)
+      setScrubIndex(0)
+      setAnalysisReport(null)
+      setBoard(imported.finalBoard)
+      useGameState.setState({
+        turn: imported.turn,
+        history: imported.history,
+        movingTo: null,
+      })
+      setGameOver(imported.gameOver)
+      setEndgameDismissed(!!imported.gameOver)
+      setSelected(null)
+      setMoves([])
+      setPendingEngineMove(null)
+      setAnalysis(null)
+      skipEngineOnce.current = true
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const bootReviewStarted = useRef(false)
+  useEffect(() => {
+    if (bootReviewStarted.current) return
+    const imported = boot.imported
+    if (!imported || readPanelFromUrl() !== 'analysis') {
+      bootReviewStarted.current = true
+      return
+    }
+    bootReviewStarted.current = true
+    void reviewGame({
+      playerColor: imported.playerColor,
+      fen: imported.finalFen,
+      whiteName: imported.whiteName,
+      blackName: imported.blackName,
+      session: imported,
+    })
+  }, [boot.imported, reviewGame])
+
   const scrubTo = useCallback(
     (index: number) => {
       if (!reviewImport) return
@@ -1423,7 +1571,7 @@ export default function App() {
       }
       if (id) {
         setGameId(id)
-        replaceGameInUrl(imported.finalFen, id, 0)
+        replaceGameInUrl(imported.pgn, id, 0)
         urlHistoryIndexRef.current = 0
         setUrlHistoryIndex(0)
         urlReadyRef.current = true
@@ -1467,7 +1615,7 @@ export default function App() {
     urlHistoryIndexRef.current = 0
     setUrlHistoryIndex(0)
     setGameId(id)
-    if (id) replaceGameInUrl(START_FEN, id, 0)
+    if (id) replaceGameInUrl('', id, 0)
 
     setBoard(createBoard())
     setSelected(null)

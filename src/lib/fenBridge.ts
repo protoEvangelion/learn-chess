@@ -224,6 +224,20 @@ export function readFenFromUrl(search = window.location.search): string | null {
   return fen.trim()
 }
 
+/** Position-only PGN so a legacy `fen` link can move to the `pgn` param. */
+export function fenToSetupPgn(fen: string | null | undefined): string {
+  const trimmed = fen?.trim() ?? ''
+  if (!trimmed || trimmed === START_FEN) return ''
+  const safe = trimmed.replace(/"/g, '')
+  return `[SetUp "1"]\n[FEN "${safe}"]\n[Result "*"]\n\n*`
+}
+
+export function readPgnFromUrl(search = window.location.search): string | null {
+  const pgn = new URLSearchParams(search).get('pgn')
+  if (!pgn?.trim()) return null
+  return pgn.trim()
+}
+
 export function readGameIdFromUrl(
   search = window.location.search,
 ): string | null {
@@ -269,7 +283,9 @@ export function readLineFromUrl(
 }
 
 export type UrlGameState = {
-  fen: string
+  /** Compact PGN. Legacy history entries may still carry `fen`. */
+  pgn: string
+  fen?: string
   gameId: string
   idx: number
   panel?: PanelId | null
@@ -280,17 +296,18 @@ export type UrlGameState = {
 /**
  * URL param policy by panel:
  *
- * | panel     | gameId                                      | opening/line |
- * |-----------|---------------------------------------------|--------------|
- * | drill     | never (shareable practice)                  | yes when set |
- * | game      | coach session id                            | never        |
- * | analysis  | session id                                  | never        |
- * | settings  | leave alone — panel switch must not inject  | never        |
- * | (none)    | session id for free-play resume             | never        |
+ * | panel     | gameId                                      | opening/line | position |
+ * |-----------|---------------------------------------------|--------------|----------|
+ * | drill     | never (shareable practice)                  | yes when set | `pgn`    |
+ * | game      | coach session id                            | never        | `pgn`    |
+ * | analysis  | session id                                  | never        | `pgn`    |
+ * | settings  | leave alone — panel switch must not inject  | never        | `pgn`    |
+ * | (none)    | session id for free-play resume             | never        | `pgn`    |
  *
- * Panel switches only change `panel` (+ clear drill keys when leaving drill).
- * They read gameId from the current URL only — never from React memory —
- * so drill → settings cannot suddenly grow a gameId.
+ * The board is stored as PGN (`pgn`). `fen` is read for old links only and
+ * is never written back. Panel switches only change `panel` (+ clear drill
+ * keys when leaving drill). They read gameId from the current URL only —
+ * never from React memory — so drill → settings cannot suddenly grow a gameId.
  */
 export function resolveGameIdForUrl(
   panel: PanelId | null,
@@ -310,15 +327,16 @@ function normalizeDrillKeys(
 }
 
 function toLocation(
-  fen: string,
+  pgn: string,
   gameId: string,
   panel: PanelId | null,
   opening: OpeningId | null,
   line: string | null,
 ): string {
   const url = new URL(window.location.href)
-  if (fen === START_FEN) url.searchParams.delete('fen')
-  else url.searchParams.set('fen', fen)
+  url.searchParams.delete('fen')
+  if (pgn.trim()) url.searchParams.set('pgn', pgn)
+  else url.searchParams.delete('pgn')
 
   if (gameId) url.searchParams.set('gameId', gameId)
   else url.searchParams.delete('gameId')
@@ -349,10 +367,10 @@ function writeUrlState(state: UrlGameState, mode: 'replace' | 'push'): boolean {
     state.line ?? null,
   )
   const gameId = resolveGameIdForUrl(panel, state.gameId)
-  const next = toLocation(state.fen, gameId, panel, drill.opening, drill.line)
+  const next = toLocation(state.pgn, gameId, panel, drill.opening, drill.line)
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
   const payload: UrlGameState = {
-    fen: state.fen,
+    pgn: state.pgn,
     gameId,
     idx: state.idx,
     panel,
@@ -368,12 +386,16 @@ function writeUrlState(state: UrlGameState, mode: 'replace' | 'push'): boolean {
   return true
 }
 
+function pgnAlreadyInUrl(): string {
+  return readPgnFromUrl() ?? fenToSetupPgn(readFenFromUrl())
+}
+
 /** Sync board position (+ coach gameId when the active panel allows it). */
-export function replaceGameInUrl(fen: string, gameId: string, idx = 0) {
+export function replaceGameInUrl(pgn: string, gameId: string, idx = 0) {
   const panel = readPanelFromUrl()
   writeUrlState(
     {
-      fen,
+      pgn,
       gameId,
       idx,
       panel,
@@ -386,14 +408,14 @@ export function replaceGameInUrl(fen: string, gameId: string, idx = 0) {
 
 /** Push a new history entry for this position. Returns false if URL unchanged. */
 export function pushGameToUrl(
-  fen: string,
+  pgn: string,
   gameId: string,
   idx: number,
 ): boolean {
   const panel = readPanelFromUrl()
   return writeUrlState(
     {
-      fen,
+      pgn,
       gameId,
       idx,
       panel,
@@ -406,13 +428,13 @@ export function pushGameToUrl(
 
 /**
  * Open/close a panel without adding a history entry.
- * Preserves fen + whatever gameId is already in the URL (stripped only for drill).
+ * Preserves pgn + whatever gameId is already in the URL (stripped only for drill).
  * Does not inject an in-memory gameId — that was causing settings to suddenly grow a gameId after practice.
  */
 export function replacePanelInUrl(panel: PanelId | null) {
   writeUrlState(
     {
-      fen: readFenFromUrl() ?? START_FEN,
+      pgn: pgnAlreadyInUrl(),
       gameId: readGameIdFromUrl() ?? '',
       idx: historyIdx(),
       panel,
@@ -430,7 +452,7 @@ export function replaceDrillInUrl(
 ) {
   writeUrlState(
     {
-      fen: readFenFromUrl() ?? START_FEN,
+      pgn: pgnAlreadyInUrl(),
       gameId: '',
       idx: historyIdx(),
       panel: 'drill',

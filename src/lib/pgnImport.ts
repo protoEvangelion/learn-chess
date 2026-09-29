@@ -2,9 +2,11 @@ import { Chess, type Move as ChessMove } from 'chess.js'
 import { copyBoard, createBoard, type Board } from '@logic/board'
 import type { Color, MoveTypes, Piece } from '@logic/pieces'
 import { getTile } from '@logic/pieces'
+import { isPawn } from '@logic/pieces/pawn'
 import type { GameOver } from '@/components/Board'
 import {
   fenToGame,
+  positionToSquare,
   squareToPosition,
   boardToFen,
   START_FEN,
@@ -22,6 +24,8 @@ export type ImportedGame = {
   whiteName: string | null
   blackName: string | null
   result: string | null
+  /** Compact PGN (no clock comments) for the URL. */
+  pgn: string
 }
 
 export type ParsePgnOptions = {
@@ -78,6 +82,108 @@ function resolvePlayerColor(
   return opts?.preferColor ?? 'white'
 }
 
+const RESULT_TOKEN = /^(1-0|0-1|1\/2-1\/2|\*)$/
+
+function pgnTokens(pgn: string): string[] {
+  const noComments = pgn.replace(/\{[^}]*\}/g, ' ').replace(/;[^\n]*/g, ' ')
+  const noHeaders = noComments.replace(/\[[^\]]*\]/g, ' ')
+  return noHeaders
+    .split(/\s+/)
+    .filter((token) => token && !/^\d+\.+$/.test(token) && !RESULT_TOKEN.test(token))
+}
+
+/**
+ * Load a PGN. If a move is illegal or out of order, keep the moves that
+ * already fit instead of throwing — chess.js `move()` throws `Invalid move`.
+ */
+function loadPgnResilient(pgn: string): Chess {
+  const chess = new Chess()
+  try {
+    chess.loadPgn(pgn, { strict: false })
+    return chess
+  } catch {
+    // Replay SAN until the first move that does not fit.
+  }
+
+  const fallback = new Chess()
+  const fenHeader = pgn.match(/\[FEN\s+"([^"]+)"\]/i)?.[1]
+  if (fenHeader) {
+    try {
+      fallback.load(fenHeader)
+    } catch {
+      fallback.reset()
+    }
+  }
+  for (const san of pgnTokens(pgn)) {
+    try {
+      fallback.move(san)
+    } catch {
+      break
+    }
+  }
+  const white = pgn.match(/\[White\s+"([^"]*)"\]/i)?.[1]
+  const black = pgn.match(/\[Black\s+"([^"]*)"\]/i)?.[1]
+  const result = pgn.match(/\[Result\s+"([^"]*)"\]/i)?.[1]
+  if (white) fallback.setHeader('White', white)
+  if (black) fallback.setHeader('Black', black)
+  if (result) fallback.setHeader('Result', result)
+  if (fenHeader) {
+    fallback.setHeader('SetUp', '1')
+    fallback.setHeader('FEN', fenHeader)
+  }
+  if (fallback.history().length === 0 && !fenHeader) {
+    throw new Error('Invalid PGN')
+  }
+  return fallback
+}
+
+/** PGN without clock comments, suitable for a query param. */
+export function historyToPgn(history: HistoryItem[]): string {
+  if (history.length === 0) return ''
+  const chess = new Chess()
+  for (const item of history) {
+    const from = positionToSquare(item.from)
+    const to = positionToSquare(item.to)
+    const promotion =
+      isPawn(item.piece) && (item.to.y === 0 || item.to.y === 7) ? 'q' : undefined
+    try {
+      const played = chess.move({ from, to, promotion })
+      if (!played) break
+    } catch {
+      break
+    }
+  }
+  if (chess.history().length === 0) return ''
+  return stripPlaceholderHeaders(chess.pgn({ maxWidth: 0 }))
+}
+
+function stripPlaceholderHeaders(pgn: string): string {
+  return pgn
+    .replace(/\[(?:Event|Site|Round) "\?"\]\r?\n/g, '')
+    .replace(/\[Date "\?{4}(?:\.\?{2}){2}"\]\r?\n/g, '')
+    .replace(/^\n+/, '')
+}
+
+function pgnWithNames(
+  history: HistoryItem[],
+  whiteName: string | null,
+  blackName: string | null,
+  result: string | null,
+): string {
+  const body = historyToPgn(history)
+  if (!body) return ''
+  const chess = new Chess()
+  try {
+    chess.loadPgn(body, { strict: false })
+  } catch {
+    return body
+  }
+  if (whiteName) chess.setHeader('White', whiteName)
+  if (blackName) chess.setHeader('Black', blackName)
+  if (result) chess.setHeader('Result', result)
+  return stripPlaceholderHeaders(chess.pgn({ maxWidth: 0 }))
+}
+
 function gameOverFromChess(
   chess: Chess,
   resultHeader: string | null,
@@ -109,9 +215,9 @@ export function parsePgnToImportedGame(
   const trimmed = pgn.trim()
   if (!trimmed) throw new Error('Empty PGN')
 
-  const chess = new Chess()
+  let chess: Chess
   try {
-    chess.loadPgn(trimmed, { strict: false })
+    chess = loadPgnResilient(trimmed)
   } catch (err) {
     throw new Error(
       err instanceof Error ? `Invalid PGN: ${err.message}` : 'Invalid PGN',
@@ -140,17 +246,13 @@ export function parsePgnToImportedGame(
   for (const move of verbose) {
     const beforeFen = chess.fen()
     const before = fenToGame(beforeFen)
-    if (!before) {
-      throw new Error(`Could not parse position before ${move.san}`)
-    }
+    if (!before) break
 
     const from = squareToPosition(move.from)
     const to = squareToPosition(move.to)
     const pieceTile = getTile(before.board, from)
     const piece = pieceTile?.piece
-    if (!piece) {
-      throw new Error(`No piece on ${move.from} for ${move.san}`)
-    }
+    if (!piece) break
 
     let capture: Piece | null = null
     if (move.captured) {
@@ -162,6 +264,18 @@ export function parsePgnToImportedGame(
       }
     }
 
+    let played: ChessMove | null = null
+    try {
+      played = chess.move({
+        from: move.from,
+        to: move.to,
+        promotion: move.promotion,
+      })
+    } catch {
+      played = null
+    }
+    if (!played) break
+
     history.push({
       board: copyBoard(before.board),
       from,
@@ -171,15 +285,6 @@ export function parsePgnToImportedGame(
       steps: { x: to.x - from.x, y: to.y - from.y },
       piece: { ...piece },
     })
-
-    const played = chess.move({
-      from: move.from,
-      to: move.to,
-      promotion: move.promotion,
-    })
-    if (!played) {
-      throw new Error(`Illegal move in PGN: ${move.san}`)
-    }
   }
 
   const finalFen = chess.fen()
@@ -200,6 +305,7 @@ export function parsePgnToImportedGame(
     whiteName,
     blackName,
     result,
+    pgn: pgnWithNames(history, whiteName, blackName, result) || trimmed,
   }
 }
 

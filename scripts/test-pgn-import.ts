@@ -3,6 +3,7 @@
  * Run: npx tsx --tsconfig tsconfig.app.json scripts/test-pgn-import.ts
  */
 import { parsePgnToImportedGame, positionAtPly } from '../src/lib/pgnImport'
+import { arrowsForReplies } from '../src/lib/replyArrows'
 
 let failed = 0
 function assert(cond: boolean, msg: string) {
@@ -45,6 +46,28 @@ const scholars = `[Event "Scholar"]
   } catch {
     assert(true, 'junk pgn throws')
   }
+}
+
+{
+  const g = parsePgnToImportedGame('1. e4 e5 2. Na4')
+  assert(g.history.length === 2, `stops before illegal Na4 (${g.history.length})`)
+  assert(g.pgn.includes('e4'), 'partial pgn kept')
+  assert(!g.pgn.includes('Na4'), 'illegal Na4 left out of pgn')
+}
+
+{
+  const arrows = arrowsForReplies(
+    ['e4', 'e5', 'Nf3', 'Nc6'],
+    [
+      { san: 'Na4', count: 4 },
+      { san: 'Bc4', count: 2 },
+    ],
+  )
+  assert(arrows.length === 1 && arrows[0].to === 'c4', 'illegal Na4 reply skipped')
+  assert(
+    arrowsForReplies(['Na4'], [{ san: 'e5', count: 1 }]).length === 0,
+    'illegal prefix does not throw',
+  )
 }
 
 if (failed) {
