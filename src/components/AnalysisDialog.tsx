@@ -82,39 +82,33 @@ function ReviewCoachResizeHandle({
   const startY = useRef(0)
   const startFraction = useRef(fraction)
 
-  useEffect(() => {
-    const onMove = (event: PointerEvent) => {
-      if (!dragging.current) return
-      const height = containerRef.current?.getBoundingClientRect().height ?? 0
-      if (height <= 0) return
-      const delta = startY.current - event.clientY
-      onFractionChange(
-        clampReviewCoachFraction(startFraction.current + delta / height),
-      )
-    }
-    const onUp = () => {
-      if (!dragging.current) return
-      dragging.current = false
-      document.body.classList.remove('is-review-coach-resizing')
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      document.body.classList.remove('is-review-coach-resizing')
-    }
-  }, [containerRef, onFractionChange])
-
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
     dragging.current = true
     startY.current = event.clientY
     startFraction.current = fraction
     document.body.classList.add('is-review-coach-resizing')
+    event.currentTarget.focus()
     event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging.current) return
+    event.preventDefault()
+    const height = containerRef.current?.getBoundingClientRect().height ?? 0
+    if (height <= 0) return
+    const delta = startY.current - event.clientY
+    onFractionChange(
+      clampReviewCoachFraction(startFraction.current + delta / height),
+    )
+  }
+
+  const stopDragging = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging.current) return
+    dragging.current = false
+    document.body.classList.remove('is-review-coach-resizing')
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -135,6 +129,10 @@ function ReviewCoachResizeHandle({
       aria-valuemax={Math.round(MAX_REVIEW_COACH_FRACTION * 100)}
       aria-valuenow={Math.round(fraction * 100)}
       onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={stopDragging}
+      onPointerCancel={stopDragging}
+      onLostPointerCapture={stopDragging}
       onKeyDown={onKeyDown}
     />
   )
