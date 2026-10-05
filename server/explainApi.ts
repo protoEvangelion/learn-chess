@@ -5,6 +5,13 @@ import {
   EXPLAIN_MODEL,
   streamCoachAsk,
 } from './aiCoach.js'
+import {
+  fetchExplorerWithToken,
+  readExplorerQuery,
+} from './lichessExplorerProxy.js'
+import { loadServerEnv } from './loadServerEnv.js'
+
+loadServerEnv()
 
 export { EXPLAIN_MODEL } from './aiCoach.js'
 
@@ -736,6 +743,44 @@ export async function handleExplainApi(
             sendJson(res, 400, {
               error: err instanceof Error ? err.message : 'opening replies failed',
             })
+          }
+          return
+        }
+
+        if (url === '/api/opening-explorer') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'GET') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          const parsed = readExplorerQuery(req.url)
+          if ('error' in parsed) {
+            sendJson(res, 400, { error: parsed.error })
+            return
+          }
+          const controller = new AbortController()
+          const onClose = () => controller.abort()
+          req.on('close', onClose)
+          try {
+            const { position } = await fetchExplorerWithToken(
+              parsed.fen,
+              parsed.rating,
+              controller.signal,
+            )
+            sendJson(res, 200, position)
+          } catch (err) {
+            if (controller.signal.aborted) return
+            const message =
+              err instanceof Error ? err.message : 'opening explorer failed'
+            const status = message.includes('LICHESS_API_TOKEN') ? 503 : 502
+            sendJson(res, status, { error: message })
+          } finally {
+            req.off('close', onClose)
           }
           return
         }

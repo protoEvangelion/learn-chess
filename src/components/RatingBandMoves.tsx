@@ -12,7 +12,7 @@ import {
   explorerGames,
   fetchLichessExplorer,
   isRatingBandId,
-  lichessExplorerUrl,
+  openingExplorerApiUrl,
   type ExplorerPosition,
   type RatingBandId,
 } from '@/lib/lichessExplorer'
@@ -42,7 +42,7 @@ export const RatingBandMoves: FC<Props> = ({ fen }) => {
   const [rating, setRating] = useState<RatingBandId>(DEFAULT_RATING_BAND)
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const requestKey = `${rating}\n${fen}`
-  const requestUrl = lichessExplorerUrl(fen, rating)
+  const requestUrl = openingExplorerApiUrl(fen, rating)
   const current =
     snapshot && snapshot.key === requestKey ? snapshot : null
   const status = current?.status ?? 'loading'

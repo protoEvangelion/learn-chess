@@ -2,8 +2,9 @@
  * Lichess Opening Explorer — rated games by rating band.
  * Spec: https://github.com/lichess-org/api/blob/master/doc/specs/tags/openingexplorer/lichess.yaml
  *
- * The explorer responds with Access-Control-Allow-Origin: * and does not
- * require an API key. Call it from the browser.
+ * Since March 2026 the explorer rejects anonymous requests (nginx 401).
+ * The browser calls the same-origin proxy `/api/opening-explorer`, which
+ * adds `Authorization: Bearer ${LICHESS_API_TOKEN}` on the server.
  */
 
 export const LICHESS_EXPLORER_ENDPOINT = 'https://explorer.lichess.org/lichess'
@@ -51,9 +52,9 @@ export type ExplorerPosition = {
 }
 
 /** Query string matching the official example (slashes left intact, spaces as %20). */
-export function lichessExplorerUrl(fen: string, rating: RatingBandId): string {
+export function lichessExplorerQuery(fen: string, rating: RatingBandId): string {
   const fenParam = encodeURIComponent(fen).replace(/%2F/g, '/')
-  const query = [
+  return [
     `fen=${fenParam}`,
     'variant=standard',
     `speeds=${EXPLORER_SPEEDS}`,
@@ -62,7 +63,15 @@ export function lichessExplorerUrl(fen: string, rating: RatingBandId): string {
     'topGames=0',
     'recentGames=0',
   ].join('&')
-  return `${LICHESS_EXPLORER_ENDPOINT}?${query}`
+}
+
+export function lichessExplorerUrl(fen: string, rating: RatingBandId): string {
+  return `${LICHESS_EXPLORER_ENDPOINT}?${lichessExplorerQuery(fen, rating)}`
+}
+
+/** Same-origin request the analysis panel actually sends. */
+export function openingExplorerApiUrl(fen: string, rating: RatingBandId): string {
+  return `/api/opening-explorer?${lichessExplorerQuery(fen, rating)}`
 }
 
 function readCount(value: unknown): number {
@@ -120,7 +129,7 @@ export async function fetchLichessExplorer(
   rating: RatingBandId,
   signal: AbortSignal,
 ): Promise<ExplorerPosition> {
-  const url = lichessExplorerUrl(fen, rating)
+  const url = openingExplorerApiUrl(fen, rating)
   let res: Response
   try {
     res = await fetch(url, {
@@ -131,14 +140,21 @@ export async function fetchLichessExplorer(
     if (err instanceof DOMException && err.name === 'AbortError') throw err
     throw new Error("Couldn't reach the Lichess explorer.")
   }
-  if (!res.ok) {
-    throw new Error(`Lichess explorer returned ${res.status}.`)
-  }
-  let payload: unknown
+  let payload: unknown = null
   try {
     payload = await res.json()
   } catch {
-    throw new Error('Lichess explorer returned an unreadable response.')
+    payload = null
+  }
+  if (!res.ok) {
+    const message =
+      payload &&
+      typeof payload === 'object' &&
+      'error' in payload &&
+      typeof (payload as { error?: unknown }).error === 'string'
+        ? (payload as { error: string }).error
+        : `Lichess explorer returned ${res.status}.`
+    throw new Error(message)
   }
   return parseExplorerPosition(payload)
 }
