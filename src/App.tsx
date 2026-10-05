@@ -1860,6 +1860,7 @@ export default function App() {
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
         onFrequencyArrows={setFrequencyArrows}
+        fen={fen}
       />
 
       <DrillDialog

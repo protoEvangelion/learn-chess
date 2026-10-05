@@ -1519,6 +1519,141 @@ body.is-review-coach-resizing canvas {
   color: var(--sw-muted);
 }
 
+.rating-band {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--sw-border);
+}
+
+.rating-band-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem 0.75rem;
+}
+
+.rating-band-title {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-muted);
+  font-weight: 650;
+}
+
+.rating-band-note {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--sw-muted);
+}
+
+.rating-band-note.is-error {
+  color: #f87171;
+}
+
+.rating-band-total {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--sw-text);
+}
+
+.rating-band-select {
+  min-width: 8.5rem;
+  border-color: var(--sw-border) !important;
+  background: var(--sw-bg0) !important;
+  color: var(--sw-text) !important;
+  cursor: pointer;
+}
+
+.rating-band-select:hover,
+.rating-band-select[data-state='open'] {
+  background: color-mix(in srgb, var(--sw-teal) 12%, var(--sw-bg0)) !important;
+  border-color: color-mix(in srgb, var(--sw-teal) 45%, var(--sw-border)) !important;
+}
+
+.rating-band-select-content {
+  z-index: 80;
+  border: 1px solid var(--sw-border);
+  background: var(--sw-panel) !important;
+  color: var(--sw-text) !important;
+}
+
+.rating-band-select-content [data-slot='select-item'] {
+  cursor: pointer;
+}
+
+.rating-band-select-content [data-slot='select-item'][data-highlighted] {
+  background: color-mix(in srgb, var(--sw-teal) 18%, transparent);
+  color: var(--sw-text);
+}
+
+.rating-band-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.rating-band-move {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.15rem 0.2rem;
+}
+
+.rating-band-move-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.rating-band-san {
+  font-weight: 650;
+}
+
+.rating-band-games,
+.rating-band-results {
+  font-size: 0.78rem;
+  color: var(--sw-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rating-band-results {
+  margin: 0;
+}
+
+.rating-band-bar {
+  display: flex;
+  height: 0.35rem;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.rating-band-bar > span {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.rating-band-bar-white {
+  background: #f4f4f5;
+}
+
+.rating-band-bar-draw {
+  background: #a1a1aa;
+}
+
+.rating-band-bar-black {
+  background: #27272a;
+}
+
 .analysis-move-list {
   list-style: none;
   margin: 0;

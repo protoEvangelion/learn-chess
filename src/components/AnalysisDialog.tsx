@@ -22,6 +22,7 @@ import {
   type ReviewPly,
 } from '@/lib/gameReview'
 import { arrowsForReplies, type FrequencyArrow } from '@/lib/replyArrows'
+import { RatingBandMoves } from '@/components/RatingBandMoves'
 
 type TabId = 'import' | 'report' | 'analysis'
 
@@ -55,6 +56,8 @@ type Props = {
   onPanelWidthChange: (width: number) => void
   onPanelResizeEnd?: (width: number) => void
   onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
+  /** Current board position. Explorer stats follow this, not the URL. */
+  fen: string
 }
 
 const DEFAULT_REVIEW_COACH_FRACTION = 0.42
@@ -290,6 +293,7 @@ export const AnalysisDialog: FC<Props> = ({
   onPanelWidthChange,
   onPanelResizeEnd,
   onFrequencyArrows,
+  fen,
 }) => {
   const [tab, setTab] = useState<TabId>(() => (report ? 'report' : 'import'))
   const [playing, setPlaying] = useState(false)
@@ -593,7 +597,7 @@ export const AnalysisDialog: FC<Props> = ({
             <p className="analysis-status is-error">{analyzeError}</p>
           )}
 
-          {!analyzing && !report && !analyzeError && tab !== 'import' && (
+          {!analyzing && !report && !analyzeError && tab === 'report' && (
             <p className="analysis-status">
               Import a game or finish a match, then run review to see the report.
             </p>
@@ -683,8 +687,10 @@ export const AnalysisDialog: FC<Props> = ({
             </div>
           )}
 
-          {report && tab === 'analysis' && (
+          {tab === 'analysis' && (
             <div className="analysis-moves">
+              {open ? <RatingBandMoves fen={fen} /> : null}
+              {report ? (
               <section className="analysis-replies" aria-label="Common replies">
                 <p className="analysis-replies-label">Common next moves</p>
                 {!chessComUsername.trim() && (
@@ -736,6 +742,14 @@ export const AnalysisDialog: FC<Props> = ({
                   </ul>
                 )}
               </section>
+              ) : null}
+              {!report && !analyzing && !analyzeError ? (
+                <p className="analysis-replies-note">
+                  Import a game to score each move. Rating-band stats follow the
+                  current position.
+                </p>
+              ) : null}
+              {report ? (
               <ul className="analysis-move-list">
                 {moveRows.map((row) => (
                   <li key={row.moveNo} className="analysis-move-row">
@@ -777,6 +791,7 @@ export const AnalysisDialog: FC<Props> = ({
                   </li>
                 ))}
               </ul>
+              ) : null}
             </div>
           )}
         </div>
