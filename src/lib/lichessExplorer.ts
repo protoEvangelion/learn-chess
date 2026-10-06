@@ -71,6 +71,8 @@ export type OpeningBranchLine = {
   eco: string
   /** SAN of the move from the parent position into this line. */
   san?: string
+  /** UCI path from the start position that reaches this named line. */
+  play?: string
   white: number
   draws: number
   black: number
@@ -230,6 +232,7 @@ export function parseOpeningBranch(payload: unknown): OpeningBranch {
       name: line.name.trim(),
       eco: typeof line.eco === 'string' ? line.eco : '',
       san: typeof line.san === 'string' ? line.san.trim() : '',
+      play: typeof line.play === 'string' ? line.play.trim() : '',
       white: readCount(line.white),
       draws: readCount(line.draws),
       black: readCount(line.black),

@@ -226,18 +226,22 @@ function lineFromMove(
   move: {
     opening: ExplorerOpening | null
     san: string
+    uci: string
     white: number
     draws: number
     black: number
     averageRating: number
   },
   mover: BranchMover,
+  play: string,
 ): OpeningBranchLine | null {
-  if (!move.opening) return null
+  if (!move.opening || !move.uci) return null
+  const reached = play ? `${play},${move.uci}` : move.uci
   return {
     name: move.opening.name,
     eco: move.opening.eco,
     san: move.san,
+    play: reached,
     white: move.white,
     draws: move.draws,
     black: move.black,
@@ -273,16 +277,21 @@ async function attachMissingSans(
   play: string,
   lines: OpeningBranchLine[],
 ): Promise<OpeningBranchLine[]> {
-  if (lines.every((line) => line.san)) return lines
+  if (lines.every((line) => line.san && line.play)) return lines
   try {
     const book = await loadOpeningBook()
     const branchKey = branchKeyFrom(fen, play)
     return lines.map((line) => {
-      if (line.san) return line
+      if (line.san && line.play) return line
       const child = book.lines.find((entry) => entry.name === line.name)
       const rest = child ? movesAfter(child, branchKey) : null
       const san = rest?.[0] ? sanAfter(fen, play, rest[0]) : ''
-      return san ? { ...line, san } : line
+      const reached =
+        line.play || !rest || rest.length === 0
+          ? line.play
+          : `${play},${rest.join(',')}`
+      if (!san && !reached) return line
+      return { ...line, san: line.san || san, play: reached || line.play }
     })
   } catch {
     return lines
@@ -372,7 +381,7 @@ export async function loadOpeningBranch(
     const replySide = lastMover(fen, play) === 'white' ? 'black' : 'white'
     const collected: OpeningBranchLine[] = []
     for (const move of position.moves) {
-      const line = lineFromMove(move, replySide)
+      const line = lineFromMove(move, replySide, play)
       if (!line) continue
       if (alreadyListed(collected, line.name)) continue
       collected.push(line)
@@ -429,6 +438,7 @@ export async function loadOpeningBranch(
               name,
               eco: reached.opening?.eco || child.eco,
               san,
+              play: fullPlay,
               white: reached.white,
               draws: reached.draws,
               black: reached.black,
@@ -442,6 +452,7 @@ export async function loadOpeningBranch(
               name: child.name,
               eco: child.eco,
               san,
+              play: fullPlay,
               white: 0,
               draws: 0,
               black: 0,

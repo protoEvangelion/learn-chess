@@ -158,10 +158,167 @@ function AverageRating({ value }: { value: number }) {
 }
 
 function childLineText(line: OpeningBranchLine, parentName: string) {
+  if (!line.name || line.name === parentName) return line.san ?? ''
   const variation = lineLabel(line.name, parentName)
   const titled = line.san ? `${line.san} - ${variation}` : variation
   if (parentName) return titled
   return `${line.eco ? `${line.eco} ` : ''}${titled}`.trim()
+}
+
+function moverForPlay(play: string): 'white' | 'black' {
+  return play.split(',').filter(Boolean).length % 2 === 1 ? 'white' : 'black'
+}
+
+function NamedLine({
+  line,
+  parentName,
+  ratingKey,
+  onPlaySan,
+}: {
+  line: OpeningBranchLine
+  parentName: string
+  ratingKey: string
+  onPlaySan?: (san: string) => void
+}) {
+  const [status, setStatus] = useState<BranchStatus>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const [lines, setLines] = useState<OpeningBranchLine[]>([])
+  const abortRef = useRef<AbortController | null>(null)
+  const startedRef = useRef(false)
+  const play = line.play ?? ''
+  const rate = whiteWinRate(line)
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  function loadLines() {
+    if (startedRef.current) return
+    startedRef.current = true
+    if (!play) {
+      setStatus('ready')
+      setLines([])
+      return
+    }
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setStatus('loading')
+    setError(null)
+    const bands = bandsFromKey(ratingKey)
+    void fetchOpeningBranch(START_FEN, bands, play, controller.signal)
+      .then(async (branch) => {
+        if (controller.signal.aborted) return
+        const nextParent = branch.opening?.name || line.name || parentName
+        let next = sortBranchLines(
+          branch.lines.filter(
+            (child) =>
+              child.play !== play && isOpeningVariation(nextParent, child.name),
+          ),
+        )
+        if (next.length === 0) {
+          const position = await fetchLichessExplorer(START_FEN, bands, controller.signal, {
+            play,
+            moves: EXPLORER_MOVE_CAP,
+          })
+          if (controller.signal.aborted) return
+          next = sortBranchLines(
+            position.moves.map((move) => {
+              const reached = play ? `${play},${move.uci}` : move.uci
+              const openingName = move.opening?.name ?? ''
+              const named = Boolean(openingName) && openingName !== nextParent
+              return {
+                name: named ? openingName : '',
+                eco: named ? (move.opening?.eco ?? '') : '',
+                san: move.san,
+                play: reached,
+                white: move.white,
+                draws: move.draws,
+                black: move.black,
+                averageRating: move.averageRating,
+                mover: moverForPlay(reached),
+              }
+            }),
+          )
+        }
+        setLines(next)
+        setStatus('ready')
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        startedRef.current = false
+        setStatus('error')
+        setError(err instanceof Error ? err.message : 'Opening tree failed.')
+      })
+  }
+
+  function onToggle(event: SyntheticEvent<HTMLDetailsElement>) {
+    if (event.currentTarget.open) loadLines()
+  }
+
+  return (
+    <li className="explore-line">
+      <details
+        className="explore-disclosure"
+        data-line={line.name || line.san || undefined}
+        data-play={line.san || undefined}
+        data-mover={line.mover}
+        data-win-rate={rate < 0 ? '' : rate.toFixed(4)}
+        onToggle={onToggle}
+      >
+        <summary
+          className="explore-summary"
+          onClick={() => {
+            if (line.san) onPlaySan?.(line.san)
+          }}
+        >
+          <div className="rating-band-move-row">
+            <span className="explore-line-name">
+              <span className="explore-chevron" aria-hidden="true" />
+              {childLineText(line, parentName)}
+            </span>
+            <span className="explore-pct">
+              {advantageLabel(line.white, line.white, line.draws, line.black)}
+            </span>
+          </div>
+          <ResultBar white={line.white} draws={line.draws} black={line.black} />
+        </summary>
+        <div className="explore-branch">
+          {status === 'loading' ? (
+            <p className="rating-band-note" role="status">
+              Loading lines…
+            </p>
+          ) : null}
+          {status === 'error' ? (
+            <p className="rating-band-note is-error" role="alert">
+              {error ?? 'Opening tree failed.'}
+            </p>
+          ) : null}
+          {status === 'ready' && lines.length === 0 ? (
+            <p className="rating-band-note">
+              Lichess did not name a line under{' '}
+              {lineLabel(line.name, parentName) || line.san}.
+            </p>
+          ) : null}
+          {lines.length > 0 ? (
+            <ul
+              className="explore-lines"
+              aria-label={`Named lines under ${line.name || line.san || 'this line'}`}
+            >
+              {lines.map((child) => (
+                <NamedLine
+                  key={child.play || child.name}
+                  line={child}
+                  parentName={line.name || parentName}
+                  ratingKey={ratingKey}
+                  onPlaySan={onPlaySan}
+                />
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </details>
+    </li>
+  )
 }
 
 function OpeningDisclosure({
@@ -270,35 +427,15 @@ function OpeningDisclosure({
         ) : null}
         {lines.length > 0 ? (
           <ul className="explore-lines" aria-label={`Named lines under ${group.san}`}>
-            {lines.map((line) => {
-              const rate = whiteWinRate(line)
-              return (
-                <li
-                  key={line.name}
-                  className="explore-line"
-                  data-line={line.name}
-                  data-play={line.san || undefined}
-                  data-mover={line.mover}
-                  data-win-rate={rate < 0 ? '' : rate.toFixed(4)}
-                  onClick={() => {
-                    if (line.san) onPlaySan?.(line.san)
-                  }}
-                >
-                  <div className="rating-band-move-row">
-                    <span className="explore-line-name">
-                      {line.san ? (
-                        <span className="explore-chevron" aria-hidden="true" />
-                      ) : null}
-                      {childLineText(line, parentName)}
-                    </span>
-                    <span className="explore-pct">
-                      {advantageLabel(line.white, line.white, line.draws, line.black)}
-                    </span>
-                  </div>
-                  <ResultBar white={line.white} draws={line.draws} black={line.black} />
-                </li>
-              )
-            })}
+            {lines.map((line) => (
+              <NamedLine
+                key={line.name}
+                line={line}
+                parentName={parentName}
+                ratingKey={ratingKey}
+                onPlaySan={onPlaySan}
+              />
+            ))}
           </ul>
         ) : null}
       </div>
