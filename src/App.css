@@ -1618,23 +1618,32 @@ body.is-review-coach-resizing canvas {
   font-weight: 650;
 }
 
-.rating-band-games,
-.rating-band-results {
+.rating-band-games {
   font-size: 0.78rem;
   color: var(--sw-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.rating-band-results {
-  margin: 0;
+.rating-band-avg {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.18em;
 }
 
 .rating-band-bar {
   display: flex;
-  height: 0.35rem;
+  height: 0.45rem;
   border-radius: 99px;
   overflow: hidden;
+  cursor: help;
   background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+.rating-band-bar:focus-visible,
+.rating-band-avg:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--sw-teal) 70%, white);
+  outline-offset: 2px;
 }
 
 .rating-band-bar > span {
@@ -1651,7 +1660,8 @@ body.is-review-coach-resizing canvas {
 }
 
 .rating-band-bar-black {
-  background: #27272a;
+  background: #4c465c;
+  box-shadow: inset 0 0 0 1px #ddd6ee;
 }
 
 .analysis-move-list {

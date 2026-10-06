@@ -7,6 +7,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   DEFAULT_RATING_BAND,
   RATING_BANDS,
   explorerGames,
@@ -34,8 +40,11 @@ function formatCount(value: number) {
   return value.toLocaleString('en-US')
 }
 
-function resultLabel(white: number, draws: number, black: number) {
-  return `White ${formatCount(white)} · Draw ${formatCount(draws)} · Black ${formatCount(black)}`
+function percentLabel(white: number, draws: number, black: number) {
+  const total = white + draws + black
+  const pct = (value: number) =>
+    total > 0 ? `${((value / total) * 100).toFixed(1)}%` : '0%'
+  return `White ${pct(white)} · Draw ${pct(draws)} · Black ${pct(black)}`
 }
 
 export const RatingBandMoves: FC<Props> = ({ fen }) => {
@@ -162,45 +171,68 @@ export const RatingBandMoves: FC<Props> = ({ fen }) => {
           <p className="rating-band-total">
             {formatCount(totalGames)} games in this band
           </p>
-          <ul className="rating-band-list">
-            {result.moves.map((move) => {
-              const games = explorerGames(move)
-              const results = resultLabel(move.white, move.draws, move.black)
-              return (
-                <li key={`${move.uci}:${move.san}`} className="rating-band-move">
-                  <div className="rating-band-move-row">
-                    <span className="rating-band-san">{move.san}</span>
-                    <span className="rating-band-games">
-                      {formatCount(games)} game{games === 1 ? '' : 's'}
-                      {move.averageRating > 0
-                        ? ` · avg ${formatCount(move.averageRating)}`
-                        : ''}
-                    </span>
-                  </div>
-                  <p className="rating-band-results">{results}</p>
-                  {games > 0 ? (
-                    <div
-                      className="rating-band-bar"
-                      aria-hidden="true"
-                    >
-                      <span
-                        className="rating-band-bar-white"
-                        style={{ flexGrow: move.white }}
-                      />
-                      <span
-                        className="rating-band-bar-draw"
-                        style={{ flexGrow: move.draws }}
-                      />
-                      <span
-                        className="rating-band-bar-black"
-                        style={{ flexGrow: move.black }}
-                      />
+          <TooltipProvider delayDuration={250}>
+            <ul className="rating-band-list">
+              {result.moves.map((move) => {
+                const games = explorerGames(move)
+                const percents = percentLabel(move.white, move.draws, move.black)
+                return (
+                  <li key={`${move.uci}:${move.san}`} className="rating-band-move">
+                    <div className="rating-band-move-row">
+                      <span className="rating-band-san">{move.san}</span>
+                      <span className="rating-band-games">
+                        {formatCount(games)} game{games === 1 ? '' : 's'}
+                        {move.averageRating > 0 ? (
+                          <>
+                            {' · '}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="rating-band-avg" tabIndex={0}>
+                                  avg {formatCount(move.averageRating)}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" sideOffset={6}>
+                                Average rating of the players who played that
+                                move
+                              </TooltipContent>
+                            </Tooltip>
+                          </>
+                        ) : null}
+                      </span>
                     </div>
-                  ) : null}
-                </li>
-              )
-            })}
-          </ul>
+                    {games > 0 ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div
+                            className="rating-band-bar"
+                            tabIndex={0}
+                            role="img"
+                            aria-label={percents}
+                          >
+                            <span
+                              className="rating-band-bar-white"
+                              style={{ flexGrow: move.white }}
+                            />
+                            <span
+                              className="rating-band-bar-draw"
+                              style={{ flexGrow: move.draws }}
+                            />
+                            <span
+                              className="rating-band-bar-black"
+                              style={{ flexGrow: move.black }}
+                            />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={6}>
+                          {percents}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          </TooltipProvider>
         </>
       ) : null}
     </section>
