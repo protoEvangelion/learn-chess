@@ -3,26 +3,40 @@ import { fetchExplorerWithToken } from './lichessExplorerProxy.js'
 import {
   branchKeyFrom,
   directChildren,
+  lineReachedByPlay,
   loadOpeningBook,
   movesAfter,
+  openingReachedByPlay,
 } from './openingBook.js'
 import type {
+  BlackDefense,
+  BlackDefenseList,
   BranchMover,
   ExplorerOpening,
   OpeningBranch,
   OpeningBranchLine,
   RatingBandId,
 } from '../src/lib/lichessExplorer.js'
-import { EXPLORER_MOVE_CAP } from '../src/lib/lichessExplorer.js'
+import {
+  EXPLORER_MOVE_CAP,
+  isOpeningVariation,
+} from '../src/lib/lichessExplorer.js'
 
-const CACHE_VERSION = 'v1'
+const CACHE_VERSION = 'v2'
+const START_FEN =
+  'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
 let schemaReady: Promise<void> | null = null
 const memory = new Map<string, OpeningBranch>()
+const defenseMemory = new Map<string, BlackDefenseList>()
 let upstreamChain: Promise<unknown> = Promise.resolve()
 
 function cacheKey(fen: string, ratings: readonly RatingBandId[], play: string) {
   return `${CACHE_VERSION}|${ratings.join(',')}|${play}|${fen}`
+}
+
+function defenseCacheKey(ratings: readonly RatingBandId[]) {
+  return `${CACHE_VERSION}|defenses|${ratings.join(',')}`
 }
 
 function sameLine(a: string, b: string) {
@@ -158,10 +172,61 @@ function lineFromMove(
   }
 }
 
+function defenseGames(row: { white: number; draws: number; black: number }) {
+  return row.white + row.draws + row.black
+}
+
+function isDefenseList(value: unknown): value is BlackDefenseList {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      Array.isArray((value as BlackDefenseList).defenses),
+  )
+}
+
+async function readDefense(key: string): Promise<BlackDefenseList | null> {
+  const hit = defenseMemory.get(key)
+  if (hit) return hit
+  try {
+    await ensureSchema()
+    const result = await getTurso().execute({
+      sql: 'SELECT payload FROM explorer_branches WHERE cache_key = ?',
+      args: [key],
+    })
+    const row = result.rows[0]
+    if (!row) return null
+    const payload = JSON.parse(String(row.payload)) as unknown
+    if (!isDefenseList(payload)) return null
+    defenseMemory.set(key, payload)
+    return payload
+  } catch {
+    return null
+  }
+}
+
+async function writeDefense(key: string, payload: BlackDefenseList) {
+  defenseMemory.set(key, payload)
+  try {
+    await ensureSchema()
+    await getTurso().execute({
+      sql: `
+        INSERT INTO explorer_branches (cache_key, payload, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(cache_key) DO UPDATE SET
+          payload = excluded.payload,
+          updated_at = datetime('now')
+      `,
+      args: [key, JSON.stringify(payload)],
+    })
+  } catch {
+    // The response is still usable for this request.
+  }
+}
+
 /**
- * Named lines at `play` from `fen`. Every explorer reply is kept, then any
- * opening-tree child that is still missing is requested on its own branch
- * and stored.
+ * Named lines at `play` from `fen`. The opening is kept only when the book
+ * reaches it by exactly these moves. Children are that opening's own choices
+ * (`Name: …`), then any book child still missing is requested and stored.
  */
 export async function loadOpeningBranch(
   fen: string,
@@ -181,76 +246,160 @@ export async function loadOpeningBranch(
     if (stored) return stored
 
     const { position } = await fetchPosition(fen, ratings, play, ac.signal)
-    const parentName = position.opening?.name ?? ''
     const replySide = lastMover(fen, play) === 'white' ? 'black' : 'white'
-    const lines: OpeningBranchLine[] = []
+    const collected: OpeningBranchLine[] = []
     for (const move of position.moves) {
       const line = lineFromMove(move, replySide)
       if (!line) continue
-      if (parentName && line.name === parentName) continue
-      if (alreadyListed(lines, line.name)) continue
-      lines.push(line)
+      if (alreadyListed(collected, line.name)) continue
+      collected.push(line)
     }
 
     let complete = true
-    let opening = position.opening
+    let opening: ExplorerOpening | null = null
+    let lines: OpeningBranchLine[] = []
     try {
       const book = await loadOpeningBook()
-      const branchKey = branchKeyFrom(fen, play)
-      const exact = book.lines.find((line) => line.keys[line.keys.length - 1] === branchKey)
-      const resolvedParent = exact?.name || parentName
-      if (!opening && exact) opening = { eco: exact.eco, name: exact.name }
-      const missing = directChildren(book, resolvedParent).filter(
-        (child) => !alreadyListed(lines, child.name),
+      const apiName = position.opening?.name ?? ''
+      if (
+        position.opening &&
+        apiName &&
+        openingReachedByPlay(book, apiName, play)
+      ) {
+        opening = position.opening
+      } else {
+        const exact = lineReachedByPlay(book, play)
+        if (exact) opening = { eco: exact.eco, name: exact.name }
+      }
+      const resolvedParent = opening?.name ?? ''
+      lines = collected.filter((line) =>
+        isOpeningVariation(resolvedParent, line.name),
       )
-      for (const child of missing) {
-        if (ac.signal.aborted) {
-          complete = false
-          break
-        }
-        const rest = movesAfter(child, branchKey)
-        if (!rest || rest.length === 0) continue
-        const fullPlay = `${play},${rest.join(',')}`
-        const mover = lastMover(fen, fullPlay)
-        try {
-          const { position: reached } = await fetchPosition(
-            fen,
-            ratings,
-            fullPlay,
-            ac.signal,
-          )
-          const name = reached.opening?.name || child.name
-          if (alreadyListed(lines, name) || alreadyListed(lines, child.name)) continue
-          lines.push({
-            name: child.name,
-            eco: reached.opening?.eco || child.eco,
-            white: reached.white,
-            draws: reached.draws,
-            black: reached.black,
-            averageRating: 0,
-            mover,
-          })
-        } catch (err) {
-          if (ac.signal.aborted) throw err
-          complete = false
-          lines.push({
-            name: child.name,
-            eco: child.eco,
-            white: 0,
-            draws: 0,
-            black: 0,
-            averageRating: 0,
-            mover,
-          })
+      if (resolvedParent) {
+        const branchKey = branchKeyFrom(fen, play)
+        const missing = directChildren(book, resolvedParent).filter(
+          (child) =>
+            isOpeningVariation(resolvedParent, child.name) &&
+            !alreadyListed(lines, child.name),
+        )
+        for (const child of missing) {
+          if (ac.signal.aborted) {
+            complete = false
+            break
+          }
+          const rest = movesAfter(child, branchKey)
+          if (!rest || rest.length === 0) continue
+          const fullPlay = `${play},${rest.join(',')}`
+          const mover = lastMover(fen, fullPlay)
+          try {
+            const { position: reached } = await fetchPosition(
+              fen,
+              ratings,
+              fullPlay,
+              ac.signal,
+            )
+            const name = child.name
+            if (alreadyListed(lines, name)) continue
+            if (!isOpeningVariation(resolvedParent, name)) continue
+            lines.push({
+              name,
+              eco: reached.opening?.eco || child.eco,
+              white: reached.white,
+              draws: reached.draws,
+              black: reached.black,
+              averageRating: 0,
+              mover,
+            })
+          } catch (err) {
+            if (ac.signal.aborted) throw err
+            complete = false
+            lines.push({
+              name: child.name,
+              eco: child.eco,
+              white: 0,
+              draws: 0,
+              black: 0,
+              averageRating: 0,
+              mover,
+            })
+          }
         }
       }
     } catch (err) {
       if (ac.signal.aborted) throw err
       complete = false
+      opening = null
+      lines = []
     }
 
     const payload: OpeningBranch = { opening, lines }
     if (complete && !ac.signal.aborted) await writeStored(key, payload)
+    return payload
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+/**
+ * Black defenses from the starting position: named replies that are a
+ * different opening from White's first move, not a variation of it.
+ * Sorted by the client on Black's win rate.
+ */
+export async function loadBlackDefenses(
+  ratings: readonly RatingBandId[],
+  signal?: AbortSignal,
+): Promise<BlackDefenseList> {
+  const ac = new AbortController()
+  const onAbort = () => ac.abort()
+  if (signal) {
+    if (signal.aborted) ac.abort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  }
+  const key = defenseCacheKey(ratings)
+  try {
+    const stored = await readDefense(key)
+    if (stored) return stored
+
+    const { position } = await fetchPosition(START_FEN, ratings, '', ac.signal)
+    const total = position.white + position.draws + position.black
+    const byName = new Map<string, BlackDefense>()
+    for (const move of position.moves) {
+      if (ac.signal.aborted) break
+      const parentName = move.opening?.name ?? ''
+      const { position: after } = await fetchPosition(
+        START_FEN,
+        ratings,
+        move.uci,
+        ac.signal,
+      )
+      for (const reply of after.moves) {
+        if (!reply.opening) continue
+        const name = reply.opening.name
+        if (parentName && name === parentName) continue
+        if (isOpeningVariation(parentName, name)) continue
+        const candidate: BlackDefense = {
+          san: reply.san,
+          eco: reply.opening.eco,
+          name,
+          white: reply.white,
+          draws: reply.draws,
+          black: reply.black,
+          averageRating: reply.averageRating,
+        }
+        const existing = byName.get(name)
+        if (existing && defenseGames(existing) >= defenseGames(candidate)) continue
+        byName.set(name, candidate)
+      }
+    }
+
+    if (ac.signal.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError')
+    }
+    const payload: BlackDefenseList = {
+      total,
+      defenses: [...byName.values()],
+    }
+    await writeDefense(key, payload)
     return payload
   } finally {
     signal?.removeEventListener('abort', onAbort)

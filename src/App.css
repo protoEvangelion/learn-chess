@@ -1741,6 +1741,50 @@ body.is-review-coach-resizing canvas {
   font-size: 0.82rem;
 }
 
+.explore-sides {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.explore-side-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+}
+
+.explore-side-summary::-webkit-details-marker {
+  display: none;
+}
+
+.explore-side-summary::marker {
+  content: '';
+}
+
+.explore-side[open] > .explore-side-summary .explore-chevron::before {
+  content: '▾';
+}
+
+.explore-side-summary:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--sw-teal) 70%, white);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.explore-side-body {
+  margin-top: 0.55rem;
+}
+
+.explore-defense-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
 .explore-disclosure {
   display: flex;
   flex-direction: column;

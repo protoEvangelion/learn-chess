@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FC, type SyntheticEvent } from 'react'
+import { Chess } from 'chess.js'
 import { RatingBandMultiSelect } from '@/components/RatingBandMultiSelect'
 import {
   Tooltip,
@@ -6,28 +7,31 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { START_FEN } from '@/lib/fenBridge'
 import {
   DEFAULT_RATING_BAND,
   EXPLORER_MOVE_CAP,
+  blackWinRate,
   explorerGames,
+  fetchBlackDefenses,
   fetchLichessExplorer,
   fetchOpeningBranch,
+  isOpeningVariation,
   isRatingBandId,
   normalizeRatings,
   openingExplorerApiUrl,
   sideWinRate,
+  sortBlackDefenses,
   sortBranchLines,
   sortBySan,
+  type BlackDefense,
   type ExplorerOpening,
   type OpeningBranchLine,
   type RatingBandId,
 } from '@/lib/lichessExplorer'
 
-type Props = {
-  fen: string
-}
-
 const DEBOUNCE_MS = 250
+const WHITE_FIRST_MOVES = new Set(new Chess(START_FEN).moves())
 
 type OpeningGroup = {
   san: string
@@ -78,23 +82,24 @@ function lineLabel(name: string, parentName: string) {
 }
 
 async function loadGroups(
-  fen: string,
   ratings: RatingBandId[],
   signal: AbortSignal,
 ): Promise<{ total: number; groups: OpeningGroup[] }> {
-  const root = await fetchLichessExplorer(fen, ratings, signal, {
+  const root = await fetchLichessExplorer(START_FEN, ratings, signal, {
     moves: EXPLORER_MOVE_CAP,
   })
   const groups = sortBySan(
-    root.moves.map((move) => ({
-      san: move.san,
-      uci: move.uci,
-      white: move.white,
-      draws: move.draws,
-      black: move.black,
-      averageRating: move.averageRating,
-      opening: move.opening,
-    })),
+    root.moves
+      .filter((move) => WHITE_FIRST_MOVES.has(move.san))
+      .map((move) => ({
+        san: move.san,
+        uci: move.uci,
+        white: move.white,
+        draws: move.draws,
+        black: move.black,
+        averageRating: move.averageRating,
+        opening: move.opening,
+      })),
   )
   return { total: explorerGames(root), groups }
 }
@@ -151,12 +156,10 @@ function AverageRating({ value }: { value: number }) {
 function OpeningDisclosure({
   group,
   total,
-  fen,
   ratingKey,
 }: {
   group: OpeningGroup
   total: number
-  fen: string
   ratingKey: string
 }) {
   const [status, setStatus] = useState<BranchStatus>('idle')
@@ -166,7 +169,8 @@ function OpeningDisclosure({
   const abortRef = useRef<AbortController | null>(null)
   const startedRef = useRef(false)
   const games = explorerGames(group)
-  const parentName = opening?.name ?? group.opening?.name ?? ''
+  const parentName = opening?.name ?? ''
+  const showEmpty = status === 'ready' && lines.length === 0 && !parentName
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -178,11 +182,22 @@ function OpeningDisclosure({
     abortRef.current = controller
     setStatus('loading')
     setError(null)
-    void fetchOpeningBranch(fen, bandsFromKey(ratingKey), group.uci, controller.signal)
+    void fetchOpeningBranch(
+      START_FEN,
+      bandsFromKey(ratingKey),
+      group.uci,
+      controller.signal,
+    )
       .then((branch) => {
         if (controller.signal.aborted) return
-        setOpening(branch.opening ?? group.opening)
-        setLines(sortBranchLines(branch.lines))
+        const nextOpening = branch.opening
+        const parent = nextOpening?.name ?? ''
+        setOpening(nextOpening)
+        setLines(
+          sortBranchLines(
+            branch.lines.filter((line) => isOpeningVariation(parent, line.name)),
+          ),
+        )
         setStatus('ready')
       })
       .catch((err: unknown) => {
@@ -232,7 +247,7 @@ function OpeningDisclosure({
             {error ?? 'Opening tree failed.'}
           </p>
         ) : null}
-        {status === 'ready' && lines.length === 0 ? (
+        {showEmpty ? (
           <p className="rating-band-note">
             Lichess did not name a line under {group.san} for these bands.
           </p>
@@ -268,14 +283,129 @@ function OpeningDisclosure({
   )
 }
 
-export const ExploreOpenings: FC<Props> = ({ fen }) => {
+function BlackDefenses({
+  ratingKey,
+  total,
+}: {
+  ratingKey: string
+  total: number
+}) {
+  const [status, setStatus] = useState<BranchStatus>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const [defenses, setDefenses] = useState<BlackDefense[]>([])
+  const [payloadTotal, setPayloadTotal] = useState(0)
+  const abortRef = useRef<AbortController | null>(null)
+  const startedRef = useRef(false)
+  const shareTotal = total > 0 ? total : payloadTotal
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  function loadDefenses() {
+    if (startedRef.current) return
+    startedRef.current = true
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setStatus('loading')
+    setError(null)
+    void fetchBlackDefenses(START_FEN, bandsFromKey(ratingKey), controller.signal)
+      .then((list) => {
+        if (controller.signal.aborted) return
+        setPayloadTotal(list.total)
+        setDefenses(sortBlackDefenses(list.defenses))
+        setStatus('ready')
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        startedRef.current = false
+        setStatus('error')
+        setError(err instanceof Error ? err.message : 'Opening defenses failed.')
+      })
+  }
+
+  function onToggle(event: SyntheticEvent<HTMLDetailsElement>) {
+    if (event.currentTarget.open) loadDefenses()
+  }
+
+  return (
+    <details className="explore-side" data-side="black" onToggle={onToggle}>
+      <summary className="explore-side-summary">
+        <span className="explore-chevron" aria-hidden="true" />
+        Black
+      </summary>
+      <div className="explore-side-body">
+        {status === 'loading' ? (
+          <p className="rating-band-note" role="status">
+            Loading defenses…
+          </p>
+        ) : null}
+        {status === 'error' ? (
+          <p className="rating-band-note is-error" role="alert">
+            {error ?? 'Opening defenses failed.'}
+          </p>
+        ) : null}
+        {status === 'ready' && defenses.length === 0 ? (
+          <p className="rating-band-note">
+            Lichess did not name a defense for these bands.
+          </p>
+        ) : null}
+        {defenses.length > 0 ? (
+          <ul
+            className="explore-lines"
+            aria-label="Black defenses"
+            data-defense-order={defenses.map((defense) => defense.san).join(',')}
+          >
+            {defenses.map((defense) => {
+              const games = explorerGames(defense)
+              const rate = blackWinRate(defense)
+              return (
+                <li
+                  key={defense.name}
+                  className="explore-line"
+                  data-defense={defense.name}
+                  data-san={defense.san}
+                  data-win-rate={rate < 0 ? '' : rate.toFixed(4)}
+                >
+                  <div className="rating-band-move-row">
+                    <span className="explore-defense-main">
+                      <span className="rating-band-san">{defense.san}</span>
+                      <span className="explore-line-name">
+                        {defense.eco ? `${defense.eco} ` : ''}
+                        {defense.name}
+                      </span>
+                    </span>
+                    <span className="explore-pct">{shareLabel(games, shareTotal)}</span>
+                  </div>
+                  {defense.averageRating > 0 ? (
+                    <p className="rating-band-games">
+                      <AverageRating value={defense.averageRating} />
+                    </p>
+                  ) : null}
+                  <ResultBar
+                    white={defense.white}
+                    draws={defense.draws}
+                    black={defense.black}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
+      </div>
+    </details>
+  )
+}
+
+export const ExploreOpenings: FC = () => {
   const [ratings, setRatings] = useState<RatingBandId[]>([DEFAULT_RATING_BAND])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const selected = normalizeRatings(ratings)
   const ratingKey = selected.join(',')
-  const requestKey = `${ratingKey}\n${fen}`
-  const requestUrl = openingExplorerApiUrl(fen, selected, { moves: EXPLORER_MOVE_CAP })
-  const current = snapshot && snapshot.key === requestKey ? snapshot : null
+  const requestUrl = openingExplorerApiUrl(START_FEN, selected, {
+    moves: EXPLORER_MOVE_CAP,
+  })
+  const current = snapshot && snapshot.key === ratingKey ? snapshot : null
   const status = current?.status ?? 'loading'
   const groups = current?.status === 'ready' ? current.groups : null
   const total = current?.status === 'ready' ? current.total : 0
@@ -283,10 +413,10 @@ export const ExploreOpenings: FC<Props> = ({ fen }) => {
 
   useEffect(() => {
     const controller = new AbortController()
-    const key = requestKey
+    const key = ratingKey
     const bands = bandsFromKey(ratingKey)
     const timer = window.setTimeout(() => {
-      void loadGroups(fen, bands, controller.signal)
+      void loadGroups(bands, controller.signal)
         .then((loaded) => {
           if (controller.signal.aborted) return
           setSnapshot({
@@ -313,7 +443,7 @@ export const ExploreOpenings: FC<Props> = ({ fen }) => {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [fen, ratingKey, requestKey])
+  }, [ratingKey])
 
   return (
     <section
@@ -330,47 +460,54 @@ export const ExploreOpenings: FC<Props> = ({ fen }) => {
         <RatingBandMultiSelect value={selected} onChange={setRatings} />
       </div>
       <p className="rating-band-note">
-        Lichess combines the selected rating bands. First moves are listed from a
-        through h. Open a move to see its named lines.
+        Lichess combines the selected rating bands. White lists legal first moves
+        from a through h. Black lists defenses by Black’s win rate.
       </p>
 
-      {status === 'loading' ? (
-        <p className="rating-band-note" role="status">
-          Loading openings…
-        </p>
-      ) : null}
-
-      {status === 'error' ? (
-        <p className="rating-band-note is-error" role="alert">
-          {error ?? 'Lichess explorer failed.'}
-        </p>
-      ) : null}
-
-      {groups && groups.length === 0 ? (
-        <p className="rating-band-note" role="status">
-          No rated games in these bands reached this position.
-        </p>
-      ) : null}
-
-      {groups && groups.length > 0 ? (
-        <TooltipProvider delayDuration={250}>
-          <ul
-            className="explore-groups"
-            data-parent-order={groups.map((group) => group.san).join(',')}
-          >
-            {groups.map((group) => (
-              <li key={`${requestKey}:${group.uci}`}>
-                <OpeningDisclosure
-                  group={group}
-                  total={total}
-                  fen={fen}
-                  ratingKey={ratingKey}
-                />
-              </li>
-            ))}
-          </ul>
-        </TooltipProvider>
-      ) : null}
+      <TooltipProvider delayDuration={250}>
+        <div className="explore-sides">
+          <details className="explore-side" data-side="white">
+            <summary className="explore-side-summary">
+              <span className="explore-chevron" aria-hidden="true" />
+              White
+            </summary>
+            <div className="explore-side-body">
+              {status === 'loading' ? (
+                <p className="rating-band-note" role="status">
+                  Loading openings…
+                </p>
+              ) : null}
+              {status === 'error' ? (
+                <p className="rating-band-note is-error" role="alert">
+                  {error ?? 'Lichess explorer failed.'}
+                </p>
+              ) : null}
+              {groups && groups.length === 0 ? (
+                <p className="rating-band-note" role="status">
+                  No rated games in these bands reached the starting position.
+                </p>
+              ) : null}
+              {groups && groups.length > 0 ? (
+                <ul
+                  className="explore-groups"
+                  data-parent-order={groups.map((group) => group.san).join(',')}
+                >
+                  {groups.map((group) => (
+                    <li key={`${ratingKey}:${group.uci}`}>
+                      <OpeningDisclosure
+                        group={group}
+                        total={total}
+                        ratingKey={ratingKey}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </details>
+          <BlackDefenses key={ratingKey} ratingKey={ratingKey} total={total} />
+        </div>
+      </TooltipProvider>
     </section>
   )
 }

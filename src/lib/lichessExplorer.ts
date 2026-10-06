@@ -82,6 +82,28 @@ export type OpeningBranch = {
   lines: OpeningBranchLine[]
 }
 
+/** A named Black defense reached by a White first move plus Black's reply. */
+export type BlackDefense = {
+  san: string
+  eco: string
+  name: string
+  white: number
+  draws: number
+  black: number
+  averageRating: number
+}
+
+export type BlackDefenseList = {
+  total: number
+  defenses: BlackDefense[]
+}
+
+/** True when `name` is a named choice under `parentName` (`Parent: …` or `Parent, …`). */
+export function isOpeningVariation(parentName: string, name: string): boolean {
+  if (!parentName) return false
+  return name.startsWith(`${parentName}: `) || name.startsWith(`${parentName}, `)
+}
+
 export type ExplorerQueryOptions = {
   /** Comma-separated UCI moves played from `fen`. Needed for opening names. */
   play?: string
@@ -235,6 +257,27 @@ export function sortBranchLines<T extends OpeningBranchLine>(lines: readonly T[]
   })
 }
 
+/** Black's score. Empty totals sort last. */
+export function blackWinRate(line: {
+  white: number
+  draws: number
+  black: number
+}): number {
+  const total = line.white + line.draws + line.black
+  if (total <= 0) return -1
+  return line.black / total
+}
+
+export function sortBlackDefenses<T extends BlackDefense>(
+  defenses: readonly T[],
+): T[] {
+  return [...defenses].sort((a, b) => {
+    const delta = blackWinRate(b) - blackWinRate(a)
+    if (delta !== 0) return delta
+    return a.name.localeCompare(b.name, 'en')
+  })
+}
+
 /** a3, a4, b3, b4, … then piece moves. Letter order, not popularity. */
 export function sortBySan<T extends { san: string }>(groups: readonly T[]): T[] {
   return [...groups].sort((a, b) =>
@@ -331,4 +374,73 @@ export async function fetchOpeningBranch(
     throw new Error(message)
   }
   return parseOpeningBranch(payload)
+}
+
+export function parseBlackDefenses(payload: unknown): BlackDefenseList {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Opening defenses returned an unexpected response.')
+  }
+  const body = payload as Record<string, unknown>
+  const raw = Array.isArray(body.defenses) ? body.defenses : []
+  const defenses: BlackDefense[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    if (typeof row.name !== 'string' || row.name.trim() === '') continue
+    if (typeof row.san !== 'string' || row.san.trim() === '') continue
+    defenses.push({
+      san: row.san.trim(),
+      eco: typeof row.eco === 'string' ? row.eco : '',
+      name: row.name.trim(),
+      white: readCount(row.white),
+      draws: readCount(row.draws),
+      black: readCount(row.black),
+      averageRating: readCount(row.averageRating),
+    })
+  }
+  return { total: readCount(body.total), defenses }
+}
+
+export function openingDefensesApiUrl(
+  fen: string,
+  ratings: readonly RatingBandId[],
+): string {
+  return `/api/opening-defenses?${lichessExplorerQuery(fen, ratings, {
+    moves: EXPLORER_MOVE_CAP,
+  })}`
+}
+
+export async function fetchBlackDefenses(
+  fen: string,
+  ratings: readonly RatingBandId[],
+  signal: AbortSignal,
+): Promise<BlackDefenseList> {
+  const url = openingDefensesApiUrl(fen, ratings)
+  let res: Response
+  try {
+    res = await fetch(url, {
+      signal,
+      headers: { Accept: 'application/json' },
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    throw new Error("Couldn't reach the opening defenses.")
+  }
+  let payload: unknown = null
+  try {
+    payload = await res.json()
+  } catch {
+    payload = null
+  }
+  if (!res.ok) {
+    const message =
+      payload &&
+      typeof payload === 'object' &&
+      'error' in payload &&
+      typeof (payload as { error?: unknown }).error === 'string'
+        ? (payload as { error: string }).error
+        : `Opening defenses returned ${res.status}.`
+    throw new Error(message)
+  }
+  return parseBlackDefenses(payload)
 }

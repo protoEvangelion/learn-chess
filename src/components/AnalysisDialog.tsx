@@ -56,8 +56,6 @@ type Props = {
   onPanelWidthChange: (width: number) => void
   onPanelResizeEnd?: (width: number) => void
   onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
-  /** Current board position. Explorer stats follow this, not the URL. */
-  fen: string
 }
 
 const DEFAULT_REVIEW_COACH_FRACTION = 0.42
@@ -293,7 +291,6 @@ export const AnalysisDialog: FC<Props> = ({
   onPanelWidthChange,
   onPanelResizeEnd,
   onFrequencyArrows,
-  fen,
 }) => {
   const [tab, setTab] = useState<TabId>(() => (report ? 'games' : 'explore'))
   const [importOpen, setImportOpen] = useState(false)
@@ -509,7 +506,7 @@ export const AnalysisDialog: FC<Props> = ({
         </div>
 
         <div className="analysis-dialog-body">
-          {tab === 'explore' && open ? <ExploreOpenings fen={fen} /> : null}
+          {tab === 'explore' && open ? <ExploreOpenings /> : null}
 
           {tab === 'games' ? (
             <div className="my-games-toolbar">

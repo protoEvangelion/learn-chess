@@ -180,6 +180,35 @@ export function movesAfter(line: BookLine, branchKey: string): string[] | null {
   return line.uci.slice(index + 1)
 }
 
+function playUci(play: string): string[] {
+  return play.split(',').filter(Boolean)
+}
+
+function sameUci(line: BookLine, uci: readonly string[]): boolean {
+  return (
+    line.uci.length === uci.length &&
+    line.uci.every((move, index) => move === uci[index])
+  )
+}
+
+/** Book line whose move list is exactly `play`, when one exists. */
+export function lineReachedByPlay(book: BookCache, play: string): BookLine | null {
+  const uci = playUci(play)
+  if (uci.length === 0) return null
+  return book.lines.find((line) => sameUci(line, uci)) ?? null
+}
+
+/** True when a book line of this name is reached by exactly these moves. */
+export function openingReachedByPlay(
+  book: BookCache,
+  name: string,
+  play: string,
+): boolean {
+  const uci = playUci(play)
+  if (!name || uci.length === 0) return false
+  return book.lines.some((line) => line.name === name && sameUci(line, uci))
+}
+
 export function branchKeyFrom(fen: string, play: string): string {
   const chess = new Chess(fen)
   for (const uci of play.split(',').filter(Boolean)) {
