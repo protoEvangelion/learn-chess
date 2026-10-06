@@ -40,6 +40,7 @@ import {
   pushGameToUrl,
   readFenFromUrl,
   readGameIdFromUrl,
+  isAnalysisPanel,
   readLineFromUrl,
   readOpeningFromUrl,
   readPanelFromUrl,
@@ -347,7 +348,8 @@ export default function App() {
   const [panel, setPanel] = useState<PanelId | null>(() => readPanelFromUrl())
   const settingsOpen = panel === 'settings'
   const gameOpen = panel === 'game'
-  const analysisOpen = panel === 'analysis'
+  const analysisOpen = isAnalysisPanel(panel)
+  const analysisTab = panel === 'my-games' ? 'games' : 'explore'
   const drillOpen = panel === 'drill'
   const rightPanelOpen =
     settingsOpen || gameOpen || analysisOpen || drillOpen
@@ -576,6 +578,12 @@ export default function App() {
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [applyFen])
+
+  const onAnalysisTab = useCallback((next: 'explore' | 'games') => {
+    const id: PanelId = next === 'games' ? 'my-games' : 'explore'
+    setPanel(id)
+    replacePanelInUrl(id)
+  }, [])
 
   const openPanel = useCallback((next: PanelId | null) => {
     setPanel(next)
@@ -1369,7 +1377,7 @@ export default function App() {
       setScrubIndex(session.history.length)
 
       setEndgameDismissed(true)
-      openPanel('analysis')
+      openPanel('my-games')
 
       try {
         const plies = buildPlyTimeline(hist, color)
@@ -1458,7 +1466,7 @@ export default function App() {
         return true
       }
       const named = /\[(?:White|Black)\s+"/i.test(raw)
-      if (named || readPanelFromUrl() === 'analysis') {
+      if (named || readPanelFromUrl() === 'analysis' || readPanelFromUrl() === 'my-games') {
         applyImportedGame(imported)
         return true
       }
@@ -1488,7 +1496,7 @@ export default function App() {
   useEffect(() => {
     if (bootReviewStarted.current) return
     const imported = boot.imported
-    if (!imported || readPanelFromUrl() !== 'analysis') {
+    if (!imported || (readPanelFromUrl() !== 'analysis' && readPanelFromUrl() !== 'my-games')) {
       bootReviewStarted.current = true
       return
     }
@@ -1923,6 +1931,8 @@ export default function App() {
         onPanelResizeEnd={onPanelResizeEnd}
         onFrequencyArrows={setFrequencyArrows}
         onPlaySan={playExploreSan}
+        tab={analysisTab}
+        onTabChange={onAnalysisTab}
       />
 
       <DrillDialog
@@ -2087,7 +2097,9 @@ export default function App() {
               <GradientButtonGroup
                 layoutGroupId="hud-game"
                 ariaLabel="Game actions"
-                activeId={panel ?? undefined}
+                activeId={
+                  isAnalysisPanel(panel) ? 'analysis' : (panel ?? undefined)
+                }
                 items={[
                   {
                     id: 'settings',
@@ -2156,7 +2168,7 @@ export default function App() {
                       </svg>
                     ),
                     onClick: () =>
-                      openPanel(panel === 'analysis' ? null : 'analysis'),
+                      openPanel(isAnalysisPanel(panel) ? null : 'explore'),
                   },
                   {
                     id: 'drill',

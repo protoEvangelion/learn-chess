@@ -247,7 +247,18 @@ export function readGameIdFromUrl(
 }
 
 /** Which drawer is open — at most one. */
-export type PanelId = 'settings' | 'game' | 'analysis' | 'drill'
+export type PanelId =
+  | 'settings'
+  | 'game'
+  | 'analysis'
+  | 'explore'
+  | 'my-games'
+  | 'drill'
+
+/** Analysis drawer, including the Explore and My Games tabs. */
+export function isAnalysisPanel(panel: PanelId | null): boolean {
+  return panel === 'analysis' || panel === 'explore' || panel === 'my-games'
+}
 
 /** Opening drill pack id in the URL (e.g. italian). */
 export type OpeningId = 'italian'
@@ -259,7 +270,14 @@ export function readPanelFromUrl(
   // Legacy import panel folded into analysis; coach → game (Moves|Coach tabs).
   if (p === 'import') return 'analysis'
   if (p === 'coach') return 'game'
-  if (p === 'settings' || p === 'game' || p === 'analysis' || p === 'drill') {
+  if (
+    p === 'settings' ||
+    p === 'game' ||
+    p === 'analysis' ||
+    p === 'explore' ||
+    p === 'my-games' ||
+    p === 'drill'
+  ) {
     return p
   }
   return null
@@ -301,6 +319,8 @@ export type UrlGameState = {
  * | drill     | never (shareable practice)                  | yes when set | `pgn`    |
  * | game      | coach session id                            | never        | `pgn`    |
  * | analysis  | session id                                  | never        | `pgn`    |
+ * | explore   | session id (Explore tab)                    | never        | `pgn`    |
+ * | my-games  | session id (My Games tab)                   | never        | `pgn`    |
  * | settings  | leave alone — panel switch must not inject  | never        | `pgn`    |
  * | (none)    | session id for free-play resume             | never        | `pgn`    |
  *

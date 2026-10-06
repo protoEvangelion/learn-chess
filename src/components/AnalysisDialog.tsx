@@ -57,6 +57,8 @@ type Props = {
   onPanelResizeEnd?: (width: number) => void
   onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
   onPlaySan?: (san: string) => void
+  tab?: TabId
+  onTabChange?: (tab: TabId) => void
 }
 
 const DEFAULT_REVIEW_COACH_FRACTION = 0.42
@@ -293,8 +295,19 @@ export const AnalysisDialog: FC<Props> = ({
   onPanelResizeEnd,
   onFrequencyArrows,
   onPlaySan,
+  tab: tabProp,
+  onTabChange,
 }) => {
-  const [tab, setTab] = useState<TabId>(() => (report ? 'games' : 'explore'))
+  const [tabState, setTabState] = useState<TabId>(() =>
+    new URLSearchParams(window.location.search).get('panel') === 'my-games'
+      ? 'games'
+      : 'explore',
+  )
+  const tab = tabProp ?? tabState
+  function selectTab(next: TabId) {
+    setTabState(next)
+    onTabChange?.(next)
+  }
   const [importOpen, setImportOpen] = useState(false)
   const importWasBusy = useRef(false)
   const [playing, setPlaying] = useState(false)
@@ -357,8 +370,10 @@ export const AnalysisDialog: FC<Props> = ({
   }, [coachQuestionCount])
 
   useEffect(() => {
-    if (!open) return
-    setTab(report ? 'games' : 'explore')
+    if (!open || !report) return
+    selectTab('games')
+    // Switch to My Games when a review report arrives. Tab clicks are separate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, report])
 
   useEffect(() => {
@@ -492,7 +507,7 @@ export const AnalysisDialog: FC<Props> = ({
             role="tab"
             aria-selected={tab === 'explore'}
             className={tab === 'explore' ? 'is-active' : ''}
-            onClick={() => setTab('explore')}
+            onClick={() => selectTab('explore')}
           >
             Explore
           </button>
@@ -501,7 +516,7 @@ export const AnalysisDialog: FC<Props> = ({
             role="tab"
             aria-selected={tab === 'games'}
             className={tab === 'games' ? 'is-active' : ''}
-            onClick={() => setTab('games')}
+            onClick={() => selectTab('games')}
           >
             My Games
           </button>

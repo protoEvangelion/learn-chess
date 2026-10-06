@@ -225,15 +225,14 @@ function OpeningDisclosure({
 
   return (
     <details className="explore-disclosure" data-san={group.san} onToggle={onToggle}>
-      <summary className="explore-summary">
+      <summary
+        className="explore-summary"
+        data-play={group.san}
+        onClick={() => onPlaySan?.(group.san)}
+      >
         <span className="rating-band-move-row">
           <span className="explore-summary-main">
-            <span
-              className="explore-chevron"
-              data-play={group.san}
-              aria-label={`Play ${group.san}`}
-              onClick={() => onPlaySan?.(group.san)}
-            />
+            <span className="explore-chevron" aria-hidden="true" />
             <span className="rating-band-san">{group.san}</span>
           </span>
           <span className="explore-pct">
@@ -278,19 +277,17 @@ function OpeningDisclosure({
                   key={line.name}
                   className="explore-line"
                   data-line={line.name}
+                  data-play={line.san || undefined}
                   data-mover={line.mover}
                   data-win-rate={rate < 0 ? '' : rate.toFixed(4)}
+                  onClick={() => {
+                    if (line.san) onPlaySan?.(line.san)
+                  }}
                 >
                   <div className="rating-band-move-row">
                     <span className="explore-line-name">
                       {line.san ? (
-                        <button
-                          type="button"
-                          className="explore-chevron"
-                          data-play={line.san}
-                          aria-label={`Play ${line.san}`}
-                          onClick={() => onPlaySan?.(line.san ?? '')}
-                        />
+                        <span className="explore-chevron" aria-hidden="true" />
                       ) : null}
                       {childLineText(line, parentName)}
                     </span>
