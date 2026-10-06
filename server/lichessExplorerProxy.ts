@@ -28,10 +28,12 @@ export async function fetchExplorerWithToken(
   rating: RatingBandId,
   signal?: AbortSignal,
 ): Promise<{ position: ExplorerPosition; upstream: string }> {
-  const token = process.env.LICHESS_API_TOKEN?.trim()
+  const token = (
+    process.env.LICHESS_API_TOKEN || process.env.LICHESS_TOKEN
+  )?.trim()
   if (!token) {
     throw new Error(
-      'Set LICHESS_API_TOKEN on the server to a Lichess personal API token from https://lichess.org/account/oauth/token. Anonymous explorer requests are rejected.',
+      'Set LICHESS_API_TOKEN (or LICHESS_TOKEN) on the server to a Lichess personal API token from https://lichess.org/account/oauth/token. Anonymous explorer requests are rejected.',
     )
   }
   const upstream = lichessExplorerUrl(fen, rating)
