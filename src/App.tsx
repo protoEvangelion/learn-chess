@@ -731,6 +731,9 @@ export default function App() {
     )
       return
     if (turn === playerColor) return
+    // A URL with no position stays the initial board. Stockfish must not
+    // play White's first move and then write that pgn onto the empty link.
+    if (history.length === 0 && !readPgnFromUrl() && !readFenFromUrl()) return
     if (skipEngineOnce.current) {
       skipEngineOnce.current = false
       return
@@ -777,6 +780,7 @@ export default function App() {
   }, [
     turn,
     playerColor,
+    history,
     fen,
     strength,
     board,
