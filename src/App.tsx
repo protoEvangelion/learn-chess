@@ -1930,7 +1930,8 @@ export default function App() {
           <header className="hud">
             <div className="hud-cluster">
               <div className="hud-brand">
-                <BrandMark title={`3D Chess · ${status}`} />
+                <BrandMark title={`Analysis · ${status}`} />
+                <h1 className="hud-title">Analysis</h1>
                 <span className="sr-only">{status}</span>
               </div>
               <div

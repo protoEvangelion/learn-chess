@@ -326,6 +326,15 @@ body,
   height: 2.5rem;
 }
 
+.hud-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: var(--sw-text);
+  pointer-events: none;
+}
+
 .hud-brand-mark {
   width: 2.5rem;
   height: 2.5rem;
@@ -1662,6 +1671,120 @@ body.is-review-coach-resizing canvas {
 .rating-band-bar-black {
   background: #4c465c;
   box-shadow: inset 0 0 0 1px #ddd6ee;
+}
+
+.rating-band-multi {
+  position: relative;
+}
+
+.rating-band-multi-trigger {
+  text-align: left;
+}
+
+.rating-band-multi-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.3rem);
+  z-index: 30;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  min-width: 9.5rem;
+  border: 1px solid var(--sw-border);
+  border-radius: 8px;
+  background: var(--sw-panel);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.rating-band-multi-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.28rem 0.35rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.explore-groups,
+.explore-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.explore-groups {
+  gap: 0.9rem;
+}
+
+.explore-group,
+.explore-line {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.explore-lines {
+  gap: 0.45rem;
+  margin-top: 0.15rem;
+  padding-left: 0.7rem;
+}
+
+.explore-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: var(--sw-text);
+}
+
+.explore-line-name {
+  font-size: 0.82rem;
+}
+
+.my-games-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.55rem;
+}
+
+.analysis-counts h3 {
+  margin: 0.35rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.import-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1.1rem 0.7rem;
+  background: rgba(7, 4, 15, 0.72);
+}
+
+.import-modal {
+  width: min(100%, 24rem);
+  max-height: calc(100% - 1rem);
+  overflow: auto;
+  padding: 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--sw-border);
+  background: var(--sw-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.import-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.import-modal-head h3 {
+  margin: 0;
 }
 
 .analysis-move-list {

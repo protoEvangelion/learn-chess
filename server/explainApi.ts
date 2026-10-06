@@ -769,8 +769,9 @@ export async function handleExplainApi(
           try {
             const { position } = await fetchExplorerWithToken(
               parsed.fen,
-              parsed.rating,
+              parsed.ratings,
               controller.signal,
+              parsed.options,
             )
             sendJson(res, 200, position)
           } catch (err) {

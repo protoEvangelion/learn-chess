@@ -22,9 +22,9 @@ import {
   type ReviewPly,
 } from '@/lib/gameReview'
 import { arrowsForReplies, type FrequencyArrow } from '@/lib/replyArrows'
-import { RatingBandMoves } from '@/components/RatingBandMoves'
+import { ExploreOpenings } from '@/components/ExploreOpenings'
 
-type TabId = 'import' | 'report' | 'analysis'
+type TabId = 'explore' | 'games'
 
 type Props = {
   open: boolean
@@ -295,7 +295,9 @@ export const AnalysisDialog: FC<Props> = ({
   onFrequencyArrows,
   fen,
 }) => {
-  const [tab, setTab] = useState<TabId>(() => (report ? 'report' : 'import'))
+  const [tab, setTab] = useState<TabId>(() => (report ? 'games' : 'explore'))
+  const [importOpen, setImportOpen] = useState(false)
+  const importWasBusy = useRef(false)
   const [playing, setPlaying] = useState(false)
   const [reviewCoachFraction, setReviewCoachFraction] = useState(
     DEFAULT_REVIEW_COACH_FRACTION,
@@ -357,8 +359,15 @@ export const AnalysisDialog: FC<Props> = ({
 
   useEffect(() => {
     if (!open) return
-    setTab(report ? 'report' : 'import')
+    setTab(report ? 'games' : 'explore')
   }, [open, report])
+
+  useEffect(() => {
+    if (importWasBusy.current && !importBusy && !importError) {
+      setImportOpen(false)
+    }
+    importWasBusy.current = Boolean(importBusy)
+  }, [importBusy, importError])
 
   useEffect(() => {
     if (!open || !playing || !report) return
@@ -377,7 +386,7 @@ export const AnalysisDialog: FC<Props> = ({
   }, [open])
 
   useEffect(() => {
-    if (!open || tab !== 'analysis' || !report) {
+    if (!open || tab !== 'games' || !report) {
       onFrequencyArrowsRef.current?.([])
       return
     }
@@ -440,7 +449,7 @@ export const AnalysisDialog: FC<Props> = ({
   useEffect(() => {
     if (
       !open ||
-      tab !== 'analysis' ||
+      tab !== 'games' ||
       !replies ||
       replies.prefixKey !== replyPrefixKey
     ) {
@@ -461,7 +470,7 @@ export const AnalysisDialog: FC<Props> = ({
       <aside
         className="analysis-dialog"
         role="dialog"
-        aria-label="Game analysis"
+        aria-label="Analysis"
         inert={!open ? true : undefined}
       >
         <PanelResizeHandle
@@ -471,139 +480,60 @@ export const AnalysisDialog: FC<Props> = ({
         />
         <header className="analysis-dialog-header">
           <div className="analysis-dialog-title">
-            <p className="analysis-eyebrow">Review</p>
-            <h2>Game Analysis</h2>
+            <h2>Analysis</h2>
           </div>
           <PixelButton ghost onClick={onClose}>
             Close
           </PixelButton>
         </header>
 
-        <div className="analysis-tabs is-three" role="tablist">
+        <div className="analysis-tabs" role="tablist">
           <button
             type="button"
             role="tab"
-            aria-selected={tab === 'import'}
-            className={tab === 'import' ? 'is-active' : ''}
-            onClick={() => setTab('import')}
+            aria-selected={tab === 'explore'}
+            className={tab === 'explore' ? 'is-active' : ''}
+            onClick={() => setTab('explore')}
           >
-            Import
+            Explore
           </button>
           <button
             type="button"
             role="tab"
-            aria-selected={tab === 'report'}
-            className={tab === 'report' ? 'is-active' : ''}
-            onClick={() => setTab('report')}
+            aria-selected={tab === 'games'}
+            className={tab === 'games' ? 'is-active' : ''}
+            onClick={() => setTab('games')}
           >
-            Report
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'analysis'}
-            className={tab === 'analysis' ? 'is-active' : ''}
-            onClick={() => setTab('analysis')}
-          >
-            Analysis
+            My Games
           </button>
         </div>
 
         <div className="analysis-dialog-body">
-          {tab === 'import' && (
-            <div className="analysis-import">
-              <p className="analysis-import-lead">
-                Enter your chess.com username to review your latest game, or paste a PGN or game link.
-              </p>
+          {tab === 'explore' && open ? <ExploreOpenings fen={fen} /> : null}
 
-              <label className="slider-label" htmlFor="analysis-chesscom-user">
-                Your chess.com username
-                <span className="elo-hint">(sets which side is “you”)</span>
-              </label>
-              <input
-                id="analysis-chesscom-user"
-                className="settings-select"
-                type="text"
-                value={chessComUsername}
-                placeholder="optional"
-                autoComplete="username"
-                onChange={(e) => onChessComUsernameChange(e.target.value)}
-                disabled={importBusy || analyzing}
-              />
-
-              <label className="slider-label" htmlFor="analysis-import-pgn">
-                PGN or chess.com game link
-              </label>
-              <textarea
-                id="analysis-import-pgn"
-                className="settings-fen import-textarea"
-                value={importDraft}
-                onChange={(e) => onImportDraftChange(e.target.value)}
-                rows={8}
-                spellCheck={false}
-                placeholder={
-                  'https://www.chess.com/game/live/…\nor\n[Event "…"]\n1. e4 e5 …'
-                }
-                disabled={importBusy || analyzing}
-              />
-
-              {importStatus && (
-                <p className="settings-import-status">{importStatus}</p>
-              )}
-              {importError && <p className="error">{importError}</p>}
-
-              <PixelButton
-                className={
-                  importBusy ? 'settings-full-btn is-busy' : 'settings-full-btn'
-                }
-                onClick={onImportGame}
-                aria-busy={importBusy}
-                disabled={
-                  importBusy ||
-                  analyzing ||
-                  (!importDraft.trim() && !chessComUsername.trim())
-                }
-              >
-                {importBusy ? (
-                  <>
-                    <span className="import-spinner" aria-hidden />
-                    {analyzing ? 'Analyzing…' : 'Importing…'}
-                  </>
-                ) : importDraft.trim() ? (
-                  'Import & review'
-                ) : (
-                  'Review latest game'
-                )}
+          {tab === 'games' ? (
+            <div className="my-games-toolbar">
+              <PixelButton onClick={() => setImportOpen(true)}>
+                Import
               </PixelButton>
-
-              {onReviewCurrent && (
-                <PixelButton
-                  ghost
-                  className="settings-full-btn"
-                  onClick={onReviewCurrent}
-                  disabled={!canReviewCurrent || importBusy || analyzing}
-                >
-                  {analyzing ? 'Analyzing…' : 'Review current game'}
-                </PixelButton>
-              )}
             </div>
-          )}
+          ) : null}
 
-          {analyzing && tab !== 'import' && (
+          {analyzing && tab === 'games' && (
             <p className="analysis-status">{analyzeProgress ?? 'Analyzing…'}</p>
           )}
 
-          {!analyzing && analyzeError && tab !== 'import' && (
+          {!analyzing && analyzeError && tab === 'games' && (
             <p className="analysis-status is-error">{analyzeError}</p>
           )}
 
-          {!analyzing && !report && !analyzeError && tab === 'report' && (
+          {!analyzing && !report && !analyzeError && tab === 'games' && (
             <p className="analysis-status">
-              Import a game or finish a match, then run review to see the report.
+              Import a game or finish a match, then run review to see My Games.
             </p>
           )}
 
-          {report && tab === 'report' && (
+          {report && tab === 'games' && (
             <div
               className="analysis-report"
               ref={reviewReportRef}
@@ -642,7 +572,8 @@ export const AnalysisDialog: FC<Props> = ({
                   </div>
                 </section>
 
-                <section className="analysis-counts">
+                <section className="analysis-counts" aria-label="My Games">
+                  <h3>My Games</h3>
                   <div className="analysis-counts-head">
                     <span />
                     <span title={whiteLabel}>{whiteLabel}</span>
@@ -659,6 +590,100 @@ export const AnalysisDialog: FC<Props> = ({
                     </div>
                   ))}
                 </section>
+
+                <section className="analysis-replies" aria-label="Common replies">
+                  <p className="analysis-replies-label">Common next moves</p>
+                  {!chessComUsername.trim() && (
+                    <p className="analysis-replies-note">
+                      Use Import to add your chess.com username and see what people played against you from here.
+                    </p>
+                  )}
+                  {chessComUsername.trim() && repliesStatus === 'loading' && !replies && (
+                    <p className="analysis-replies-note">Reading your recent games…</p>
+                  )}
+                  {repliesError && (
+                    <p className="analysis-replies-note is-error">{repliesError}</p>
+                  )}
+                  {replies && replies.moves.length === 0 && repliesStatus !== 'loading' && (
+                    <p className="analysis-replies-note">
+                      None of your last {replies.scanned} games reached this position.
+                    </p>
+                  )}
+                  {replies && replies.moves.length > 0 && (
+                    <ul className="analysis-reply-list">
+                      {replies.moves.map((move) => {
+                        const pct = replies.reached
+                          ? Math.round((100 * move.count) / replies.reached)
+                          : 0
+                        const scored = move.wins + move.draws + move.losses
+                        const score =
+                          scored > 0
+                            ? Math.round((100 * (move.wins + move.draws * 0.5)) / scored)
+                            : null
+                        return (
+                          <li
+                            key={move.san}
+                            className={[
+                              'analysis-reply',
+                              playedNext === move.san ? 'is-played' : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' ')}
+                          >
+                            <span className="analysis-reply-san">{move.san}</span>
+                            <span className="analysis-reply-pct">{pct}%</span>
+                            <span className="analysis-reply-meta">
+                              {move.count} game{move.count === 1 ? '' : 's'}
+                              {score != null ? ` · you ${score}%` : ''}
+                            </span>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </section>
+
+                <ul className="analysis-move-list">
+                  {moveRows.map((row) => (
+                    <li key={row.moveNo} className="analysis-move-row">
+                      <span className="analysis-move-no">{row.moveNo}.</span>
+                      {row.white ? (
+                        <button
+                          type="button"
+                          className={[
+                            'analysis-move-san',
+                            scrubIndex === row.white.ply ? 'is-active' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => onScrubTo(row.white!.ply)}
+                        >
+                          {row.white.tag && <TagGlyph tag={row.white.tag} />}
+                          {row.white.san}
+                        </button>
+                      ) : (
+                        <span className="analysis-move-san is-empty">…</span>
+                      )}
+                      {row.black ? (
+                        <button
+                          type="button"
+                          className={[
+                            'analysis-move-san',
+                            scrubIndex === row.black.ply ? 'is-active' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => onScrubTo(row.black!.ply)}
+                        >
+                          {row.black.tag && <TagGlyph tag={row.black.tag} />}
+                          {row.black.san}
+                        </button>
+                      ) : (
+                        <span className="analysis-move-san is-empty" />
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </div>
 
               {onSendCoachChat && (
@@ -687,114 +712,94 @@ export const AnalysisDialog: FC<Props> = ({
             </div>
           )}
 
-          {tab === 'analysis' && (
-            <div className="analysis-moves">
-              {open ? <RatingBandMoves fen={fen} /> : null}
-              {report ? (
-              <section className="analysis-replies" aria-label="Common replies">
-                <p className="analysis-replies-label">Common next moves</p>
-                {!chessComUsername.trim() && (
-                  <p className="analysis-replies-note">
-                    Add your chess.com username on Import to see what people played against you from here.
-                  </p>
-                )}
-                {chessComUsername.trim() && repliesStatus === 'loading' && !replies && (
-                  <p className="analysis-replies-note">Reading your recent games…</p>
-                )}
-                {repliesError && (
-                  <p className="analysis-replies-note is-error">{repliesError}</p>
-                )}
-                {replies && replies.moves.length === 0 && repliesStatus !== 'loading' && (
-                  <p className="analysis-replies-note">
-                    None of your last {replies.scanned} games reached this position.
-                  </p>
-                )}
-                {replies && replies.moves.length > 0 && (
-                  <ul className="analysis-reply-list">
-                    {replies.moves.map((move) => {
-                      const pct = replies.reached
-                        ? Math.round((100 * move.count) / replies.reached)
-                        : 0
-                      const scored = move.wins + move.draws + move.losses
-                      const score =
-                        scored > 0
-                          ? Math.round((100 * (move.wins + move.draws * 0.5)) / scored)
-                          : null
-                      return (
-                        <li
-                          key={move.san}
-                          className={[
-                            'analysis-reply',
-                            playedNext === move.san ? 'is-played' : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' ')}
-                        >
-                          <span className="analysis-reply-san">{move.san}</span>
-                          <span className="analysis-reply-pct">{pct}%</span>
-                          <span className="analysis-reply-meta">
-                            {move.count} game{move.count === 1 ? '' : 's'}
-                            {score != null ? ` · you ${score}%` : ''}
-                          </span>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </section>
-              ) : null}
-              {!report && !analyzing && !analyzeError ? (
-                <p className="analysis-replies-note">
-                  Import a game to score each move. Rating-band stats follow the
-                  current position.
-                </p>
-              ) : null}
-              {report ? (
-              <ul className="analysis-move-list">
-                {moveRows.map((row) => (
-                  <li key={row.moveNo} className="analysis-move-row">
-                    <span className="analysis-move-no">{row.moveNo}.</span>
-                    {row.white ? (
-                      <button
-                        type="button"
-                        className={[
-                          'analysis-move-san',
-                          scrubIndex === row.white.ply ? 'is-active' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                        onClick={() => onScrubTo(row.white!.ply)}
-                      >
-                        {row.white.tag && <TagGlyph tag={row.white.tag} />}
-                        {row.white.san}
-                      </button>
-                    ) : (
-                      <span className="analysis-move-san is-empty">…</span>
-                    )}
-                    {row.black ? (
-                      <button
-                        type="button"
-                        className={[
-                          'analysis-move-san',
-                          scrubIndex === row.black.ply ? 'is-active' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                        onClick={() => onScrubTo(row.black!.ply)}
-                      >
-                        {row.black.tag && <TagGlyph tag={row.black.tag} />}
-                        {row.black.san}
-                      </button>
-                    ) : (
-                      <span className="analysis-move-san is-empty" />
-                    )}
-                  </li>
-                ))}
-              </ul>
-              ) : null}
-            </div>
-          )}
         </div>
+
+        {importOpen ? (
+          <div className="import-modal-backdrop" role="presentation">
+            <div
+              className="import-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="import-modal-title"
+            >
+              <div className="import-modal-head">
+                <h3 id="import-modal-title">Import</h3>
+                <PixelButton ghost onClick={() => setImportOpen(false)}>
+                  Close
+                </PixelButton>
+              </div>
+              <p className="analysis-import-lead">
+                Enter your chess.com username to review your latest game, or paste a PGN or game link.
+              </p>
+              <label className="slider-label" htmlFor="analysis-chesscom-user">
+                Your chess.com username
+                <span className="elo-hint">(sets which side is “you”)</span>
+              </label>
+              <input
+                id="analysis-chesscom-user"
+                className="settings-select"
+                type="text"
+                value={chessComUsername}
+                placeholder="optional"
+                autoComplete="username"
+                onChange={(e) => onChessComUsernameChange(e.target.value)}
+                disabled={importBusy || analyzing}
+              />
+              <label className="slider-label" htmlFor="analysis-import-pgn">
+                PGN or chess.com game link
+              </label>
+              <textarea
+                id="analysis-import-pgn"
+                className="settings-fen import-textarea"
+                value={importDraft}
+                onChange={(e) => onImportDraftChange(e.target.value)}
+                rows={8}
+                spellCheck={false}
+                placeholder={
+                  'https://www.chess.com/game/live/…\nor\n[Event "…"]\n1. e4 e5 …'
+                }
+                disabled={importBusy || analyzing}
+              />
+              {importStatus && (
+                <p className="settings-import-status">{importStatus}</p>
+              )}
+              {importError && <p className="error">{importError}</p>}
+              <PixelButton
+                className={
+                  importBusy ? 'settings-full-btn is-busy' : 'settings-full-btn'
+                }
+                onClick={onImportGame}
+                aria-busy={importBusy}
+                disabled={
+                  importBusy ||
+                  analyzing ||
+                  (!importDraft.trim() && !chessComUsername.trim())
+                }
+              >
+                {importBusy ? (
+                  <>
+                    <span className="import-spinner" aria-hidden />
+                    {analyzing ? 'Analyzing…' : 'Importing…'}
+                  </>
+                ) : importDraft.trim() ? (
+                  'Import & review'
+                ) : (
+                  'Review latest game'
+                )}
+              </PixelButton>
+              {onReviewCurrent && (
+                <PixelButton
+                  ghost
+                  className="settings-full-btn"
+                  onClick={onReviewCurrent}
+                  disabled={!canReviewCurrent || importBusy || analyzing}
+                >
+                  {analyzing ? 'Analyzing…' : 'Review current game'}
+                </PixelButton>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <footer className="analysis-transport">
           <PixelButton

@@ -1,22 +1,44 @@
 import {
   isRatingBandId,
   lichessExplorerUrl,
+  normalizeRatings,
   parseExplorerPosition,
   type ExplorerPosition,
+  type ExplorerQueryOptions,
   type RatingBandId,
 } from '../src/lib/lichessExplorer.js'
+
+const UCI_PLAY =
+  /^([a-h][1-8][a-h][1-8][qrbn]?)(,[a-h][1-8][a-h][1-8][qrbn]?)*$/
 
 const USER_AGENT = 'learn-chess (https://learn-chess-fawn.vercel.app)'
 
 export function readExplorerQuery(
   rawUrl: string | undefined,
-): { fen: string; rating: RatingBandId } | { error: string } {
+): { fen: string; ratings: RatingBandId[]; options: ExplorerQueryOptions } | { error: string } {
   const query = new URL(rawUrl ?? '', 'http://localhost').searchParams
   const fen = query.get('fen')?.trim() ?? ''
-  const rating = query.get('ratings')?.trim() ?? ''
+  const ratingRaw = query.get('ratings')?.trim() ?? ''
+  const play = query.get('play')?.trim() ?? ''
+  const movesRaw = Number(query.get('moves'))
   if (!fen || fen.length > 200) return { error: 'fen is required' }
-  if (!isRatingBandId(rating)) return { error: 'ratings must be one band' }
-  return { fen, rating }
+  const parts = ratingRaw.split(',').map((part) => part.trim()).filter(Boolean)
+  if (parts.length === 0 || parts.some((part) => !isRatingBandId(part))) {
+    return { error: 'ratings must be one or more bands' }
+  }
+  const ratings = normalizeRatings(
+    parts.filter((part): part is RatingBandId => isRatingBandId(part)),
+  )
+  if (play && !UCI_PLAY.test(play)) return { error: 'play must be UCI moves' }
+  const moves =
+    Number.isInteger(movesRaw) && movesRaw >= 1 && movesRaw <= 12
+      ? movesRaw
+      : 8
+  return {
+    fen,
+    ratings,
+    options: { play: play || undefined, moves },
+  }
 }
 
 /**
@@ -25,8 +47,9 @@ export function readExplorerQuery(
  */
 export async function fetchExplorerWithToken(
   fen: string,
-  rating: RatingBandId,
+  ratings: readonly RatingBandId[],
   signal?: AbortSignal,
+  options: ExplorerQueryOptions = {},
 ): Promise<{ position: ExplorerPosition; upstream: string }> {
   const token = (
     process.env.LICHESS_API_TOKEN || process.env.LICHESS_TOKEN
@@ -36,7 +59,7 @@ export async function fetchExplorerWithToken(
       'Set LICHESS_API_TOKEN (or LICHESS_TOKEN) on the server to a Lichess personal API token from https://lichess.org/account/oauth/token. Anonymous explorer requests are rejected.',
     )
   }
-  const upstream = lichessExplorerUrl(fen, rating)
+  const upstream = lichessExplorerUrl(fen, ratings, options)
   let res: Response
   try {
     res = await fetch(upstream, {

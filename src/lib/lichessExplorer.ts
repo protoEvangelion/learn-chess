@@ -10,19 +10,19 @@
 export const LICHESS_EXPLORER_ENDPOINT = 'https://explorer.lichess.org/lichess'
 
 export const EXPLORER_SPEEDS = 'blitz,rapid,classical'
-export const EXPLORER_MOVE_CAP = 8
+export const EXPLORER_MOVE_CAP = 12
 
 /** Average of both players. Each band runs from its value up to the next. */
 export const RATING_BANDS = [
-  { id: '0', label: '0–999' },
-  { id: '1000', label: '1000–1199' },
-  { id: '1200', label: '1200–1399' },
-  { id: '1400', label: '1400–1599' },
-  { id: '1600', label: '1600–1799' },
-  { id: '1800', label: '1800–1999' },
-  { id: '2000', label: '2000–2199' },
-  { id: '2200', label: '2200–2499' },
-  { id: '2500', label: '2500+' },
+  { id: '0', label: '0/400' },
+  { id: '1000', label: '1000' },
+  { id: '1200', label: '1200' },
+  { id: '1400', label: '1400' },
+  { id: '1600', label: '1600' },
+  { id: '1800', label: '1800' },
+  { id: '2000', label: '2000' },
+  { id: '2200', label: '2200' },
+  { id: '2500', label: '2500' },
 ] as const
 
 export type RatingBandId = (typeof RATING_BANDS)[number]['id']
@@ -33,6 +33,11 @@ export function isRatingBandId(value: string): value is RatingBandId {
   return RATING_BANDS.some((band) => band.id === value)
 }
 
+export type ExplorerOpening = {
+  eco: string
+  name: string
+}
+
 export type ExplorerMove = {
   san: string
   uci: string
@@ -40,6 +45,8 @@ export type ExplorerMove = {
   white: number
   draws: number
   black: number
+  /** Named opening reached by playing this move, when Lichess has one. */
+  opening: ExplorerOpening | null
 }
 
 export type ExplorerPosition = {
@@ -51,32 +58,70 @@ export type ExplorerPosition = {
   queued: boolean
 }
 
+export type ExplorerQueryOptions = {
+  /** Comma-separated UCI moves played from `fen`. Needed for opening names. */
+  play?: string
+  moves?: number
+}
+
+/** Bands in Lichess enum order, duplicates dropped. */
+export function normalizeRatings(ratings: readonly RatingBandId[]): RatingBandId[] {
+  const selected = new Set(ratings)
+  return RATING_BANDS.map((band) => band.id).filter((id) => selected.has(id))
+}
+
 /** Query string matching the official example (slashes left intact, spaces as %20). */
-export function lichessExplorerQuery(fen: string, rating: RatingBandId): string {
+export function lichessExplorerQuery(
+  fen: string,
+  ratings: readonly RatingBandId[],
+  options: ExplorerQueryOptions = {},
+): string {
   const fenParam = encodeURIComponent(fen).replace(/%2F/g, '/')
-  return [
+  const bandList = normalizeRatings(ratings)
+  const moveCap = options.moves ?? 8
+  const parts = [
     `fen=${fenParam}`,
     'variant=standard',
     `speeds=${EXPLORER_SPEEDS}`,
-    `ratings=${rating}`,
-    `moves=${EXPLORER_MOVE_CAP}`,
+    `ratings=${bandList.join(',')}`,
+    `moves=${moveCap}`,
     'topGames=0',
     'recentGames=0',
-  ].join('&')
+  ]
+  if (options.play) parts.push(`play=${options.play}`)
+  return parts.join('&')
 }
 
-export function lichessExplorerUrl(fen: string, rating: RatingBandId): string {
-  return `${LICHESS_EXPLORER_ENDPOINT}?${lichessExplorerQuery(fen, rating)}`
+export function lichessExplorerUrl(
+  fen: string,
+  ratings: readonly RatingBandId[],
+  options: ExplorerQueryOptions = {},
+): string {
+  return `${LICHESS_EXPLORER_ENDPOINT}?${lichessExplorerQuery(fen, ratings, options)}`
 }
 
-/** Same-origin request the analysis panel actually sends. */
-export function openingExplorerApiUrl(fen: string, rating: RatingBandId): string {
-  return `/api/opening-explorer?${lichessExplorerQuery(fen, rating)}`
+/** Same-origin request the Explore tab actually sends. */
+export function openingExplorerApiUrl(
+  fen: string,
+  ratings: readonly RatingBandId[],
+  options: ExplorerQueryOptions = {},
+): string {
+  return `/api/opening-explorer?${lichessExplorerQuery(fen, ratings, options)}`
 }
 
 function readCount(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 0
   return Math.floor(value)
+}
+
+function parseOpening(value: unknown): ExplorerOpening | null {
+  if (!value || typeof value !== 'object') return null
+  const opening = value as Record<string, unknown>
+  if (typeof opening.name !== 'string' || opening.name.trim() === '') return null
+  return {
+    eco: typeof opening.eco === 'string' ? opening.eco : '',
+    name: opening.name.trim(),
+  }
 }
 
 function parseMove(value: unknown): ExplorerMove | null {
@@ -91,6 +136,7 @@ function parseMove(value: unknown): ExplorerMove | null {
     white: readCount(move.white),
     draws: readCount(move.draws),
     black: readCount(move.black),
+    opening: parseOpening(move.opening),
   }
 }
 
@@ -126,10 +172,11 @@ export function explorerGames(move: {
 
 export async function fetchLichessExplorer(
   fen: string,
-  rating: RatingBandId,
+  ratings: readonly RatingBandId[],
   signal: AbortSignal,
+  options: ExplorerQueryOptions = {},
 ): Promise<ExplorerPosition> {
-  const url = openingExplorerApiUrl(fen, rating)
+  const url = openingExplorerApiUrl(fen, ratings, options)
   let res: Response
   try {
     res = await fetch(url, {
