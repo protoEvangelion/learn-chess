@@ -249,12 +249,15 @@ export function sideWinRate(line: {
   return (line.mover === 'black' ? line.black : line.white) / total
 }
 
-export function sortBranchLines<T extends OpeningBranchLine>(lines: readonly T[]): T[] {
-  return [...lines].sort((a, b) => {
-    const delta = sideWinRate(b) - sideWinRate(a)
-    if (delta !== 0) return delta
-    return a.name.localeCompare(b.name, 'en')
-  })
+/** White's score. Empty totals sort last. */
+export function whiteWinRate(line: {
+  white: number
+  draws: number
+  black: number
+}): number {
+  const total = line.white + line.draws + line.black
+  if (total <= 0) return -1
+  return line.white / total
 }
 
 /** Black's score. Empty totals sort last. */
@@ -268,14 +271,28 @@ export function blackWinRate(line: {
   return line.black / total
 }
 
+/** Highest win rate for `side` first. Lines with no games stay last. */
+export function sortByWinRate<T extends { white: number; draws: number; black: number }>(
+  rows: readonly T[],
+  side: 'white' | 'black',
+  label: (row: T) => string,
+): T[] {
+  const rate = side === 'black' ? blackWinRate : whiteWinRate
+  return [...rows].sort((a, b) => {
+    const delta = rate(b) - rate(a)
+    if (delta !== 0) return delta
+    return label(a).localeCompare(label(b), 'en')
+  })
+}
+
+export function sortBranchLines<T extends OpeningBranchLine>(lines: readonly T[]): T[] {
+  return sortByWinRate(lines, 'white', (line) => line.name)
+}
+
 export function sortBlackDefenses<T extends BlackDefense>(
   defenses: readonly T[],
 ): T[] {
-  return [...defenses].sort((a, b) => {
-    const delta = blackWinRate(b) - blackWinRate(a)
-    if (delta !== 0) return delta
-    return a.name.localeCompare(b.name, 'en')
-  })
+  return sortByWinRate(defenses, 'black', (line) => line.name)
 }
 
 /** a3, a4, b3, b4, … then piece moves. Letter order, not popularity. */

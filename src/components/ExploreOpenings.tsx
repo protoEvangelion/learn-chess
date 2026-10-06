@@ -20,10 +20,10 @@ import {
   isRatingBandId,
   normalizeRatings,
   openingExplorerApiUrl,
-  sideWinRate,
   sortBlackDefenses,
   sortBranchLines,
-  sortBySan,
+  sortByWinRate,
+  whiteWinRate,
   type BlackDefense,
   type ExplorerOpening,
   type OpeningBranchLine,
@@ -90,7 +90,7 @@ async function loadGroups(
   const root = await fetchLichessExplorer(START_FEN, ratings, signal, {
     moves: EXPLORER_MOVE_CAP,
   })
-  const groups = sortBySan(
+  const groups = sortByWinRate(
     root.moves
       .filter((move) => WHITE_FIRST_MOVES.has(move.san))
       .map((move) => ({
@@ -102,6 +102,8 @@ async function loadGroups(
         averageRating: move.averageRating,
         opening: move.opening,
       })),
+    'white',
+    (move) => move.san,
   )
   return { total: explorerGames(root), groups }
 }
@@ -256,7 +258,7 @@ function OpeningDisclosure({
         {lines.length > 0 ? (
           <ul className="explore-lines" aria-label={`Named lines under ${group.san}`}>
             {lines.map((line) => {
-              const rate = sideWinRate(line)
+              const rate = whiteWinRate(line)
               return (
                 <li
                   key={line.name}
@@ -458,8 +460,8 @@ export const ExploreOpenings: FC = () => {
         <RatingBandMultiSelect value={selected} onChange={setRatings} />
       </div>
       <p className="rating-band-note">
-        Lichess combines the selected rating bands. White lists legal first moves
-        from a through h. Black lists defenses by Black’s win rate.
+        Lichess combines the selected rating bands. Each list is ordered by that
+        side’s win rate.
       </p>
 
       <TooltipProvider delayDuration={250}>
