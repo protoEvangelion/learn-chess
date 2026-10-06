@@ -479,50 +479,30 @@ export default function App() {
     setFenDraft(fen)
   }, [fen])
 
-  // Mint a coach session id for free-play resume. Skip practice URLs; coach open/ask mints on demand.
   useEffect(() => {
-    if (gameId) return
-    if (readPanelFromUrl() === 'drill') return
-    const controller = new AbortController()
-    mintGameId(controller.signal)
-      .then((id) => {
-        // Panel may have switched to drill while the request was in flight.
-        if (readPanelFromUrl() === 'drill') {
-          setGameId(id)
-          return
-        }
-        setGameId(id)
-        replaceGameInUrl(sharePgn, id, urlHistoryIndexRef.current)
-      })
-      .catch(() => {
-        /* Ask coach will surface errors if mint still fails later */
-      })
-    return () => controller.abort()
-    // sharePgn only used for the initial URL write when the id arrives
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId])
-
-  useEffect(() => {
-    if (!gameId) return
+    // A visit with no game and no position must not grow a query string.
+    // gameId is written when a game is created (New game, import, coach).
+    if (!gameId && !sharePgn.trim()) return
+    const id = gameId ?? ''
     if (reviewImport) {
       // Scrubbing shouldn't flood browser history — the URL keeps the full game PGN.
-      replaceGameInUrl(sharePgn, gameId, urlHistoryIndexRef.current)
+      replaceGameInUrl(sharePgn, id, urlHistoryIndexRef.current)
       return
     }
     if (!urlReadyRef.current) {
       urlReadyRef.current = true
-      replaceGameInUrl(sharePgn, gameId, 0)
+      replaceGameInUrl(sharePgn, id, 0)
       urlHistoryIndexRef.current = 0
       setUrlHistoryIndex(0)
       return
     }
     if (syncingFromUrlRef.current) {
       syncingFromUrlRef.current = false
-      replaceGameInUrl(sharePgn, gameId, urlHistoryIndexRef.current)
+      replaceGameInUrl(sharePgn, id, urlHistoryIndexRef.current)
       return
     }
     const nextIdx = urlHistoryIndexRef.current + 1
-    if (pushGameToUrl(sharePgn, gameId, nextIdx)) {
+    if (pushGameToUrl(sharePgn, id, nextIdx)) {
       urlHistoryIndexRef.current = nextIdx
       setUrlHistoryIndex(nextIdx)
     }
