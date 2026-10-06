@@ -60,9 +60,11 @@ function percentLabel(white: number, draws: number, black: number) {
   return `White ${pct(white)} · Draw ${pct(draws)} · Black ${pct(black)}`
 }
 
-function shareLabel(part: number, total: number) {
-  if (total <= 0) return '0%'
-  return `${((part / total) * 100).toFixed(1)}%`
+/** Win rate for the section's side. Blank when the line has no games. */
+function advantageLabel(wins: number, white: number, draws: number, black: number) {
+  const games = white + draws + black
+  if (games <= 0) return ''
+  return `${((wins / games) * 100).toFixed(1)}%`
 }
 
 function bandsFromKey(ratingKey: string): RatingBandId[] {
@@ -155,11 +157,9 @@ function AverageRating({ value }: { value: number }) {
 
 function OpeningDisclosure({
   group,
-  total,
   ratingKey,
 }: {
   group: OpeningGroup
-  total: number
   ratingKey: string
 }) {
   const [status, setStatus] = useState<BranchStatus>('idle')
@@ -168,7 +168,6 @@ function OpeningDisclosure({
   const [lines, setLines] = useState<OpeningBranchLine[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const startedRef = useRef(false)
-  const games = explorerGames(group)
   const parentName = opening?.name ?? ''
   const showEmpty = status === 'ready' && lines.length === 0 && !parentName
 
@@ -221,7 +220,9 @@ function OpeningDisclosure({
             <span className="explore-chevron" aria-hidden="true" />
             <span className="rating-band-san">{group.san}</span>
           </span>
-          <span className="explore-pct">{shareLabel(games, total)}</span>
+          <span className="explore-pct">
+            {advantageLabel(group.white, group.white, group.draws, group.black)}
+          </span>
         </span>
         {group.averageRating > 0 ? (
           <p className="rating-band-games">
@@ -255,7 +256,6 @@ function OpeningDisclosure({
         {lines.length > 0 ? (
           <ul className="explore-lines" aria-label={`Named lines under ${group.san}`}>
             {lines.map((line) => {
-              const lineGames = explorerGames(line)
               const rate = sideWinRate(line)
               return (
                 <li
@@ -270,7 +270,9 @@ function OpeningDisclosure({
                       {line.eco ? `${line.eco} ` : ''}
                       {lineLabel(line.name, parentName)}
                     </span>
-                    <span className="explore-pct">{shareLabel(lineGames, total)}</span>
+                    <span className="explore-pct">
+                      {advantageLabel(line.white, line.white, line.draws, line.black)}
+                    </span>
                   </div>
                   <ResultBar white={line.white} draws={line.draws} black={line.black} />
                 </li>
@@ -283,20 +285,12 @@ function OpeningDisclosure({
   )
 }
 
-function BlackDefenses({
-  ratingKey,
-  total,
-}: {
-  ratingKey: string
-  total: number
-}) {
+function BlackDefenses({ ratingKey }: { ratingKey: string }) {
   const [status, setStatus] = useState<BranchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [defenses, setDefenses] = useState<BlackDefense[]>([])
-  const [payloadTotal, setPayloadTotal] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
   const startedRef = useRef(false)
-  const shareTotal = total > 0 ? total : payloadTotal
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -311,7 +305,6 @@ function BlackDefenses({
     void fetchBlackDefenses(START_FEN, bandsFromKey(ratingKey), controller.signal)
       .then((list) => {
         if (controller.signal.aborted) return
-        setPayloadTotal(list.total)
         setDefenses(sortBlackDefenses(list.defenses))
         setStatus('ready')
       })
@@ -357,7 +350,6 @@ function BlackDefenses({
             data-defense-order={defenses.map((defense) => defense.san).join(',')}
           >
             {defenses.map((defense) => {
-              const games = explorerGames(defense)
               const rate = blackWinRate(defense)
               return (
                 <li
@@ -375,7 +367,14 @@ function BlackDefenses({
                         {defense.name}
                       </span>
                     </span>
-                    <span className="explore-pct">{shareLabel(games, shareTotal)}</span>
+                    <span className="explore-pct">
+                      {advantageLabel(
+                        defense.black,
+                        defense.white,
+                        defense.draws,
+                        defense.black,
+                      )}
+                    </span>
                   </div>
                   {defense.averageRating > 0 ? (
                     <p className="rating-band-games">
@@ -408,7 +407,6 @@ export const ExploreOpenings: FC = () => {
   const current = snapshot && snapshot.key === ratingKey ? snapshot : null
   const status = current?.status ?? 'loading'
   const groups = current?.status === 'ready' ? current.groups : null
-  const total = current?.status === 'ready' ? current.total : 0
   const error = current?.status === 'error' ? current.error : null
 
   useEffect(() => {
@@ -494,18 +492,14 @@ export const ExploreOpenings: FC = () => {
                 >
                   {groups.map((group) => (
                     <li key={`${ratingKey}:${group.uci}`}>
-                      <OpeningDisclosure
-                        group={group}
-                        total={total}
-                        ratingKey={ratingKey}
-                      />
+                      <OpeningDisclosure group={group} ratingKey={ratingKey} />
                     </li>
                   ))}
                 </ul>
               ) : null}
             </div>
           </details>
-          <BlackDefenses key={ratingKey} ratingKey={ratingKey} total={total} />
+          <BlackDefenses key={ratingKey} ratingKey={ratingKey} />
         </div>
       </TooltipProvider>
     </section>
