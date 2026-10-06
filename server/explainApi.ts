@@ -9,7 +9,11 @@ import {
   fetchExplorerWithToken,
   readExplorerQuery,
 } from './lichessExplorerProxy.js'
-import { loadBlackDefenses, loadOpeningBranch } from './openingBranch.js'
+import {
+  loadBlackDefenses,
+  loadOpeningBranch,
+  purgeExpiredExplorerBranches,
+} from './openingBranch.js'
 import { loadServerEnv } from './loadServerEnv.js'
 
 loadServerEnv()
@@ -743,6 +747,37 @@ export async function handleExplainApi(
           } catch (err) {
             sendJson(res, 400, {
               error: err instanceof Error ? err.message : 'opening replies failed',
+            })
+          }
+          return
+        }
+
+        if (url === '/api/explore-cache') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'GET') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          const secret = process.env.CRON_SECRET?.trim()
+          if (secret) {
+            const header = req.headers.authorization
+            const auth = Array.isArray(header) ? header[0] : header
+            if (auth !== `Bearer ${secret}`) {
+              sendJson(res, 401, { error: 'cron unauthorized' })
+              return
+            }
+          }
+          try {
+            const deleted = await purgeExpiredExplorerBranches()
+            sendJson(res, 200, { deleted })
+          } catch (err) {
+            sendJson(res, 500, {
+              error: err instanceof Error ? err.message : 'cache cleanup failed',
             })
           }
           return

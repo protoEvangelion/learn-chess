@@ -3,5 +3,11 @@
     "api/*.ts": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/explore-cache",
+      "schedule": "0 0 * * 0"
+    }
+  ]
 }

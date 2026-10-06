@@ -157,12 +157,21 @@ function AverageRating({ value }: { value: number }) {
   )
 }
 
+function childLineText(line: OpeningBranchLine, parentName: string) {
+  const variation = lineLabel(line.name, parentName)
+  const titled = line.san ? `${line.san} - ${variation}` : variation
+  if (parentName) return titled
+  return `${line.eco ? `${line.eco} ` : ''}${titled}`.trim()
+}
+
 function OpeningDisclosure({
   group,
   ratingKey,
+  onPlaySan,
 }: {
   group: OpeningGroup
   ratingKey: string
+  onPlaySan?: (san: string) => void
 }) {
   const [status, setStatus] = useState<BranchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -219,7 +228,12 @@ function OpeningDisclosure({
       <summary className="explore-summary">
         <span className="rating-band-move-row">
           <span className="explore-summary-main">
-            <span className="explore-chevron" aria-hidden="true" />
+            <span
+              className="explore-chevron"
+              data-play={group.san}
+              aria-label={`Play ${group.san}`}
+              onClick={() => onPlaySan?.(group.san)}
+            />
             <span className="rating-band-san">{group.san}</span>
           </span>
           <span className="explore-pct">
@@ -269,8 +283,16 @@ function OpeningDisclosure({
                 >
                   <div className="rating-band-move-row">
                     <span className="explore-line-name">
-                      {line.eco ? `${line.eco} ` : ''}
-                      {lineLabel(line.name, parentName)}
+                      {line.san ? (
+                        <button
+                          type="button"
+                          className="explore-chevron"
+                          data-play={line.san}
+                          aria-label={`Play ${line.san}`}
+                          onClick={() => onPlaySan?.(line.san ?? '')}
+                        />
+                      ) : null}
+                      {childLineText(line, parentName)}
                     </span>
                     <span className="explore-pct">
                       {advantageLabel(line.white, line.white, line.draws, line.black)}
@@ -398,7 +420,9 @@ function BlackDefenses({ ratingKey }: { ratingKey: string }) {
   )
 }
 
-export const ExploreOpenings: FC = () => {
+export const ExploreOpenings: FC<{ onPlaySan?: (san: string) => void }> = ({
+  onPlaySan,
+}) => {
   const [ratings, setRatings] = useState<RatingBandId[]>([DEFAULT_RATING_BAND])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const selected = normalizeRatings(ratings)
@@ -494,7 +518,11 @@ export const ExploreOpenings: FC = () => {
                 >
                   {groups.map((group) => (
                     <li key={`${ratingKey}:${group.uci}`}>
-                      <OpeningDisclosure group={group} ratingKey={ratingKey} />
+                      <OpeningDisclosure
+                        group={group}
+                        ratingKey={ratingKey}
+                        onPlaySan={onPlaySan}
+                      />
                     </li>
                   ))}
                 </ul>

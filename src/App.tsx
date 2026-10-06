@@ -381,6 +381,8 @@ export default function App() {
     'move',
   )
   const skipEngineOnce = useRef(false)
+  /** SAN from an Explore chevron, held while a piece is still moving. */
+  const exploreSanRef = useRef<string | null>(null)
   const coachAbortRef = useRef<AbortController | null>(null)
   const coachChatAbortRef = useRef<AbortController | null>(null)
   /** Ephemeral drill session id — never written to the URL; reminted per line. */
@@ -1772,6 +1774,66 @@ export default function App() {
     setPanelFitEpoch((n) => n + 1)
   }, [roomId])
 
+  const applyExploreSan = useCallback(() => {
+    const san = exploreSanRef.current
+    if (!san || reviewImport) return
+    if (movingTo) {
+      skipEngineOnce.current = true
+      return
+    }
+    if (pendingEngineMove) {
+      const replacement = sanToBoardMove(board, history, turn, san)
+      if (!replacement) return
+      exploreSanRef.current = null
+      setPendingEngineMove(replacement)
+      return
+    }
+    const move = sanToBoardMove(board, history, turn, san)
+    if (move) {
+      exploreSanRef.current = null
+      if (turn === playerColor) skipEngineOnce.current = true
+      else skipEngineOnce.current = false
+      setPendingEngineMove(move)
+      return
+    }
+    const last = history[history.length - 1]
+    if (last && last.piece.color !== playerColor) {
+      const prev = history.slice(0, -1)
+      const undone = sanToBoardMove(last.board, prev, last.piece.color, san)
+      if (undone) {
+        exploreSanRef.current = null
+        skipEngineOnce.current = false
+        setBoard(copyBoard(last.board))
+        popHistory()
+        useGameState.setState({ turn: last.piece.color, movingTo: null })
+        setSelected(null)
+        setMoves([])
+        setPendingEngineMove(undone)
+        return
+      }
+    }
+    exploreSanRef.current = null
+  }, [
+    board,
+    history,
+    movingTo,
+    pendingEngineMove,
+    playerColor,
+    popHistory,
+    reviewImport,
+    turn,
+  ])
+
+  useEffect(() => {
+    applyExploreSan()
+  }, [applyExploreSan])
+
+  function playExploreSan(san: string) {
+    if (!san || reviewImport) return
+    exploreSanRef.current = san
+    applyExploreSan()
+  }
+
   return (
     <div className="app" onPointerDown={() => unlockSfx()}>
       {endOutcome && !endgameDismissed && !drillOpen && (
@@ -1860,6 +1922,7 @@ export default function App() {
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
         onFrequencyArrows={setFrequencyArrows}
+        onPlaySan={playExploreSan}
       />
 
       <DrillDialog

@@ -1814,6 +1814,15 @@ body.is-review-coach-resizing canvas {
   min-width: 0;
 }
 
+.explore-chevron {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+}
+
 .explore-chevron::before {
   content: '▸';
   color: var(--sw-muted);

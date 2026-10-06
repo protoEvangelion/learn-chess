@@ -69,6 +69,8 @@ export type BranchMover = 'white' | 'black'
 export type OpeningBranchLine = {
   name: string
   eco: string
+  /** SAN of the move from the parent position into this line. */
+  san?: string
   white: number
   draws: number
   black: number
@@ -227,6 +229,7 @@ export function parseOpeningBranch(payload: unknown): OpeningBranch {
     lines.push({
       name: line.name.trim(),
       eco: typeof line.eco === 'string' ? line.eco : '',
+      san: typeof line.san === 'string' ? line.san.trim() : '',
       white: readCount(line.white),
       draws: readCount(line.draws),
       black: readCount(line.black),
