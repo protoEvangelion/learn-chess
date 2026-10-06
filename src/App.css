@@ -1741,6 +1741,64 @@ body.is-review-coach-resizing canvas {
   font-size: 0.82rem;
 }
 
+.explore-disclosure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.explore-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.explore-summary::-webkit-details-marker {
+  display: none;
+}
+
+.explore-summary::marker {
+  content: '';
+}
+
+.explore-summary-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.explore-chevron::before {
+  content: '▸';
+  color: var(--sw-muted);
+  font-size: 0.75rem;
+}
+
+.explore-disclosure[open] > .explore-summary .explore-chevron::before {
+  content: '▾';
+}
+
+.explore-summary:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--sw-teal) 70%, white);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.explore-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
+.explore-opening-name {
+  margin: 0.15rem 0 0;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
 .my-games-toolbar {
   display: flex;
   justify-content: flex-end;

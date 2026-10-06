@@ -1,4 +1,5 @@
 import {
+  EXPLORER_MOVE_CAP,
   isRatingBandId,
   lichessExplorerUrl,
   normalizeRatings,
@@ -31,9 +32,9 @@ export function readExplorerQuery(
   )
   if (play && !UCI_PLAY.test(play)) return { error: 'play must be UCI moves' }
   const moves =
-    Number.isInteger(movesRaw) && movesRaw >= 1 && movesRaw <= 12
-      ? movesRaw
-      : 8
+    Number.isInteger(movesRaw) && movesRaw >= 1
+      ? Math.min(movesRaw, EXPLORER_MOVE_CAP)
+      : EXPLORER_MOVE_CAP
   return {
     fen,
     ratings,

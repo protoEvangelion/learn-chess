@@ -10,7 +10,11 @@
 export const LICHESS_EXPLORER_ENDPOINT = 'https://explorer.lichess.org/lichess'
 
 export const EXPLORER_SPEEDS = 'blitz,rapid,classical'
-export const EXPLORER_MOVE_CAP = 12
+/**
+ * Lichess defaults this to 12, which hides rare first moves such as a4.
+ * 100 covers every legal reply in a normal opening position.
+ */
+export const EXPLORER_MOVE_CAP = 100
 
 /** Average of both players. Each band runs from its value up to the next. */
 export const RATING_BANDS = [
@@ -54,8 +58,28 @@ export type ExplorerPosition = {
   draws: number
   black: number
   moves: ExplorerMove[]
+  /** Named opening of this position, when Lichess has one. */
+  opening: ExplorerOpening | null
   /** Explorer is still indexing this position. */
   queued: boolean
+}
+
+export type BranchMover = 'white' | 'black'
+
+export type OpeningBranchLine = {
+  name: string
+  eco: string
+  white: number
+  draws: number
+  black: number
+  averageRating: number
+  /** Side that played the move which reached this line. */
+  mover: BranchMover
+}
+
+export type OpeningBranch = {
+  opening: ExplorerOpening | null
+  lines: OpeningBranchLine[]
 }
 
 export type ExplorerQueryOptions = {
@@ -78,7 +102,7 @@ export function lichessExplorerQuery(
 ): string {
   const fenParam = encodeURIComponent(fen).replace(/%2F/g, '/')
   const bandList = normalizeRatings(ratings)
-  const moveCap = options.moves ?? 8
+  const moveCap = options.moves ?? EXPLORER_MOVE_CAP
   const parts = [
     `fen=${fenParam}`,
     'variant=standard',
@@ -158,8 +182,64 @@ export function parseExplorerPosition(payload: unknown): ExplorerPosition {
     draws: readCount(body.draws),
     black: readCount(body.black),
     moves,
+    opening: parseOpening(body.opening),
     queued: typeof queuePosition === 'number' && queuePosition > 0,
   }
+}
+
+function parseMover(value: unknown): BranchMover {
+  return value === 'black' ? 'black' : 'white'
+}
+
+export function parseOpeningBranch(payload: unknown): OpeningBranch {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Opening branch returned an unexpected response.')
+  }
+  const body = payload as Record<string, unknown>
+  const rawLines = Array.isArray(body.lines) ? body.lines : []
+  const lines: OpeningBranchLine[] = []
+  for (const item of rawLines) {
+    if (!item || typeof item !== 'object') continue
+    const line = item as Record<string, unknown>
+    if (typeof line.name !== 'string' || line.name.trim() === '') continue
+    lines.push({
+      name: line.name.trim(),
+      eco: typeof line.eco === 'string' ? line.eco : '',
+      white: readCount(line.white),
+      draws: readCount(line.draws),
+      black: readCount(line.black),
+      averageRating: readCount(line.averageRating),
+      mover: parseMover(line.mover),
+    })
+  }
+  return { opening: parseOpening(body.opening), lines }
+}
+
+/** Win rate of the side that played the line. Black replies use Black's score. */
+export function sideWinRate(line: {
+  white: number
+  draws: number
+  black: number
+  mover: BranchMover
+}): number {
+  const total = line.white + line.draws + line.black
+  if (total <= 0) return -1
+  return (line.mover === 'black' ? line.black : line.white) / total
+}
+
+export function sortBranchLines<T extends OpeningBranchLine>(lines: readonly T[]): T[] {
+  return [...lines].sort((a, b) => {
+    const delta = sideWinRate(b) - sideWinRate(a)
+    if (delta !== 0) return delta
+    return a.name.localeCompare(b.name, 'en')
+  })
+}
+
+/** a3, a4, b3, b4, … then piece moves. Letter order, not popularity. */
+export function sortBySan<T extends { san: string }>(groups: readonly T[]): T[] {
+  return [...groups].sort((a, b) =>
+    a.san.toLowerCase().localeCompare(b.san.toLowerCase(), 'en', { numeric: true }),
+  )
 }
 
 export function explorerGames(move: {
@@ -204,4 +284,51 @@ export async function fetchLichessExplorer(
     throw new Error(message)
   }
   return parseExplorerPosition(payload)
+}
+
+export function openingBranchApiUrl(
+  fen: string,
+  ratings: readonly RatingBandId[],
+  play: string,
+): string {
+  return `/api/opening-branch?${lichessExplorerQuery(fen, ratings, {
+    play,
+    moves: EXPLORER_MOVE_CAP,
+  })}`
+}
+
+export async function fetchOpeningBranch(
+  fen: string,
+  ratings: readonly RatingBandId[],
+  play: string,
+  signal: AbortSignal,
+): Promise<OpeningBranch> {
+  const url = openingBranchApiUrl(fen, ratings, play)
+  let res: Response
+  try {
+    res = await fetch(url, {
+      signal,
+      headers: { Accept: 'application/json' },
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    throw new Error("Couldn't reach the opening tree.")
+  }
+  let payload: unknown = null
+  try {
+    payload = await res.json()
+  } catch {
+    payload = null
+  }
+  if (!res.ok) {
+    const message =
+      payload &&
+      typeof payload === 'object' &&
+      'error' in payload &&
+      typeof (payload as { error?: unknown }).error === 'string'
+        ? (payload as { error: string }).error
+        : `Opening tree returned ${res.status}.`
+    throw new Error(message)
+  }
+  return parseOpeningBranch(payload)
 }

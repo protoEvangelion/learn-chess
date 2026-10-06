@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC } from 'react'
+import { useEffect, useRef, useState, type FC, type SyntheticEvent } from 'react'
 import { RatingBandMultiSelect } from '@/components/RatingBandMultiSelect'
 import {
   Tooltip,
@@ -8,13 +8,18 @@ import {
 } from '@/components/ui/tooltip'
 import {
   DEFAULT_RATING_BAND,
+  EXPLORER_MOVE_CAP,
   explorerGames,
   fetchLichessExplorer,
+  fetchOpeningBranch,
   isRatingBandId,
   normalizeRatings,
   openingExplorerApiUrl,
-  type ExplorerMove,
-  type ExplorerPosition,
+  sideWinRate,
+  sortBranchLines,
+  sortBySan,
+  type ExplorerOpening,
+  type OpeningBranchLine,
   type RatingBandId,
 } from '@/lib/lichessExplorer'
 
@@ -23,16 +28,6 @@ type Props = {
 }
 
 const DEBOUNCE_MS = 250
-const CHILD_CONCURRENCY = 3
-
-type OpeningLine = {
-  name: string
-  eco: string
-  white: number
-  draws: number
-  black: number
-  averageRating: number
-}
 
 type OpeningGroup = {
   san: string
@@ -41,7 +36,7 @@ type OpeningGroup = {
   draws: number
   black: number
   averageRating: number
-  lines: OpeningLine[]
+  opening: ExplorerOpening | null
 }
 
 type Snapshot = {
@@ -51,6 +46,8 @@ type Snapshot = {
   total: number
   groups: OpeningGroup[]
 }
+
+type BranchStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 function percentLabel(white: number, draws: number, black: number) {
   const total = white + draws + black
@@ -64,61 +61,20 @@ function shareLabel(part: number, total: number) {
   return `${((part / total) * 100).toFixed(1)}%`
 }
 
-async function mapLimit<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length)
-  let next = 0
-  const workers = Array.from(
-    { length: Math.min(limit, items.length) },
-    async () => {
-      while (next < items.length) {
-        const index = next
-        next += 1
-        results[index] = await fn(items[index])
-      }
-    },
+function bandsFromKey(ratingKey: string): RatingBandId[] {
+  return normalizeRatings(
+    ratingKey.split(',').filter((id): id is RatingBandId => isRatingBandId(id)),
   )
-  await Promise.all(workers)
-  return results
 }
 
-function linesFromReplies(moves: ExplorerMove[]): OpeningLine[] {
-  const byName = new Map<string, OpeningLine>()
-  for (const move of moves) {
-    if (!move.opening) continue
-    const key = move.opening.name
-    const prev = byName.get(key)
-    if (!prev) {
-      byName.set(key, {
-        name: move.opening.name,
-        eco: move.opening.eco,
-        white: move.white,
-        draws: move.draws,
-        black: move.black,
-        averageRating: move.averageRating,
-      })
-      continue
-    }
-    const prevGames = explorerGames(prev)
-    const addGames = explorerGames(move)
-    const combined = prevGames + addGames
-    prev.white += move.white
-    prev.draws += move.draws
-    prev.black += move.black
-    prev.averageRating =
-      combined > 0
-        ? Math.round(
-            (prev.averageRating * prevGames + move.averageRating * addGames) /
-              combined,
-          )
-        : prev.averageRating
+function lineLabel(name: string, parentName: string) {
+  if (parentName && name.startsWith(`${parentName}: `)) {
+    return name.slice(parentName.length + 2)
   }
-  return [...byName.values()].sort(
-    (a, b) => explorerGames(b) - explorerGames(a),
-  )
+  if (parentName && name.startsWith(`${parentName}, `)) {
+    return name.slice(parentName.length + 2)
+  }
+  return name
 }
 
 async function loadGroups(
@@ -126,31 +82,20 @@ async function loadGroups(
   ratings: RatingBandId[],
   signal: AbortSignal,
 ): Promise<{ total: number; groups: OpeningGroup[] }> {
-  const root: ExplorerPosition = await fetchLichessExplorer(fen, ratings, signal, {
-    moves: 8,
+  const root = await fetchLichessExplorer(fen, ratings, signal, {
+    moves: EXPLORER_MOVE_CAP,
   })
-  const groups = await mapLimit(root.moves, CHILD_CONCURRENCY, async (move) => {
-    let lines: OpeningLine[] = []
-    try {
-      const child = await fetchLichessExplorer(fen, ratings, signal, {
-        play: move.uci,
-        moves: 12,
-      })
-      lines = linesFromReplies(child.moves)
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') throw err
-      lines = []
-    }
-    return {
+  const groups = sortBySan(
+    root.moves.map((move) => ({
       san: move.san,
       uci: move.uci,
       white: move.white,
       draws: move.draws,
       black: move.black,
       averageRating: move.averageRating,
-      lines,
-    }
-  })
+      opening: move.opening,
+    })),
+  )
   return { total: explorerGames(root), groups }
 }
 
@@ -203,13 +148,133 @@ function AverageRating({ value }: { value: number }) {
   )
 }
 
+function OpeningDisclosure({
+  group,
+  total,
+  fen,
+  ratingKey,
+}: {
+  group: OpeningGroup
+  total: number
+  fen: string
+  ratingKey: string
+}) {
+  const [status, setStatus] = useState<BranchStatus>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const [opening, setOpening] = useState<ExplorerOpening | null>(group.opening)
+  const [lines, setLines] = useState<OpeningBranchLine[]>([])
+  const abortRef = useRef<AbortController | null>(null)
+  const startedRef = useRef(false)
+  const games = explorerGames(group)
+  const parentName = opening?.name ?? group.opening?.name ?? ''
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  function loadLines() {
+    if (startedRef.current) return
+    startedRef.current = true
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setStatus('loading')
+    setError(null)
+    void fetchOpeningBranch(fen, bandsFromKey(ratingKey), group.uci, controller.signal)
+      .then((branch) => {
+        if (controller.signal.aborted) return
+        setOpening(branch.opening ?? group.opening)
+        setLines(sortBranchLines(branch.lines))
+        setStatus('ready')
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        startedRef.current = false
+        setStatus('error')
+        setError(err instanceof Error ? err.message : 'Opening tree failed.')
+      })
+  }
+
+  function onToggle(event: SyntheticEvent<HTMLDetailsElement>) {
+    if (event.currentTarget.open) loadLines()
+  }
+
+  return (
+    <details className="explore-disclosure" data-san={group.san} onToggle={onToggle}>
+      <summary className="explore-summary">
+        <span className="rating-band-move-row">
+          <span className="explore-summary-main">
+            <span className="explore-chevron" aria-hidden="true" />
+            <span className="rating-band-san">{group.san}</span>
+          </span>
+          <span className="explore-pct">{shareLabel(games, total)}</span>
+        </span>
+        {group.averageRating > 0 ? (
+          <p className="rating-band-games">
+            <AverageRating value={group.averageRating} />
+          </p>
+        ) : null}
+        <ResultBar white={group.white} draws={group.draws} black={group.black} />
+      </summary>
+      <div className="explore-branch">
+        {parentName ? (
+          <p className="explore-opening-name">
+            {opening?.eco ? `${opening.eco} ` : ''}
+            {parentName}
+          </p>
+        ) : null}
+        {status === 'loading' ? (
+          <p className="rating-band-note" role="status">
+            Loading lines…
+          </p>
+        ) : null}
+        {status === 'error' ? (
+          <p className="rating-band-note is-error" role="alert">
+            {error ?? 'Opening tree failed.'}
+          </p>
+        ) : null}
+        {status === 'ready' && lines.length === 0 ? (
+          <p className="rating-band-note">
+            Lichess did not name a line under {group.san} for these bands.
+          </p>
+        ) : null}
+        {lines.length > 0 ? (
+          <ul className="explore-lines" aria-label={`Named lines under ${group.san}`}>
+            {lines.map((line) => {
+              const lineGames = explorerGames(line)
+              const rate = sideWinRate(line)
+              return (
+                <li
+                  key={line.name}
+                  className="explore-line"
+                  data-line={line.name}
+                  data-mover={line.mover}
+                  data-win-rate={rate < 0 ? '' : rate.toFixed(4)}
+                >
+                  <div className="rating-band-move-row">
+                    <span className="explore-line-name">
+                      {line.eco ? `${line.eco} ` : ''}
+                      {lineLabel(line.name, parentName)}
+                    </span>
+                    <span className="explore-pct">{shareLabel(lineGames, total)}</span>
+                  </div>
+                  <ResultBar white={line.white} draws={line.draws} black={line.black} />
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
+      </div>
+    </details>
+  )
+}
+
 export const ExploreOpenings: FC<Props> = ({ fen }) => {
   const [ratings, setRatings] = useState<RatingBandId[]>([DEFAULT_RATING_BAND])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const selected = normalizeRatings(ratings)
   const ratingKey = selected.join(',')
   const requestKey = `${ratingKey}\n${fen}`
-  const requestUrl = openingExplorerApiUrl(fen, selected, { moves: 8 })
+  const requestUrl = openingExplorerApiUrl(fen, selected, { moves: EXPLORER_MOVE_CAP })
   const current = snapshot && snapshot.key === requestKey ? snapshot : null
   const status = current?.status ?? 'loading'
   const groups = current?.status === 'ready' ? current.groups : null
@@ -219,9 +284,7 @@ export const ExploreOpenings: FC<Props> = ({ fen }) => {
   useEffect(() => {
     const controller = new AbortController()
     const key = requestKey
-    const bands = normalizeRatings(
-      ratingKey.split(',').filter((id): id is RatingBandId => isRatingBandId(id)),
-    )
+    const bands = bandsFromKey(ratingKey)
     const timer = window.setTimeout(() => {
       void loadGroups(fen, bands, controller.signal)
         .then((loaded) => {
@@ -267,8 +330,8 @@ export const ExploreOpenings: FC<Props> = ({ fen }) => {
         <RatingBandMultiSelect value={selected} onChange={setRatings} />
       </div>
       <p className="rating-band-note">
-        Lichess combines the selected rating bands. Each first move shows its
-        share of games, with the named openings under it.
+        Lichess combines the selected rating bands. First moves are listed from a
+        through h. Open a move to see its named lines.
       </p>
 
       {status === 'loading' ? (
@@ -291,57 +354,20 @@ export const ExploreOpenings: FC<Props> = ({ fen }) => {
 
       {groups && groups.length > 0 ? (
         <TooltipProvider delayDuration={250}>
-          <ul className="explore-groups">
-            {groups.map((group) => {
-              const games = explorerGames(group)
-              return (
-                <li key={group.uci} className="explore-group">
-                  <div className="rating-band-move-row">
-                    <span className="rating-band-san">{group.san}</span>
-                    <span className="explore-pct">{shareLabel(games, total)}</span>
-                  </div>
-                  {group.averageRating > 0 ? (
-                    <p className="rating-band-games">
-                      <AverageRating value={group.averageRating} />
-                    </p>
-                  ) : null}
-                  <ResultBar
-                    white={group.white}
-                    draws={group.draws}
-                    black={group.black}
-                  />
-                  {group.lines.length > 0 ? (
-                    <ul className="explore-lines">
-                      {group.lines.map((line) => {
-                        const lineGames = explorerGames(line)
-                        return (
-                          <li key={line.name} className="explore-line">
-                            <div className="rating-band-move-row">
-                              <span className="explore-line-name">
-                                {line.eco ? `${line.eco} ` : ''}
-                                {line.name}
-                              </span>
-                              <span className="explore-pct">
-                                {shareLabel(lineGames, total)}
-                              </span>
-                            </div>
-                            <ResultBar
-                              white={line.white}
-                              draws={line.draws}
-                              black={line.black}
-                            />
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  ) : (
-                    <p className="rating-band-note">
-                      Lichess did not name a line under {group.san} for these bands.
-                    </p>
-                  )}
-                </li>
-              )
-            })}
+          <ul
+            className="explore-groups"
+            data-parent-order={groups.map((group) => group.san).join(',')}
+          >
+            {groups.map((group) => (
+              <li key={`${requestKey}:${group.uci}`}>
+                <OpeningDisclosure
+                  group={group}
+                  total={total}
+                  fen={fen}
+                  ratingKey={ratingKey}
+                />
+              </li>
+            ))}
           </ul>
         </TooltipProvider>
       ) : null}

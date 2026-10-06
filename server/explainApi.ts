@@ -9,6 +9,7 @@ import {
   fetchExplorerWithToken,
   readExplorerQuery,
 } from './lichessExplorerProxy.js'
+import { loadOpeningBranch } from './openingBranch.js'
 import { loadServerEnv } from './loadServerEnv.js'
 
 loadServerEnv()
@@ -743,6 +744,49 @@ export async function handleExplainApi(
             sendJson(res, 400, {
               error: err instanceof Error ? err.message : 'opening replies failed',
             })
+          }
+          return
+        }
+
+        if (url === '/api/opening-branch') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'GET') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          const parsed = readExplorerQuery(req.url)
+          if ('error' in parsed) {
+            sendJson(res, 400, { error: parsed.error })
+            return
+          }
+          if (!parsed.options.play) {
+            sendJson(res, 400, { error: 'play is required' })
+            return
+          }
+          const controller = new AbortController()
+          const onClose = () => controller.abort()
+          req.on('close', onClose)
+          try {
+            const branch = await loadOpeningBranch(
+              parsed.fen,
+              parsed.ratings,
+              parsed.options.play,
+              controller.signal,
+            )
+            sendJson(res, 200, branch)
+          } catch (err) {
+            if (controller.signal.aborted) return
+            const message =
+              err instanceof Error ? err.message : 'opening branch failed'
+            const status = message.includes('LICHESS_API_TOKEN') ? 503 : 502
+            sendJson(res, status, { error: message })
+          } finally {
+            req.off('close', onClose)
           }
           return
         }
