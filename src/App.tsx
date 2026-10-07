@@ -329,7 +329,9 @@ function syncVisualViewport(announceResize: boolean, lastHeight: { current: numb
   if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0)
   if (announceResize && height !== lastHeight.current) {
     lastHeight.current = height
-    window.dispatchEvent(new Event('resize'))
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
     return
   }
   lastHeight.current = height
