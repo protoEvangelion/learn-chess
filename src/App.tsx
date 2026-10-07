@@ -26,6 +26,7 @@ import {
 import { HudEval } from '@/components/HudEval'
 import { BrandMark } from '@/components/BrandMark'
 import { SettingsDrawer } from '@/components/SettingsDrawer'
+import { Chess } from 'chess.js'
 import { Hammer, Joystick } from 'lucide-react'
 import type { FrequencyArrow } from '@/lib/replyArrows'
 import { Border } from '@models/Border'
@@ -278,6 +279,62 @@ function computeBoot(): BootState {
   return empty
 }
 
+type ExploreLineTarget = {
+  sans: string[]
+  play?: string
+}
+
+function pgnFromSanPath(sans: string[]): string | null {
+  if (sans.length === 0) return null
+  const chess = new Chess()
+  for (const san of sans) {
+    try {
+      if (!chess.move(san)) return null
+    } catch {
+      return null
+    }
+  }
+  return chess.pgn({ maxWidth: 0 })
+}
+
+function pgnFromUciPath(play: string): string | null {
+  const ucis = play.split(',').filter(Boolean)
+  if (ucis.length === 0) return null
+  const chess = new Chess()
+  for (const uci of ucis) {
+    const from = uci.slice(0, 2)
+    const to = uci.slice(2, 4)
+    const promotion = uci.length > 4 ? uci.slice(4, 5) : undefined
+    try {
+      const played = chess.move({
+        from,
+        to,
+        promotion,
+      })
+      if (!played) return null
+    } catch {
+      return null
+    }
+  }
+  return chess.pgn({ maxWidth: 0 })
+}
+
+function syncVisualViewport(announceResize: boolean, lastHeight: { current: number }) {
+  const vv = window.visualViewport
+  const height = Math.round(vv?.height ?? window.innerHeight)
+  const offsetTop = vv?.offsetTop ?? 0
+  document.documentElement.style.setProperty('--app-height', `${height}px`)
+  const host = document.getElementById('root')
+  if (host) host.style.transform = offsetTop ? `translateY(${offsetTop}px)` : ''
+  if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0)
+  if (announceResize && height !== lastHeight.current) {
+    lastHeight.current = height
+    window.dispatchEvent(new Event('resize'))
+    return
+  }
+  lastHeight.current = height
+}
+
 export default function App() {
   const bootRef = useRef<BootState | null>(null)
   if (!bootRef.current) bootRef.current = computeBoot()
@@ -383,8 +440,29 @@ export default function App() {
     'move',
   )
   const skipEngineOnce = useRef(false)
-  /** SAN from an Explore chevron, held while a piece is still moving. */
-  const exploreSanRef = useRef<string | null>(null)
+  /** Explore line to apply once the board is idle. SAN path wins; UCI is the fallback. */
+  const exploreLineRef = useRef<ExploreLineTarget | null>(null)
+  const viewportHeightRef = useRef(-1)
+
+  useEffect(() => {
+    const apply = () => syncVisualViewport(true, viewportHeightRef)
+    syncVisualViewport(false, viewportHeightRef)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') apply()
+    }
+    window.addEventListener('orientationchange', apply)
+    window.addEventListener('pageshow', apply)
+    document.addEventListener('visibilitychange', onVisible)
+    window.visualViewport?.addEventListener('resize', apply)
+    window.visualViewport?.addEventListener('scroll', apply)
+    return () => {
+      window.removeEventListener('orientationchange', apply)
+      window.removeEventListener('pageshow', apply)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.visualViewport?.removeEventListener('resize', apply)
+      window.visualViewport?.removeEventListener('scroll', apply)
+    }
+  }, [])
   const coachAbortRef = useRef<AbortController | null>(null)
   const coachChatAbortRef = useRef<AbortController | null>(null)
   /** Ephemeral drill session id — never written to the URL; reminted per line. */
@@ -1766,64 +1844,47 @@ export default function App() {
     setPanelFitEpoch((n) => n + 1)
   }, [roomId])
 
-  const applyExploreSan = useCallback(() => {
-    const san = exploreSanRef.current
-    if (!san || reviewImport) return
-    if (movingTo) {
-      skipEngineOnce.current = true
+  const applyExploreLine = useCallback(() => {
+    const target = exploreLineRef.current
+    if (!target) return
+    if (movingTo) return
+    const pgn =
+      pgnFromSanPath(target.sans) ??
+      (target.play ? pgnFromUciPath(target.play) : null)
+    exploreLineRef.current = null
+    if (!pgn) return
+    let imported: ImportedGame
+    try {
+      imported = parsePgnToImportedGame(pgn, { preferColor: playerColor })
+    } catch {
       return
     }
-    if (pendingEngineMove) {
-      const replacement = sanToBoardMove(board, history, turn, san)
-      if (!replacement) return
-      exploreSanRef.current = null
-      setPendingEngineMove(replacement)
-      return
-    }
-    const move = sanToBoardMove(board, history, turn, san)
-    if (move) {
-      exploreSanRef.current = null
-      if (turn === playerColor) skipEngineOnce.current = true
-      else skipEngineOnce.current = false
-      setPendingEngineMove(move)
-      return
-    }
-    const last = history[history.length - 1]
-    if (last && last.piece.color !== playerColor) {
-      const prev = history.slice(0, -1)
-      const undone = sanToBoardMove(last.board, prev, last.piece.color, san)
-      if (undone) {
-        exploreSanRef.current = null
-        skipEngineOnce.current = false
-        setBoard(copyBoard(last.board))
-        popHistory()
-        useGameState.setState({ turn: last.piece.color, movingTo: null })
-        setSelected(null)
-        setMoves([])
-        setPendingEngineMove(undone)
-        return
-      }
-    }
-    exploreSanRef.current = null
-  }, [
-    board,
-    history,
-    movingTo,
-    pendingEngineMove,
-    playerColor,
-    popHistory,
-    reviewImport,
-    turn,
-  ])
+    setReviewImport(null)
+    setScrubIndex(0)
+    setAnalysisReport(null)
+    setBoard(imported.finalBoard)
+    useGameState.setState({
+      turn: imported.turn,
+      history: imported.history,
+      movingTo: null,
+    })
+    setGameOver(imported.gameOver)
+    setEndgameDismissed(!!imported.gameOver)
+    setSelected(null)
+    setMoves([])
+    setPendingEngineMove(null)
+    setAnalysis(null)
+    skipEngineOnce.current = imported.turn !== playerColor
+  }, [movingTo, playerColor])
 
   useEffect(() => {
-    applyExploreSan()
-  }, [applyExploreSan])
+    applyExploreLine()
+  }, [applyExploreLine])
 
-  function playExploreSan(san: string) {
-    if (!san || reviewImport) return
-    exploreSanRef.current = san
-    applyExploreSan()
+  function playExploreLine(sans: string[], play?: string) {
+    if (sans.length === 0) return
+    exploreLineRef.current = { sans, play }
+    applyExploreLine()
   }
 
   return (
@@ -1914,7 +1975,7 @@ export default function App() {
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
         onFrequencyArrows={setFrequencyArrows}
-        onPlaySan={playExploreSan}
+        onPlaySan={playExploreLine}
         tab={analysisTab}
         onTabChange={onAnalysisTab}
       />
@@ -2086,28 +2147,6 @@ export default function App() {
                 }
                 items={[
                   {
-                    id: 'settings',
-                    label: 'Settings',
-                    icon: (
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    ),
-                    onClick: () =>
-                      openPanel(panel === 'settings' ? null : 'settings'),
-                  },
-                  {
                     id: 'undo',
                     label: 'Undo',
                     icon: (
@@ -2184,6 +2223,28 @@ export default function App() {
                       }
                       openPanel(panel === 'game' ? null : 'game')
                     },
+                  },
+                  {
+                    id: 'settings',
+                    label: 'Settings',
+                    icon: (
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    ),
+                    onClick: () =>
+                      openPanel(panel === 'settings' ? null : 'settings'),
                   },
                 ]}
               />

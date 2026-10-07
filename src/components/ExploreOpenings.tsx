@@ -67,6 +67,37 @@ function advantageLabel(wins: number, white: number, draws: number, black: numbe
   return `${((wins / games) * 100).toFixed(1)}%`
 }
 
+function gameCount(white: number, draws: number, black: number) {
+  const games = white + draws + black
+  return games > 0 ? games : 0
+}
+
+function ExploreStats({
+  wins,
+  white,
+  draws,
+  black,
+}: {
+  wins: number
+  white: number
+  draws: number
+  black: number
+}) {
+  const games = gameCount(white, draws, black)
+  const pct = advantageLabel(wins, white, draws, black)
+  if (games <= 0 && !pct) return null
+  return (
+    <span className="explore-row-stats">
+      {games > 0 ? (
+        <span className="explore-games" data-games={games}>
+          {games.toLocaleString('en-US')}
+        </span>
+      ) : null}
+      {pct ? <span className="explore-pct">{pct}</span> : null}
+    </span>
+  )
+}
+
 function bandsFromKey(ratingKey: string): RatingBandId[] {
   return normalizeRatings(
     ratingKey.split(',').filter((id): id is RatingBandId => isRatingBandId(id)),
@@ -173,12 +204,14 @@ function NamedLine({
   line,
   parentName,
   ratingKey,
+  path,
   onPlaySan,
 }: {
   line: OpeningBranchLine
   parentName: string
   ratingKey: string
-  onPlaySan?: (san: string) => void
+  path: string[]
+  onPlaySan?: (sans: string[], play?: string) => void
 }) {
   const [status, setStatus] = useState<BranchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -268,7 +301,7 @@ function NamedLine({
         <summary
           className="explore-summary"
           onClick={() => {
-            if (line.san) onPlaySan?.(line.san)
+            if (line.san) onPlaySan?.([...path, line.san], line.play)
           }}
         >
           <div className="rating-band-move-row">
@@ -276,9 +309,12 @@ function NamedLine({
               <span className="explore-chevron" aria-hidden="true" />
               {childLineText(line, parentName)}
             </span>
-            <span className="explore-pct">
-              {advantageLabel(line.white, line.white, line.draws, line.black)}
-            </span>
+            <ExploreStats
+              wins={line.white}
+              white={line.white}
+              draws={line.draws}
+              black={line.black}
+            />
           </div>
           <ResultBar white={line.white} draws={line.draws} black={line.black} />
         </summary>
@@ -310,6 +346,7 @@ function NamedLine({
                   line={child}
                   parentName={line.name || parentName}
                   ratingKey={ratingKey}
+                  path={line.san ? [...path, line.san] : path}
                   onPlaySan={onPlaySan}
                 />
               ))}
@@ -328,7 +365,7 @@ function OpeningDisclosure({
 }: {
   group: OpeningGroup
   ratingKey: string
-  onPlaySan?: (san: string) => void
+  onPlaySan?: (sans: string[], play?: string) => void
 }) {
   const [status, setStatus] = useState<BranchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -385,16 +422,19 @@ function OpeningDisclosure({
       <summary
         className="explore-summary"
         data-play={group.san}
-        onClick={() => onPlaySan?.(group.san)}
+        onClick={() => onPlaySan?.([group.san], group.uci)}
       >
         <span className="rating-band-move-row">
           <span className="explore-summary-main">
             <span className="explore-chevron" aria-hidden="true" />
             <span className="rating-band-san">{group.san}</span>
           </span>
-          <span className="explore-pct">
-            {advantageLabel(group.white, group.white, group.draws, group.black)}
-          </span>
+          <ExploreStats
+            wins={group.white}
+            white={group.white}
+            draws={group.draws}
+            black={group.black}
+          />
         </span>
         {group.averageRating > 0 ? (
           <p className="rating-band-games">
@@ -427,12 +467,13 @@ function OpeningDisclosure({
         ) : null}
         {lines.length > 0 ? (
           <ul className="explore-lines" aria-label={`Named lines under ${group.san}`}>
-            {lines.map((line) => (
+              {lines.map((line) => (
               <NamedLine
                 key={line.name}
                 line={line}
                 parentName={parentName}
                 ratingKey={ratingKey}
+                path={[group.san]}
                 onPlaySan={onPlaySan}
               />
             ))}
@@ -525,14 +566,12 @@ function BlackDefenses({ ratingKey }: { ratingKey: string }) {
                         {defense.name}
                       </span>
                     </span>
-                    <span className="explore-pct">
-                      {advantageLabel(
-                        defense.black,
-                        defense.white,
-                        defense.draws,
-                        defense.black,
-                      )}
-                    </span>
+                    <ExploreStats
+                      wins={defense.black}
+                      white={defense.white}
+                      draws={defense.draws}
+                      black={defense.black}
+                    />
                   </div>
                   {defense.averageRating > 0 ? (
                     <p className="rating-band-games">
@@ -554,7 +593,9 @@ function BlackDefenses({ ratingKey }: { ratingKey: string }) {
   )
 }
 
-export const ExploreOpenings: FC<{ onPlaySan?: (san: string) => void }> = ({
+export const ExploreOpenings: FC<{
+  onPlaySan?: (sans: string[], play?: string) => void
+}> = ({
   onPlaySan,
 }) => {
   const [ratings, setRatings] = useState<RatingBandId[]>([DEFAULT_RATING_BAND])

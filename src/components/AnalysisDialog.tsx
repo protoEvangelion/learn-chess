@@ -56,7 +56,7 @@ type Props = {
   onPanelWidthChange: (width: number) => void
   onPanelResizeEnd?: (width: number) => void
   onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
-  onPlaySan?: (san: string) => void
+  onPlaySan?: (sans: string[], play?: string) => void
   tab?: TabId
   onTabChange?: (tab: TabId) => void
 }
