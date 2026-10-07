@@ -6,9 +6,11 @@ The game file is only needed while the counts are built. Download it, fill Turso
 
 ## Why two tables
 
-The page shows two numbers: how many games reached this board, and how each next move turned out.
+`explorer_move` answers: from this board, which replies were played, and how did those games end? `san` is the reply, such as `e5`. `white`, `draws`, and `black` are how those games ended.
 
-Moves played under 100 times this month are left off the list. Those games still reached the board, so the board total is not the sum of the moves we show. That total needs its own table.
+`explorer_position` answers: how many games reached this board at all? The same three counts, for everyone who reached the board, including replies we hid.
+
+Moves played under 100 times this month are left off `explorer_move`. Those games still reached the board, so the reply rows add up to less than the position row. After 1. e4, 1,000 games reached the board, 600 played e5, 300 played c5, and 100 played rare replies we do not list. The position row keeps the 1,000.
 
 ## What a row is
 
