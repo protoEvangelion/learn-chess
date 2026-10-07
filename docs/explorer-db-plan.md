@@ -1,6 +1,8 @@
 # Explorer database
 
-One month of counts in Turso. The site on Vercel reads them. The game file stays on the Mac Mini and is only used to fill the tables.
+One month of counts in Turso. The site on Vercel reads them.
+
+The game file is only needed while the counts are built. Download it, fill Turso, delete it. One month is about 30 GB. This Cursor cloud machine has about 245 GB free, so that job fits here. The machine is temporary, so it is not a place to keep the file. Keep the file on the Mac Mini only if you want it there for the next month.
 
 ## Why two tables
 
