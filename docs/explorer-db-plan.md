@@ -89,7 +89,7 @@ Check the row count after the first load. Stay on free if it fits. Move to Devel
 
 Run this on the local machine. This cloud machine is only for writing the plan. Do not download the game file here.
 
-1. Download the newest standard rated month from https://database.lichess.org/standard/. The file looks like `lichess_db_standard_rated_2026-09.pgn.zst`. Stream it. Do not unzip a second full copy.
+1. Download the newest standard rated month from https://database.lichess.org/standard/. Use the `.pgn.zst` file, such as `lichess_db_standard_rated_2026-09.pgn.zst`. Do not use the `.torrent`. Stream the `.pgn.zst`. Do not unzip a second full copy.
 2. Count into a scratch SQLite file on that machine. Then copy the kept rows to Turso. Delete the game file and the scratch file when the copy finishes.
 3. Turso connection: `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` (same as `server/turso.ts`). Batch the inserts.
 
