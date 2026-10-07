@@ -722,6 +722,18 @@ export const BoardComponent: FC<{
                 ? THREE.MOUSE.ROTATE
                 : THREE.MOUSE.PAN,
         }}
+        touches={{
+          ONE:
+            orbitDragMode === 'move'
+              ? (-1 as THREE.TOUCH)
+              : orbitDragMode === 'pan'
+                ? THREE.TOUCH.PAN
+                : THREE.TOUCH.ROTATE,
+          TWO:
+            orbitDragMode === 'move'
+              ? (-1 as THREE.TOUCH)
+              : THREE.TOUCH.DOLLY_PAN,
+        }}
       />
       <ViewProbe
         roomId={roomTheme.id}
