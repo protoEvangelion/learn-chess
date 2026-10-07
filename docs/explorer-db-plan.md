@@ -20,6 +20,37 @@ A row is one bucket: this month, this speed (blitz, rapid, or classical), this r
 
 The next month is more rows with a new `month`. The click adds months together. No new columns.
 
+## Columns and ids
+
+There is no separate id number. The id is the columns that make a row unique.
+
+`position` is the FEN with the two clock numbers removed, so two move orders that reach the same pieces share a row.
+
+`explorer_position`
+
+| Column | Example | Meaning |
+| --- | --- | --- |
+| `month` | `2026-09` | which file the row came from |
+| `speed` | `blitz` | `blitz`, `rapid`, or `classical` |
+| `rating_band` | `1600` | `0`, `1000`, `1200`, `1400`, `1600`, `1800`, `2000`, `2200`, `2500` |
+| `position` | the board | FEN without the clock numbers |
+| `white`, `draws`, `black` | `120, 40, 90` | games that reached this board and ended that way |
+
+Id: `month`, `speed`, `rating_band`, `position`.
+
+`explorer_move`
+
+| Column | Example | Meaning |
+| --- | --- | --- |
+| `month`, `speed`, `rating_band`, `position` | same as above | the same bucket |
+| `uci` | `e2e4` | the move, used in the id |
+| `san` | `e4` | the same move, shown on the page |
+| `white`, `draws`, `black` | `80, 20, 40` | games that played this move and ended that way |
+
+Id: `month`, `speed`, `rating_band`, `position`, `uci`.
+
+Lookup index on both tables: `position`, `rating_band`, `speed`, `month`. A click looks up one board.
+
 ## How a click queries
 
 The page sends the board and the rating bands you picked. Vercel adds the matching rows and sorts by the side to move’s win rate (wins divided by games). Draws stay in the game count.
