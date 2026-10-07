@@ -1,6 +1,6 @@
 # Explorer database
 
-One month of counts in Turso. The site on Vercel reads them.
+Vercel queries two Turso aggregation tables, designed for win rate by board, speed, and rating band, and filled once from a month of Lichess games.
 
 The game file is only needed while the counts are built. Download it, fill Turso, delete it. One month is about 30 GB. This Cursor cloud machine has about 245 GB free, so that job fits here. The machine is temporary, so it is not a place to keep the file. Keep the file on the Mac Mini only if you want it there for the next month.
 
