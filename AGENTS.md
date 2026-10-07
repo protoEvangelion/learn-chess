@@ -35,7 +35,7 @@ Registry config: `components.json` (`@cult-ui` + default `@shadcn`).
 ### Opening coach cards (Turso)
 
 - Pregenerated per-line briefing: `POST /api/opening-card` with `{ line: { id, name, eco, summary, moves[{san,hint}] } }`.
-- Stored in Turso (`TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`) or local `.data/opening-cards.db`.
+- Stored in Turso (`TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`). Dev and prod are two databases; local and Preview use dev, Production uses prod. There is no local SQLite fallback.
 - Seed all cards after changes with `OPENING_CARD_BASE_URL=<deployment> npm run seed:opening-cards`.
 - DeepSeek is for live coach responses only; opening cards must not call an LLM at runtime.
 - Prefetched when a drill line starts; coach `/api/explain` + `/api/coach-chat` inject the **cached** card only (never the whole pack).

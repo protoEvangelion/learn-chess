@@ -47,7 +47,7 @@ the database with:
 OPENING_CARD_BASE_URL=https://your-project.vercel.app npm run seed:opening-cards
 ```
 
-Local development falls back to `.data/opening-cards.db`.
+Local development uses the Turso dev database (`TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in `.env.local`). Production uses a second database with the same variable names. Vercel Preview should use the dev database.
 
 ## Features
 

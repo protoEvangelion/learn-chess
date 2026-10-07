@@ -1,6 +1,4 @@
 import { createClient, type Client } from '@libsql/client'
-import fs from 'node:fs'
-import path from 'node:path'
 
 let client: Client | null = null
 
@@ -14,28 +12,22 @@ function resolveEnv() {
   }
 }
 
-/** Turso remote when configured; otherwise local file DB under `.data/`. */
+/**
+ * One client, always a remote Turso database.
+ * Dev and prod are two databases. Which one you get is only the URL and token
+ * in the environment: `.env.local` for this machine, Vercel Preview for the
+ * same dev database, Vercel Production for the prod database.
+ */
 export function getTurso(): Client {
   if (client) return client
 
   const { url, authToken } = resolveEnv()
-  if (url) {
-    client = createClient({
-      url,
-      authToken: authToken || undefined,
-    })
-    return client
-  }
-
-  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+  if (!url || !authToken) {
     throw new Error(
-      'TURSO_DATABASE_URL and a Turso auth token are required in production',
+      'Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN. Local dev and Preview use the dev database. Production uses the prod database.',
     )
   }
 
-  const dir = path.join(process.cwd(), '.data')
-  fs.mkdirSync(dir, { recursive: true })
-  const fileUrl = `file:${path.join(dir, 'opening-cards.db')}`
-  client = createClient({ url: fileUrl })
+  client = createClient({ url, authToken })
   return client
 }
