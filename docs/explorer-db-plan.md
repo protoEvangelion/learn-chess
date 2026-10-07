@@ -132,6 +132,22 @@ The site already opens Turso with `TURSO_DATABASE_URL` and the auth token, in `s
 
 Turso is the right store for these count tables: one click is a short indexed read, and the app is already connected. The monthly game file itself stays on the Mac Mini.
 
+## Count tables are the reduced form
+
+[Aix](https://thomasd.be/2026/02/01/aix-storing-querying-chess-games.html) packs a month of whole games into about 12–15 GB and lets you ask new questions in SQL. One question over that file takes about a minute and a half on a large machine. Explore needs an answer on the click, so the site does not query the games.
+
+These two tables are that file reduced to the one question we ask: from this board, with these rating bands, how did each move end? Each rating band stays its own rows, because the page adds whichever bands you pick. We do not prebuild every combination of bands. Speeds stay separate so a later “blitz only” filter is the same table.
+
+Aix can be the scanner on the Mac Mini if that month’s file is available. The scan still writes these same rows into Turso. The official monthly file remains the input when it is not.
+
+```mermaid
+flowchart LR
+  games["Month of games, PGN or Aix"]
+  counts["Count tables, one row per band and move"]
+  click["Click adds the selected bands"]
+  games -->|"once, on the Mac Mini"| counts -->|"each click, from Turso"| click
+```
+
 ```mermaid
 flowchart LR
   mini["Mac Mini reads the latest monthly file and writes counts"]
