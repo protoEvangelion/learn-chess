@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js'
 import { getTurso } from './turso.js'
-import { fetchExplorerWithToken } from './lichessExplorerProxy.js'
+import { queryExplorerPosition } from './explorerStats.js'
 import {
   branchKeyFrom,
   directChildren,
@@ -18,12 +18,9 @@ import type {
   OpeningBranchLine,
   RatingBandId,
 } from '../src/lib/lichessExplorer.js'
-import {
-  EXPLORER_MOVE_CAP,
-  isOpeningVariation,
-} from '../src/lib/lichessExplorer.js'
+import { isOpeningVariation } from '../src/lib/lichessExplorer.js'
 
-const CACHE_VERSION = 'v2'
+const CACHE_VERSION = 'v3'
 const START_FEN =
   'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 /** Serve a stored row only while it is under 7 days old. */
@@ -35,7 +32,6 @@ let schemaReady: Promise<void> | null = null
 let nowFn = () => Date.now()
 const memory = new Map<string, Timed<OpeningBranch>>()
 const defenseMemory = new Map<string, Timed<BlackDefenseList>>()
-let upstreamChain: Promise<unknown> = Promise.resolve()
 
 function cacheKey(fen: string, ratings: readonly RatingBandId[], play: string) {
   return `${CACHE_VERSION}|${ratings.join(',')}|${play}|${fen}`
@@ -189,37 +185,16 @@ export async function purgeExpiredExplorerBranches(): Promise<number> {
   return Number(result.rowsAffected ?? 0)
 }
 
-function enqueue<T>(fn: () => Promise<T>): Promise<T> {
-  const run = upstreamChain.then(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 120))
-    return fn()
-  })
-  upstreamChain = run.then(
-    () => undefined,
-    () => undefined,
-  )
-  return run
-}
-
 async function fetchPosition(
   fen: string,
   ratings: readonly RatingBandId[],
   play: string,
   signal: AbortSignal,
 ) {
-  const attempt = () =>
-    fetchExplorerWithToken(fen, ratings, signal, {
-      play,
-      moves: EXPLORER_MOVE_CAP,
-    })
-  try {
-    return await enqueue(attempt)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : ''
-    if (!message.includes('429')) throw err
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    return enqueue(attempt)
-  }
+  if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
+  const position = await queryExplorerPosition(fen, ratings, play)
+  if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
+  return { position }
 }
 
 function lineFromMove(

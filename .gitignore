@@ -8,11 +8,14 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+explorer-rs/target
 dist
 dist-ssr
 *.local
 .env
 .data
+fixtures/slice-string
+fixtures/slice-fast
 
 # Editor directories and files
 .vscode/*

@@ -1,10 +1,7 @@
 /**
- * Lichess Opening Explorer — rated games by rating band.
- * Spec: https://github.com/lichess-org/api/blob/master/doc/specs/tags/openingexplorer/lichess.yaml
- *
- * Since March 2026 the explorer rejects anonymous requests (nginx 401).
- * The browser calls the same-origin proxy `/api/opening-explorer`, which
- * adds `Authorization: Bearer ${LICHESS_API_TOKEN}` on the server.
+ * Opening explorer counts, shaped like the Lichess explorer response.
+ * The browser calls `/api/opening-explorer`. The server sums `explorer_move`
+ * and `explorer_position` in Turso. Names come from the opening book.
  */
 
 export const LICHESS_EXPLORER_ENDPOINT = 'https://explorer.lichess.org/lichess'

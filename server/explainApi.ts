@@ -5,10 +5,8 @@ import {
   EXPLAIN_MODEL,
   streamCoachAsk,
 } from './aiCoach.js'
-import {
-  fetchExplorerWithToken,
-  readExplorerQuery,
-} from './lichessExplorerProxy.js'
+import { queryExplorerPosition } from './explorerStats.js'
+import { readExplorerQuery } from './lichessExplorerProxy.js'
 import {
   loadBlackDefenses,
   loadOpeningBranch,
@@ -812,8 +810,7 @@ export async function handleExplainApi(
             if (controller.signal.aborted) return
             const message =
               err instanceof Error ? err.message : 'opening defenses failed'
-            const status = message.includes('LICHESS_API_TOKEN') ? 503 : 502
-            sendJson(res, status, { error: message })
+            sendJson(res, 500, { error: message })
           } finally {
             req.off('close', onClose)
           }
@@ -855,8 +852,7 @@ export async function handleExplainApi(
             if (controller.signal.aborted) return
             const message =
               err instanceof Error ? err.message : 'opening branch failed'
-            const status = message.includes('LICHESS_API_TOKEN') ? 503 : 502
-            sendJson(res, status, { error: message })
+            sendJson(res, 500, { error: message })
           } finally {
             req.off('close', onClose)
           }
@@ -883,19 +879,17 @@ export async function handleExplainApi(
           const onClose = () => controller.abort()
           req.on('close', onClose)
           try {
-            const { position } = await fetchExplorerWithToken(
+            const position = await queryExplorerPosition(
               parsed.fen,
               parsed.ratings,
-              controller.signal,
-              parsed.options,
+              parsed.options.play ?? '',
             )
             sendJson(res, 200, position)
           } catch (err) {
             if (controller.signal.aborted) return
             const message =
               err instanceof Error ? err.message : 'opening explorer failed'
-            const status = message.includes('LICHESS_API_TOKEN') ? 503 : 502
-            sendJson(res, status, { error: message })
+            sendJson(res, 500, { error: message })
           } finally {
             req.off('close', onClose)
           }
