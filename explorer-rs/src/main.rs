@@ -1,20 +1,22 @@
 //! Count one Lichess month into explorer_position and explorer_move.
 //!
 //! Pass 1 remembers which boards and moves were popular, in a fixed-size sketch.
-//! Pass 2 counts those exactly and writes a scratch SQLite file. The website
-//! upload is still `npm run build:explorer:upload`.
+//! Pass 2 keeps one row per board: an 8-byte hash, the board text once, and a
+//! win/draw/loss grid over speed and rating band. `--pass bench` times that map
+//! against the old string keys. The website upload is still
+//! `npm run build:explorer:upload`.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use crossbeam_channel::{bounded, Sender};
 use rusqlite::Connection;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use shakmaty::san::San;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, CastlingSide, Chess, Color, EnPassantMode, Position};
@@ -23,6 +25,11 @@ const WIDTH: usize = 1 << 28;
 const DEPTH: usize = 4;
 const PLY_CAP: usize = 50;
 const SKETCH_BYTES: usize = WIDTH * DEPTH * 2;
+const BATCH: usize = 4096;
+const SPEEDS: [&str; 3] = ["blitz", "rapid", "classical"];
+const BANDS: [&str; 9] = [
+    "0", "1000", "1200", "1400", "1600", "1800", "2000", "2200", "2500",
+];
 
 struct Sketch {
     cells: Vec<AtomicU16>,
@@ -65,9 +72,8 @@ impl Sketch {
 
     fn save(&self, path: &Path) {
         let mut file = File::create(path).expect("create sketch");
-        let bytes = unsafe {
-            std::slice::from_raw_parts(self.cells.as_ptr() as *const u8, SKETCH_BYTES)
-        };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(self.cells.as_ptr() as *const u8, SKETCH_BYTES) };
         file.write_all(bytes).expect("write sketch");
     }
 
@@ -106,16 +112,6 @@ fn slot(h1: u64, h2: u64, row: usize) -> usize {
     (mixed as usize & (WIDTH - 1)) + row * WIDTH
 }
 
-struct MoveCell {
-    counts: [u32; 3],
-    san: String,
-}
-
-struct Tallies {
-    positions: FxHashMap<String, [u32; 3]>,
-    moves: FxHashMap<String, MoveCell>,
-}
-
 fn bump_pos(map: &mut FxHashMap<String, [u32; 3]>, key: &str, outcome: usize) {
     if let Some(cell) = map.get_mut(key) {
         cell[outcome] += 1;
@@ -124,22 +120,6 @@ fn bump_pos(map: &mut FxHashMap<String, [u32; 3]>, key: &str, outcome: usize) {
     let mut cell = [0, 0, 0];
     cell[outcome] = 1;
     map.insert(key.to_owned(), cell);
-}
-
-fn bump_move(map: &mut FxHashMap<String, MoveCell>, key: &str, san: &str, outcome: usize) {
-    if let Some(cell) = map.get_mut(key) {
-        cell.counts[outcome] += 1;
-        return;
-    }
-    let mut counts = [0, 0, 0];
-    counts[outcome] = 1;
-    map.insert(
-        key.to_owned(),
-        MoveCell {
-            counts,
-            san: san.to_owned(),
-        },
-    );
 }
 
 fn header_value(line: &str) -> &str {
@@ -345,11 +325,11 @@ fn walk_game(
             .and_then(|san| san.to_move(&pos).ok());
         let fen_at = fill_key(key, kept.speed, kept.band, &pos);
         if parsed.is_none() {
-            note_position(mode, key, fen_at, kept.outcome);
+            note_position(mode, key, fen_at);
             return;
         }
         let mv = parsed.unwrap();
-        note_position(mode, key, fen_at, kept.outcome);
+        note_position(mode, key, fen_at);
         uci_buf.clear();
         use std::fmt::Write as _;
         let _ = write!(
@@ -360,7 +340,7 @@ fn walk_game(
         let uci_len = uci_buf.len();
         key.push('|');
         key.push_str(uci_buf);
-        note_move(mode, key, fen_at, uci_len, written, kept.outcome);
+        note_move(mode, key, fen_at, uci_len);
         pos.play_unchecked(mv);
         played += 1;
     }
@@ -368,48 +348,24 @@ fn walk_game(
         return;
     }
     let fen_at = fill_key(key, kept.speed, kept.band, &pos);
-    note_position(mode, key, fen_at, kept.outcome);
+    note_position(mode, key, fen_at);
 }
 
 #[derive(Clone, Copy)]
-enum Mode<'a> {
-    Pass1 { pos: &'a Sketch, mov: &'a Sketch },
-    Pass2 {
-        pos: &'a Sketch,
-        mov: &'a Sketch,
-        tallies: *mut Tallies,
-        threshold: u16,
-    },
+struct Mode<'a> {
+    pos: &'a Sketch,
+    mov: &'a Sketch,
 }
 
-fn note_position(mode: Mode<'_>, key: &str, fen_at: usize, outcome: usize) {
-    let fen = &key[fen_at..];
-    match mode {
-        Mode::Pass1 { pos, .. } => pos.add(fen, None),
-        Mode::Pass2 { pos, tallies, threshold, .. } => {
-            if pos.estimate(fen, None) < threshold {
-                return;
-            }
-            let tallies = unsafe { &mut *tallies };
-            bump_pos(&mut tallies.positions, key, outcome);
-        }
-    }
+fn note_position(mode: Mode<'_>, key: &str, fen_at: usize) {
+    mode.pos.add(&key[fen_at..], None);
 }
 
-fn note_move(mode: Mode<'_>, key: &str, fen_at: usize, uci_len: usize, san: &str, outcome: usize) {
+fn note_move(mode: Mode<'_>, key: &str, fen_at: usize, uci_len: usize) {
     let fen_end = key.len() - uci_len - 1;
     let fen = &key[fen_at..fen_end];
     let uci = &key[fen_end + 1..];
-    match mode {
-        Mode::Pass1 { mov, .. } => mov.add(fen, Some(uci)),
-        Mode::Pass2 { mov, tallies, threshold, .. } => {
-            if mov.estimate(fen, Some(uci)) < threshold {
-                return;
-            }
-            let tallies = unsafe { &mut *tallies };
-            bump_move(&mut tallies.moves, key, san, outcome);
-        }
-    }
+    mode.mov.add(fen, Some(uci));
 }
 
 fn find_game_end(buf: &[u8]) -> Option<usize> {
@@ -417,6 +373,11 @@ fn find_game_end(buf: &[u8]) -> Option<usize> {
 }
 
 fn stream_games(file: &Path, limit: u64, tx: Sender<String>) -> u64 {
+    // A plain .pgn is the slice fixture. .pgn.zst is still the full month.
+    if file.to_string_lossy().ends_with(".pgn") {
+        let reader = File::open(file).expect("open pgn");
+        return pump_games(reader, limit, tx, None);
+    }
     let zstd = if Path::new("/opt/homebrew/bin/zstd").exists() {
         "/opt/homebrew/bin/zstd"
     } else {
@@ -428,16 +389,29 @@ fn stream_games(file: &Path, limit: u64, tx: Sender<String>) -> u64 {
         .stderr(Stdio::inherit())
         .spawn()
         .expect("spawn zstd");
-    let mut stdout = child.stdout.take().expect("zstd stdout");
+    let stdout = child.stdout.take().expect("zstd stdout");
+    let games = pump_games(stdout, limit, tx, Some(&mut child));
+    let _ = child.wait();
+    games
+}
+
+fn pump_games(
+    mut reader: impl Read,
+    limit: u64,
+    tx: Sender<String>,
+    mut child: Option<&mut Child>,
+) -> u64 {
     let mut buf = Vec::with_capacity(1 << 20);
     let mut tmp = vec![0u8; 1 << 20];
     let mut games = 0u64;
     loop {
         if limit > 0 && games >= limit {
-            let _ = child.kill();
+            if let Some(child) = child.as_mut() {
+                let _ = child.kill();
+            }
             break;
         }
-        let n = stdout.read(&mut tmp).expect("read zstd");
+        let n = reader.read(&mut tmp).expect("read pgn");
         if n == 0 {
             break;
         }
@@ -451,14 +425,18 @@ fn stream_games(file: &Path, limit: u64, tx: Sender<String>) -> u64 {
             if game.starts_with('[') {
                 games += 1;
                 if tx.send(game).is_err() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    if let Some(child) = child.as_mut() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
                     return games;
                 }
             }
         }
         if limit > 0 && games >= limit {
-            let _ = child.kill();
+            if let Some(child) = child.as_mut() {
+                let _ = child.kill();
+            }
             break;
         }
     }
@@ -466,173 +444,560 @@ fn stream_games(file: &Path, limit: u64, tx: Sender<String>) -> u64 {
         games += 1;
         let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
     }
-    let _ = child.wait();
     games
 }
 
 fn worker_loop(
     rx: crossbeam_channel::Receiver<String>,
-    pass: u8,
-    threshold: u16,
     pos: Arc<Sketch>,
     mov: Arc<Sketch>,
     seen: &AtomicU64,
     started: Instant,
-) -> Tallies {
-    let mut tallies = Tallies {
-        positions: FxHashMap::default(),
-        moves: FxHashMap::default(),
-    };
+) {
     let mut cleaned = String::new();
     let mut key = String::new();
     let mut uci_buf = String::new();
     while let Ok(game) = rx.recv() {
         if let Some(kept) = consider(&game) {
-            let mode = if pass == 1 {
-                Mode::Pass1 { pos: &pos, mov: &mov }
-            } else {
-                Mode::Pass2 {
+            walk_game(
+                &kept,
+                &mut cleaned,
+                &mut key,
+                &mut uci_buf,
+                Mode {
                     pos: &pos,
                     mov: &mov,
-                    tallies: &mut tallies as *mut Tallies,
-                    threshold,
-                }
-            };
-            walk_game(&kept, &mut cleaned, &mut key, &mut uci_buf, mode);
+                },
+            );
         }
         let n = seen.fetch_add(1, Ordering::Relaxed) + 1;
         if n % 100_000 == 0 {
             let seconds = started.elapsed().as_secs().max(1);
             println!(
-                "{{\"pass\":{pass},\"seen\":{n},\"seconds\":{seconds},\"perSec\":{}}}",
+                "{{\"pass\":1,\"seen\":{n},\"seconds\":{seconds},\"perSec\":{}}}",
                 n / seconds
             );
         }
     }
-    tallies
 }
 
-fn run_pass(pass: u8, file: &Path, limit: u64, threshold: u16, data: &Path, workers: usize) -> Vec<Tallies> {
-    let (pos, mov) = if pass == 1 {
-        println!("{{\"pass\":1,\"allocating\":true,\"sketchBytes\":{}}}", SKETCH_BYTES * 2);
-        let started = Instant::now();
-        let pos = Arc::new(Sketch::new());
-        let mov = Arc::new(Sketch::new());
-        println!(
-            "{{\"pass\":1,\"allocated\":true,\"seconds\":{}}}",
-            started.elapsed().as_secs()
-        );
-        (Some(pos), Some(mov))
-    } else {
-        println!("{{\"pass\":2,\"loading\":true}}");
-        let pos = Arc::new(Sketch::load(&data.join("explorer-sketch-position.bin")));
-        let mov = Arc::new(Sketch::load(&data.join("explorer-sketch-move.bin")));
-        (Some(pos), Some(mov))
-    };
+fn run_pass(file: &Path, limit: u64, data: &Path, workers: usize) {
+    println!(
+        "{{\"pass\":1,\"allocating\":true,\"sketchBytes\":{}}}",
+        SKETCH_BYTES * 2
+    );
+    let started = Instant::now();
+    let pos = Arc::new(Sketch::new());
+    let mov = Arc::new(Sketch::new());
+    println!(
+        "{{\"pass\":1,\"allocated\":true,\"seconds\":{}}}",
+        started.elapsed().as_secs()
+    );
     let (tx, rx) = bounded::<String>(workers * 8);
     let seen = Arc::new(AtomicU64::new(0));
-    let started = Instant::now();
     let mut handles = Vec::new();
     for _ in 0..workers {
         let rx = rx.clone();
         let seen = Arc::clone(&seen);
-        let pos = pos.clone().expect("position sketch");
-        let mov = mov.clone().expect("move sketch");
+        let pos = Arc::clone(&pos);
+        let mov = Arc::clone(&mov);
         handles.push(std::thread::spawn(move || {
-            worker_loop(rx, pass, threshold, pos, mov, &seen, started)
+            worker_loop(rx, pos, mov, &seen, started)
         }));
     }
     drop(rx);
     let queued = stream_games(file, limit, tx);
-    let tallies: Vec<Tallies> = handles.into_iter().map(|handle| handle.join().expect("worker")).collect();
-    if pass == 1 {
-        if let (Some(pos), Some(mov)) = (pos, mov) {
-            pos.save(&data.join("explorer-sketch-position.bin"));
-            mov.save(&data.join("explorer-sketch-move.bin"));
-        }
+    for handle in handles {
+        handle.join().expect("worker");
     }
+    pos.save(&data.join("explorer-sketch-position.bin"));
+    mov.save(&data.join("explorer-sketch-move.bin"));
     let seconds = started.elapsed().as_secs();
-    println!(
-        "{{\"pass\":{pass},\"counted\":true,\"queued\":{queued},\"seconds\":{seconds}}}"
-    );
-    tallies
+    println!("{{\"pass\":1,\"counted\":true,\"queued\":{queued},\"seconds\":{seconds}}}");
 }
 
-fn merge_pos(parts: &mut [Tallies]) -> FxHashMap<String, [u32; 3]> {
-    let mut acc = FxHashMap::default();
-    for part in parts {
-        for (key, cell) in part.positions.drain() {
-            acc.entry(key)
-                .and_modify(|cur: &mut [u32; 3]| {
-                    cur[0] += cell[0];
-                    cur[1] += cell[1];
-                    cur[2] += cell[2];
-                })
-                .or_insert(cell);
+fn hash_text(first: &[u8], second: Option<&[u8]>) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in first {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    if let Some(second) = second {
+        hash ^= 0xff;
+        for byte in second {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
         }
     }
-    acc
+    hash
 }
 
-fn merge_moves(parts: &mut [Tallies]) -> FxHashMap<String, MoveCell> {
-    let mut acc = FxHashMap::default();
-    for part in parts {
-        for (key, cell) in part.moves.drain() {
-            match acc.entry(key) {
-                std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    let cur: &mut MoveCell = entry.get_mut();
-                    cur.counts[0] += cell.counts[0];
-                    cur.counts[1] += cell.counts[1];
-                    cur.counts[2] += cell.counts[2];
+fn cell_at(speed: u8, band: u8, outcome: u8) -> usize {
+    speed as usize * 27 + band as usize * 3 + outcome as usize
+}
+
+fn speed_slot(speed: &str) -> u8 {
+    SPEEDS.iter().position(|name| *name == speed).unwrap_or(0) as u8
+}
+
+fn band_slot(band: &str) -> u8 {
+    BANDS.iter().position(|name| *name == band).unwrap_or(0) as u8
+}
+
+fn shard_of(hash: u64, shards: usize) -> usize {
+    ((hash >> 32) as usize) % shards
+}
+
+struct PosRow {
+    hash: u64,
+    fen: String,
+    grid: [u32; 81],
+}
+
+struct MovRow {
+    hash: u64,
+    fen: String,
+    uci: String,
+    san: String,
+    grid: [u32; 81],
+}
+
+struct PosMap {
+    slots: Vec<u32>,
+    rows: Vec<PosRow>,
+}
+
+struct MovMap {
+    slots: Vec<u32>,
+    rows: Vec<MovRow>,
+}
+
+fn slot_cap(rows: usize) -> usize {
+    ((rows.max(1) * 10) / 7).next_power_of_two().max(16)
+}
+
+impl PosMap {
+    fn new() -> Self {
+        Self {
+            slots: vec![0; 1024],
+            rows: Vec::new(),
+        }
+    }
+
+    fn with_capacity(rows: usize) -> Self {
+        Self {
+            slots: vec![0; slot_cap(rows)],
+            rows: Vec::with_capacity(rows),
+        }
+    }
+
+    fn bump(&mut self, hash: u64, fen: Option<&str>, cell: usize) {
+        if (self.rows.len() + 1) * 10 > self.slots.len() * 7 {
+            self.rehash();
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = (hash as usize) & mask;
+        loop {
+            let slot = self.slots[i];
+            if slot == 0 {
+                let text = fen.expect("fen on first sight of a board").to_owned();
+                self.rows.push(PosRow {
+                    hash,
+                    fen: text,
+                    grid: [0; 81],
+                });
+                let idx = self.rows.len() as u32;
+                self.slots[i] = idx;
+                self.rows[idx as usize - 1].grid[cell] = 1;
+                return;
+            }
+            let row_i = slot as usize - 1;
+            if self.rows[row_i].hash == hash {
+                let same = match fen {
+                    None => true,
+                    Some(text) => self.rows[row_i].fen == text,
+                };
+                if same {
+                    self.rows[row_i].grid[cell] += 1;
+                    return;
                 }
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(cell);
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    fn rehash(&mut self) {
+        let cap = (self.slots.len() * 2).max(16);
+        let mut slots = vec![0u32; cap];
+        let mask = cap - 1;
+        for (idx, row) in self.rows.iter().enumerate() {
+            let mut i = (row.hash as usize) & mask;
+            while slots[i] != 0 {
+                i = (i + 1) & mask;
+            }
+            slots[i] = (idx as u32) + 1;
+        }
+        self.slots = slots;
+    }
+}
+
+impl MovMap {
+    fn new() -> Self {
+        Self {
+            slots: vec![0; 1024],
+            rows: Vec::new(),
+        }
+    }
+
+    fn bump(
+        &mut self,
+        hash: u64,
+        fen: Option<&str>,
+        uci: Option<&str>,
+        san: Option<&str>,
+        cell: usize,
+    ) {
+        if (self.rows.len() + 1) * 10 > self.slots.len() * 7 {
+            self.rehash();
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = (hash as usize) & mask;
+        loop {
+            let slot = self.slots[i];
+            if slot == 0 {
+                self.rows.push(MovRow {
+                    hash,
+                    fen: fen.expect("fen on first sight of a move").to_owned(),
+                    uci: uci.expect("uci on first sight of a move").to_owned(),
+                    san: san.expect("san on first sight of a move").to_owned(),
+                    grid: [0; 81],
+                });
+                let idx = self.rows.len() as u32;
+                self.slots[i] = idx;
+                self.rows[idx as usize - 1].grid[cell] = 1;
+                return;
+            }
+            let row_i = slot as usize - 1;
+            if self.rows[row_i].hash == hash {
+                let same = match (fen, uci) {
+                    (None, _) => true,
+                    (Some(fen), Some(uci)) => {
+                        self.rows[row_i].fen == fen && self.rows[row_i].uci == uci
+                    }
+                    (Some(fen), None) => self.rows[row_i].fen == fen,
+                };
+                if same {
+                    self.rows[row_i].grid[cell] += 1;
+                    return;
+                }
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    fn rehash(&mut self) {
+        let cap = (self.slots.len() * 2).max(16);
+        let mut slots = vec![0u32; cap];
+        let mask = cap - 1;
+        for (idx, row) in self.rows.iter().enumerate() {
+            let mut i = (row.hash as usize) & mask;
+            while slots[i] != 0 {
+                i = (i + 1) & mask;
+            }
+            slots[i] = (idx as u32) + 1;
+        }
+        self.slots = slots;
+    }
+}
+
+struct PosUp {
+    hash: u64,
+    speed: u8,
+    band: u8,
+    outcome: u8,
+    fen: Option<String>,
+}
+
+struct MovUp {
+    hash: u64,
+    speed: u8,
+    band: u8,
+    outcome: u8,
+    fen: Option<String>,
+    uci: Option<String>,
+    san: Option<String>,
+}
+
+enum ShardMsg {
+    Pos(Vec<PosUp>),
+    Mov(Vec<MovUp>),
+}
+
+struct Shard {
+    positions: PosMap,
+    moves: MovMap,
+}
+
+fn push_pos(batch: &mut Vec<PosUp>, tx: &Sender<ShardMsg>, up: PosUp) {
+    batch.push(up);
+    if batch.len() >= BATCH {
+        let full = std::mem::replace(batch, Vec::with_capacity(BATCH));
+        tx.send(ShardMsg::Pos(full)).expect("position shard closed");
+    }
+}
+
+fn push_mov(batch: &mut Vec<MovUp>, tx: &Sender<ShardMsg>, up: MovUp) {
+    batch.push(up);
+    if batch.len() >= BATCH {
+        let full = std::mem::replace(batch, Vec::with_capacity(BATCH));
+        tx.send(ShardMsg::Mov(full)).expect("move shard closed");
+    }
+}
+
+fn shard_loop(rx: crossbeam_channel::Receiver<ShardMsg>) -> Shard {
+    let mut positions = PosMap::new();
+    let mut moves = MovMap::new();
+    while let Ok(msg) = rx.recv() {
+        match msg {
+            ShardMsg::Pos(batch) => {
+                for up in batch {
+                    positions.bump(
+                        up.hash,
+                        up.fen.as_deref(),
+                        cell_at(up.speed, up.band, up.outcome),
+                    );
+                }
+            }
+            ShardMsg::Mov(batch) => {
+                for up in batch {
+                    moves.bump(
+                        up.hash,
+                        up.fen.as_deref(),
+                        up.uci.as_deref(),
+                        up.san.as_deref(),
+                        cell_at(up.speed, up.band, up.outcome),
+                    );
                 }
             }
         }
     }
-    acc
+    Shard { positions, moves }
 }
 
-fn fen_of<'a>(key: &'a str, parts: usize) -> &'a str {
-    let mut rest = key;
-    for _ in 0..2 {
-        rest = rest.split_once('|').map(|(_, tail)| tail).unwrap_or(rest);
+struct Parser {
+    threshold: u16,
+    seen_pos: FxHashSet<u64>,
+    seen_mov: FxHashSet<u64>,
+    pos_batches: Vec<Vec<PosUp>>,
+    mov_batches: Vec<Vec<MovUp>>,
+    cleaned: String,
+    fen: String,
+    uci_buf: String,
+}
+
+impl Parser {
+    fn new(shards: usize, threshold: u16) -> Self {
+        Self {
+            threshold,
+            seen_pos: FxHashSet::default(),
+            seen_mov: FxHashSet::default(),
+            pos_batches: (0..shards).map(|_| Vec::with_capacity(BATCH)).collect(),
+            mov_batches: (0..shards).map(|_| Vec::with_capacity(BATCH)).collect(),
+            cleaned: String::new(),
+            fen: String::new(),
+            uci_buf: String::new(),
+        }
     }
-    if parts == 3 {
-        rest
-    } else {
-        rest.rsplit_once('|').map(|(fen, _)| fen).unwrap_or(rest)
+
+    fn note_pos(&mut self, txs: &[Sender<ShardMsg>], kept: &Kept<'_>, pos_sketch: &Sketch) {
+        if pos_sketch.estimate(&self.fen, None) < self.threshold {
+            return;
+        }
+        let hash = hash_text(self.fen.as_bytes(), None);
+        let shard = shard_of(hash, txs.len());
+        let first = self.seen_pos.insert(hash);
+        push_pos(
+            &mut self.pos_batches[shard],
+            &txs[shard],
+            PosUp {
+                hash,
+                speed: speed_slot(kept.speed),
+                band: band_slot(kept.band),
+                outcome: kept.outcome as u8,
+                fen: if first { Some(self.fen.clone()) } else { None },
+            },
+        );
+    }
+
+    fn note_mov(
+        &mut self,
+        txs: &[Sender<ShardMsg>],
+        kept: &Kept<'_>,
+        mov_sketch: &Sketch,
+        san: &str,
+    ) {
+        if mov_sketch.estimate(&self.fen, Some(&self.uci_buf)) < self.threshold {
+            return;
+        }
+        let hash = hash_text(self.fen.as_bytes(), Some(self.uci_buf.as_bytes()));
+        let shard = shard_of(hash, txs.len());
+        let first = self.seen_mov.insert(hash);
+        push_mov(
+            &mut self.mov_batches[shard],
+            &txs[shard],
+            MovUp {
+                hash,
+                speed: speed_slot(kept.speed),
+                band: band_slot(kept.band),
+                outcome: kept.outcome as u8,
+                fen: if first { Some(self.fen.clone()) } else { None },
+                uci: if first {
+                    Some(self.uci_buf.clone())
+                } else {
+                    None
+                },
+                san: if first { Some(san.to_owned()) } else { None },
+            },
+        );
+    }
+
+    fn walk(
+        &mut self,
+        kept: &Kept<'_>,
+        txs: &[Sender<ShardMsg>],
+        pos_sketch: &Sketch,
+        mov_sketch: &Sketch,
+    ) {
+        clean_body(kept.body, &mut self.cleaned);
+        let cleaned = std::mem::take(&mut self.cleaned);
+        let mut pos = Chess::default();
+        let mut played = 0usize;
+        for token in cleaned.split_whitespace() {
+            if is_skippable(token) {
+                continue;
+            }
+            if played == PLY_CAP {
+                break;
+            }
+            let written = strip_suffix(token);
+            let parsed = San::from_ascii(written.as_bytes())
+                .ok()
+                .and_then(|san| san.to_move(&pos).ok());
+            self.fen.clear();
+            append_epd(&pos, &mut self.fen);
+            let Some(mv) = parsed else {
+                self.note_pos(txs, kept, pos_sketch);
+                self.cleaned = cleaned;
+                return;
+            };
+            self.note_pos(txs, kept, pos_sketch);
+            self.uci_buf.clear();
+            use std::fmt::Write as _;
+            let _ = write!(
+                self.uci_buf,
+                "{}",
+                UciMove::from_move(mv.clone(), CastlingMode::Standard)
+            );
+            self.note_mov(txs, kept, mov_sketch, written);
+            pos.play_unchecked(mv);
+            played += 1;
+        }
+        self.cleaned = cleaned;
+        if played == 0 {
+            return;
+        }
+        self.fen.clear();
+        append_epd(&pos, &mut self.fen);
+        self.note_pos(txs, kept, pos_sketch);
+    }
+
+    fn finish(&mut self, txs: &[Sender<ShardMsg>]) {
+        for (shard, batch) in self.pos_batches.iter_mut().enumerate() {
+            if !batch.is_empty() {
+                let full = std::mem::take(batch);
+                txs[shard]
+                    .send(ShardMsg::Pos(full))
+                    .expect("position shard closed");
+            }
+        }
+        for (shard, batch) in self.mov_batches.iter_mut().enumerate() {
+            if !batch.is_empty() {
+                let full = std::mem::take(batch);
+                txs[shard]
+                    .send(ShardMsg::Mov(full))
+                    .expect("move shard closed");
+            }
+        }
     }
 }
 
-fn keep_over(totals: &FxHashMap<String, u64>, key: &str, threshold: u64, parts: usize) -> bool {
-    let group = if parts == 3 {
-        fen_of(key, 3).to_owned()
-    } else {
-        let fen = fen_of(key, 4);
-        let uci = key.rsplit_once('|').map(|(_, uci)| uci).unwrap_or("");
-        format!("{fen}|{uci}")
-    };
-    totals.get(&group).copied().unwrap_or(0) >= threshold
-}
-
-fn group_totals(keys: impl Iterator<Item = (String, u64)>, parts: usize) -> FxHashMap<String, u64> {
-    let mut totals = FxHashMap::default();
-    for (key, games) in keys {
-        let group = if parts == 3 {
-            fen_of(&key, 3).to_owned()
-        } else {
-            let fen = fen_of(&key, 4);
-            let uci = key.rsplit_once('|').map(|(_, uci)| uci).unwrap_or("");
-            format!("{fen}|{uci}")
-        };
-        *totals.entry(group).or_insert(0) += games;
+fn parser_loop(
+    rx: crossbeam_channel::Receiver<String>,
+    txs: Vec<Sender<ShardMsg>>,
+    pos_sketch: Arc<Sketch>,
+    mov_sketch: Arc<Sketch>,
+    threshold: u16,
+    seen: Arc<AtomicU64>,
+    started: Instant,
+) {
+    let mut parser = Parser::new(txs.len(), threshold);
+    while let Ok(game) = rx.recv() {
+        if let Some(kept) = consider(&game) {
+            parser.walk(&kept, &txs, &pos_sketch, &mov_sketch);
+        }
+        let n = seen.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % 100_000 == 0 {
+            let seconds = started.elapsed().as_secs().max(1);
+            println!(
+                "{{\"pass\":2,\"seen\":{n},\"seconds\":{seconds},\"perSec\":{}}}",
+                n / seconds
+            );
+        }
     }
-    totals
+    parser.finish(&txs);
 }
 
-fn write_sqlite(data: &Path, positions: FxHashMap<String, [u32; 3]>, moves: FxHashMap<String, MoveCell>, threshold: u64) {
+fn run_fast_pass(file: &Path, limit: u64, threshold: u64, data: &Path, workers: usize) {
+    println!("{{\"pass\":2,\"loading\":true}}");
+    let pos = Arc::new(Sketch::load(&data.join("explorer-sketch-position.bin")));
+    let mov = Arc::new(Sketch::load(&data.join("explorer-sketch-move.bin")));
+    let (game_tx, game_rx) = bounded::<String>(workers * 8);
+    let mut txs = Vec::new();
+    let mut handles = Vec::new();
+    for _ in 0..workers {
+        let (tx, rx) = bounded::<ShardMsg>(4);
+        txs.push(tx);
+        handles.push(std::thread::spawn(move || shard_loop(rx)));
+    }
+    let seen = Arc::new(AtomicU64::new(0));
+    let started = Instant::now();
+    let mut parsers = Vec::new();
+    for _ in 0..workers {
+        let rx = game_rx.clone();
+        let txs = txs.clone();
+        let pos = Arc::clone(&pos);
+        let mov = Arc::clone(&mov);
+        let seen = Arc::clone(&seen);
+        parsers.push(std::thread::spawn(move || {
+            parser_loop(rx, txs, pos, mov, threshold as u16, seen, started)
+        }));
+    }
+    drop(game_rx);
+    let queued = stream_games(file, limit, game_tx);
+    for handle in parsers {
+        handle.join().expect("parser");
+    }
+    drop(txs);
+    let shards: Vec<Shard> = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("shard"))
+        .collect();
+    let seconds = started.elapsed().as_secs();
+    println!("{{\"pass\":2,\"counted\":true,\"queued\":{queued},\"seconds\":{seconds}}}");
+    write_compact(data, &shards, threshold);
+}
+
+fn write_compact(data: &Path, shards: &[Shard], threshold: u64) {
     let path = data.join("explorer-2026-09.sqlite");
     if path.exists() {
         fs::remove_file(&path).ok();
@@ -661,18 +1026,6 @@ fn write_sqlite(data: &Path, positions: FxHashMap<String, [u32; 3]>, moves: FxHa
         );",
     )
     .expect("create tables");
-
-    let pos_totals = group_totals(
-        positions.iter().map(|(key, cell)| (key.clone(), (cell[0] + cell[1] + cell[2]) as u64)),
-        3,
-    );
-    let move_totals = group_totals(
-        moves.iter().map(|(key, cell)| {
-            (key.clone(), (cell.counts[0] + cell.counts[1] + cell.counts[2]) as u64)
-        }),
-        4,
-    );
-
     let tx = db.transaction().expect("tx");
     {
         let mut insert = tx
@@ -681,15 +1034,34 @@ fn write_sqlite(data: &Path, positions: FxHashMap<String, [u32; 3]>, moves: FxHa
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .expect("prepare pos");
-        for (key, cell) in &positions {
-            if !keep_over(&pos_totals, key, threshold, 3) {
-                continue;
+        for shard in shards {
+            for row in &shard.positions.rows {
+                let total: u64 = row.grid.iter().map(|cell| *cell as u64).sum();
+                if total < threshold {
+                    continue;
+                }
+                for speed in 0..3 {
+                    for band in 0..9 {
+                        let base = (speed * 9 + band) * 3;
+                        let white = row.grid[base];
+                        let draws = row.grid[base + 1];
+                        let black = row.grid[base + 2];
+                        if white == 0 && draws == 0 && black == 0 {
+                            continue;
+                        }
+                        insert
+                            .execute((
+                                SPEEDS[speed],
+                                BANDS[band],
+                                row.fen.as_str(),
+                                white,
+                                draws,
+                                black,
+                            ))
+                            .expect("insert pos");
+                    }
+                }
             }
-            let (speed, rest) = key.split_once('|').unwrap();
-            let (band, fen) = rest.split_once('|').unwrap();
-            insert
-                .execute((speed, band, fen, cell[0], cell[1], cell[2]))
-                .expect("insert pos");
         }
     }
     {
@@ -699,31 +1071,200 @@ fn write_sqlite(data: &Path, positions: FxHashMap<String, [u32; 3]>, moves: FxHa
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )
             .expect("prepare move");
-        for (key, cell) in &moves {
-            if !keep_over(&move_totals, key, threshold, 4) {
-                continue;
+        for shard in shards {
+            for row in &shard.moves.rows {
+                let total: u64 = row.grid.iter().map(|cell| *cell as u64).sum();
+                if total < threshold {
+                    continue;
+                }
+                for speed in 0..3 {
+                    for band in 0..9 {
+                        let base = (speed * 9 + band) * 3;
+                        let white = row.grid[base];
+                        let draws = row.grid[base + 1];
+                        let black = row.grid[base + 2];
+                        if white == 0 && draws == 0 && black == 0 {
+                            continue;
+                        }
+                        insert
+                            .execute((
+                                SPEEDS[speed],
+                                BANDS[band],
+                                row.fen.as_str(),
+                                row.uci.as_str(),
+                                row.san.as_str(),
+                                white,
+                                draws,
+                                black,
+                            ))
+                            .expect("insert move");
+                    }
+                }
             }
-            let (speed, rest) = key.split_once('|').unwrap();
-            let (band, rest) = rest.split_once('|').unwrap();
-            let (fen, uci) = rest.rsplit_once('|').unwrap();
-            insert
-                .execute((
-                    speed,
-                    band,
-                    fen,
-                    uci,
-                    cell.san.as_str(),
-                    cell.counts[0],
-                    cell.counts[1],
-                    cell.counts[2],
-                ))
-                .expect("insert move");
         }
     }
     tx.commit().expect("commit");
-    let pos_n: i64 = db.query_row("SELECT COUNT(*) FROM explorer_position", [], |row| row.get(0)).unwrap();
-    let move_n: i64 = db.query_row("SELECT COUNT(*) FROM explorer_move", [], |row| row.get(0)).unwrap();
-    println!("{{\"scratch\":\"{}\",\"positions\":{pos_n},\"moves\":{move_n}}}", path.display());
+    let pos_n: i64 = db
+        .query_row("SELECT COUNT(*) FROM explorer_position", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let move_n: i64 = db
+        .query_row("SELECT COUNT(*) FROM explorer_move", [], |row| row.get(0))
+        .unwrap();
+    println!(
+        "{{\"scratch\":\"{}\",\"positions\":{pos_n},\"moves\":{move_n}}}",
+        path.display()
+    );
+}
+
+struct XorShift(u64);
+
+impl XorShift {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+}
+
+fn synth_board(i: u32) -> String {
+    let mut text = format!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - {i:08}");
+    while text.len() < 70 {
+        text.push('#');
+    }
+    text
+}
+
+fn mem_kb(field: &str) -> u64 {
+    let status = fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix(field) {
+            return rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0);
+        }
+    }
+    0
+}
+
+#[inline(never)]
+fn bench_compact_updates(
+    map: &mut PosMap,
+    boards: &[String],
+    board_hash: &[u64],
+    extra: &[String],
+    extra_hash: &[u64],
+) -> u64 {
+    let mut rng = XorShift(0x9E3779B97F4A7C15);
+    for _ in 0..40_000_000 {
+        let roll = rng.next();
+        let hit = roll % 10 != 0;
+        let speed = ((roll >> 40) % 3) as u8;
+        let band = ((roll >> 44) % 9) as u8;
+        let outcome = ((roll >> 48) % 3) as u8;
+        let cell = cell_at(speed, band, outcome);
+        if hit {
+            let idx = ((roll >> 4) as usize) % boards.len();
+            map.bump(board_hash[idx], None, cell);
+        } else {
+            let idx = ((roll >> 4) as usize) % extra.len();
+            map.bump(extra_hash[idx], Some(&extra[idx]), cell);
+        }
+    }
+    map.rows.iter().map(|row| row.grid[0] as u64).sum()
+}
+
+#[inline(never)]
+fn bench_string_updates(
+    map: &mut FxHashMap<String, [u32; 3]>,
+    boards: &[String],
+    extra: &[String],
+) -> u64 {
+    let mut rng = XorShift(0x9E3779B97F4A7C15);
+    let mut key = String::with_capacity(96);
+    for _ in 0..40_000_000 {
+        let roll = rng.next();
+        let hit = roll % 10 != 0;
+        let speed = SPEEDS[((roll >> 40) % 3) as usize];
+        let band = BANDS[((roll >> 44) % 9) as usize];
+        let outcome = ((roll >> 48) % 3) as usize;
+        let fen = if hit {
+            &boards[((roll >> 4) as usize) % boards.len()]
+        } else {
+            &extra[((roll >> 4) as usize) % extra.len()]
+        };
+        key.clear();
+        key.push_str(speed);
+        key.push('|');
+        key.push_str(band);
+        key.push('|');
+        key.push_str(fen);
+        bump_pos(map, &key, outcome);
+    }
+    map.values().map(|cell| cell[0] as u64).sum()
+}
+
+fn run_bench() {
+    const BOARDS: u32 = 2_000_000;
+    const EXTRA: u32 = 200_000;
+    let boards: Vec<String> = (0..BOARDS).map(synth_board).collect();
+    let extra: Vec<String> = (BOARDS..BOARDS + EXTRA).map(synth_board).collect();
+    let board_hash: Vec<u64> = boards
+        .iter()
+        .map(|fen| hash_text(fen.as_bytes(), None))
+        .collect();
+    let extra_hash: Vec<u64> = extra
+        .iter()
+        .map(|fen| hash_text(fen.as_bytes(), None))
+        .collect();
+    println!(
+        "{{\"bench\":true,\"boards\":{},\"extra\":{},\"updates\":40000000,\"fenBytes\":{}}}",
+        boards.len(),
+        extra.len(),
+        boards[0].len()
+    );
+
+    let mut compact = PosMap::with_capacity(boards.len() + extra.len());
+    for (fen, hash) in boards.iter().zip(&board_hash) {
+        compact.bump(*hash, Some(fen), 0);
+    }
+    let started = Instant::now();
+    let checksum = bench_compact_updates(&mut compact, &boards, &board_hash, &extra, &extra_hash);
+    let compact_secs = started.elapsed().as_secs_f64();
+    let compact_rate = 40_000_000.0 / compact_secs;
+    let compact_rss = mem_kb("VmRSS:") * 1024;
+    let compact_hwm = mem_kb("VmHWM:") * 1024;
+    println!(
+        "{{\"map\":\"compact\",\"boards\":{},\"updates\":40000000,\"seconds\":{compact_secs:.3},\"perSec\":{compact_rate:.0},\"rssBytes\":{compact_rss},\"hwmBytes\":{compact_hwm},\"rows\":{},\"checksum\":{checksum}}}",
+        boards.len(),
+        compact.rows.len()
+    );
+    let _ = std::io::stdout().flush();
+    drop(compact);
+
+    let mut string_map: FxHashMap<String, [u32; 3]> = FxHashMap::default();
+    for fen in &boards {
+        let key = format!("blitz|0|{fen}");
+        bump_pos(&mut string_map, &key, 0);
+    }
+    let started = Instant::now();
+    let checksum = bench_string_updates(&mut string_map, &boards, &extra);
+    let string_secs = started.elapsed().as_secs_f64();
+    let string_rate = 40_000_000.0 / string_secs;
+    let string_rss = mem_kb("VmRSS:") * 1024;
+    let string_hwm = mem_kb("VmHWM:") * 1024;
+    println!(
+        "{{\"map\":\"string\",\"boards\":{},\"updates\":40000000,\"seconds\":{string_secs:.3},\"perSec\":{string_rate:.0},\"rssBytes\":{string_rss},\"hwmBytes\":{string_hwm},\"rows\":{},\"checksum\":{checksum}}}",
+        boards.len(),
+        string_map.len()
+    );
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -743,7 +1284,10 @@ fn dump_line(moves: &[&str]) {
     append_epd(&pos, &mut key);
     println!("start {key}");
     for san in moves {
-        let mv = San::from_ascii(san.as_bytes()).unwrap().to_move(&pos).unwrap();
+        let mv = San::from_ascii(san.as_bytes())
+            .unwrap()
+            .to_move(&pos)
+            .unwrap();
         pos.play_unchecked(mv);
         key.clear();
         append_epd(&pos, &mut key);
@@ -753,38 +1297,41 @@ fn dump_line(moves: &[&str]) {
 
 fn main() {
     let pass = arg("pass").unwrap_or_else(|| "all".to_owned());
-    let file = arg("file").map(PathBuf::from).unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-        PathBuf::from(home).join("Downloads/lichess_db_standard_rated_2026-09.pgn.zst")
-    });
-    let limit = arg("limit").and_then(|value| value.parse().ok()).unwrap_or(0);
-    let threshold = arg("threshold").and_then(|value| value.parse().ok()).unwrap_or(100u64);
-    let data = PathBuf::from(".data");
-    fs::create_dir_all(&data).ok();
-    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     if pass == "fen" {
         dump_line(&["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4"]);
         dump_line(&["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O"]);
         return;
     }
+    if pass == "bench" {
+        run_bench();
+        return;
+    }
+    let file = arg("file").map(PathBuf::from).unwrap_or_else(|| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
+        PathBuf::from(home).join("Downloads/lichess_db_standard_rated_2026-09.pgn.zst")
+    });
+    let limit = arg("limit")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let threshold = arg("threshold")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(100u64);
+    let data = arg("data")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".data"));
+    fs::create_dir_all(&data).ok();
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
     println!(
         "{{\"file\":\"{}\",\"pass\":\"{pass}\",\"limit\":{limit},\"threshold\":{threshold},\"workers\":{workers}}}",
         file.display()
     );
 
     if pass == "1" || pass == "all" {
-        let _ = run_pass(1, &file, limit, threshold as u16, &data, workers);
+        run_pass(&file, limit, &data, workers);
     }
     if pass == "2" || pass == "all" {
-        let mut tallies = run_pass(2, &file, limit, threshold as u16, &data, workers);
-        println!("{{\"pass\":2,\"merging\":true}}");
-        let positions = merge_pos(&mut tallies);
-        let moves = merge_moves(&mut tallies);
-        println!(
-            "{{\"pass\":2,\"merged\":true,\"positions\":{},\"moves\":{}}}",
-            positions.len(),
-            moves.len()
-        );
-        write_sqlite(&data, positions, moves, threshold);
+        run_fast_pass(&file, limit, threshold, &data, workers);
     }
 }
