@@ -12,3 +12,9 @@ shakmaty = "0.29"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+panic = "abort"
+
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
