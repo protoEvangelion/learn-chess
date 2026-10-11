@@ -1,15 +1,18 @@
 import { Chess } from 'chess.js'
-import { getTurso } from './turso.js'
+import { getExplorerDb, listExplorerSources } from './explorerDb.js'
 import { loadOpeningBook, positionKey, type BookLine } from './openingBook.js'
 import {
   EXPLORER_MOVE_CAP,
+  EXPLORER_SPEEDS,
+  normalizeSpeeds,
+  normalizeMonths,
+  type ExplorerMonth,
   type ExplorerMove,
   type ExplorerOpening,
   type ExplorerPosition,
+  type ExplorerSpeed,
   type RatingBandId,
 } from '../src/lib/lichessExplorer.js'
-
-const SPEEDS = ['blitz', 'rapid', 'classical'] as const
 
 type NameIndex = Map<string, ExplorerOpening>
 
@@ -29,6 +32,12 @@ function indexBook(lines: readonly BookLine[]): NameIndex {
   return byMoves
 }
 
+/** Book line whose moves are exactly `uci`, when one exists. */
+function exactOpening(index: NameIndex, uci: readonly string[]): ExplorerOpening | null {
+  if (uci.length === 0) return null
+  return index.get(uci.join(',')) ?? null
+}
+
 /** Longest opening whose moves are a prefix of `uci`. */
 function openingFor(index: NameIndex, uci: readonly string[]): ExplorerOpening | null {
   for (let length = uci.length; length >= 1; length -= 1) {
@@ -36,6 +45,51 @@ function openingFor(index: NameIndex, uci: readonly string[]): ExplorerOpening |
     if (hit) return hit
   }
   return null
+}
+
+let monthColumn: Promise<boolean> | null = null
+
+/** The live file has no month until the next build. All-time queries skip the column. */
+/** Months attached for the explorer, earliest first. */
+export async function listExplorerMonths(): Promise<string[]> {
+  const sources = await listExplorerSources()
+  return sources.map((source) => source.month)
+}
+
+function explorerHasMonth(): Promise<boolean> {
+  if (!monthColumn) {
+    monthColumn = getExplorerDb()
+      .execute("SELECT name FROM pragma_table_info('explorer_move')")
+      .then((result) => result.rows.some((row) => String(row.name ?? '') === 'month'))
+      .catch(() => false)
+  }
+  return monthColumn
+}
+
+function mergeMoveRows(
+  rows: readonly Record<string, unknown>[],
+): { uci: unknown; san: unknown; white: unknown; draws: unknown; black: unknown }[] {
+  const byKey = new Map<string, { uci: string; san: string; white: number; draws: number; black: number }>()
+  for (const row of rows) {
+    const uci = String(row.uci ?? '')
+    const san = String(row.san ?? '')
+    const key = `${uci}\0${san}`
+    const prev = byKey.get(key)
+    if (prev) {
+      prev.white += num(row.white)
+      prev.draws += num(row.draws)
+      prev.black += num(row.black)
+      continue
+    }
+    byKey.set(key, {
+      uci,
+      san,
+      white: num(row.white),
+      draws: num(row.draws),
+      black: num(row.black),
+    })
+  }
+  return [...byKey.values()]
 }
 
 function winRate(white: number, draws: number, black: number, side: 'w' | 'b') {
@@ -52,6 +106,8 @@ export async function queryExplorerPosition(
   fen: string,
   ratings: readonly RatingBandId[],
   play = '',
+  speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
+  months: readonly ExplorerMonth[] = [],
 ): Promise<ExplorerPosition> {
   const chess = new Chess(fen)
   const uciPath: string[] = []
@@ -65,45 +121,76 @@ export async function queryExplorerPosition(
     uciPath.push(`${played.from}${played.to}${played.promotion ?? ''}`)
   }
   const key = positionKey(chess.fen())
+  const selectedSpeeds = normalizeSpeeds(speeds)
+  const selectedMonths = normalizeMonths(months)
+  const hasMonth = selectedMonths.length > 0 && (await explorerHasMonth())
   const bandPlace = ratings.map(() => '?').join(', ')
-  const speedPlace = SPEEDS.map(() => '?').join(', ')
-  const args = [key, ...ratings, ...SPEEDS]
-  const db = getTurso()
+  const speedPlace = selectedSpeeds.map(() => '?').join(', ')
+  const monthPlace = selectedMonths.map(() => '?').join(', ')
+  const monthSql = hasMonth ? `AND month IN (${monthPlace})` : ''
+  const args = [
+    key,
+    ...ratings,
+    ...selectedSpeeds,
+    ...(hasMonth ? selectedMonths : []),
+  ]
+  const sources = await listExplorerSources()
+  const active =
+    sources.length === 0
+      ? [{ month: '', db: getExplorerDb() }]
+      : selectedMonths.length > 0
+        ? sources.filter((source) => selectedMonths.includes(source.month))
+        : sources
   let moveRows: { uci: unknown; san: unknown; white: unknown; draws: unknown; black: unknown }[]
   let totals: { white: unknown; draws: unknown; black: unknown } | undefined
   let bookLines: BookLine[]
   try {
-    const [movesResult, positionResult, book] = await Promise.all([
-      db.execute({
-        sql: `
-          SELECT uci, san,
-                 SUM(white) AS white,
-                 SUM(draws) AS draws,
-                 SUM(black) AS black
-          FROM explorer_move
-          WHERE position = ?
-            AND rating_band IN (${bandPlace})
-            AND speed IN (${speedPlace})
-          GROUP BY uci, san
-        `,
-        args,
-      }),
-      db.execute({
-        sql: `
-          SELECT SUM(white) AS white,
-                 SUM(draws) AS draws,
-                 SUM(black) AS black
-          FROM explorer_position
-          WHERE position = ?
-            AND rating_band IN (${bandPlace})
-            AND speed IN (${speedPlace})
-        `,
-        args,
-      }),
+    const [moveResults, positionResults, book] = await Promise.all([
+      Promise.all(
+        active.map((source) =>
+          source.db.execute({
+            sql: `
+              SELECT uci, san,
+                     SUM(white) AS white,
+                     SUM(draws) AS draws,
+                     SUM(black) AS black
+              FROM explorer_move
+              WHERE position = ?
+                AND rating_band IN (${bandPlace})
+                AND speed IN (${speedPlace})
+                ${monthSql}
+              GROUP BY uci, san
+            `,
+            args,
+          }),
+        ),
+      ),
+      Promise.all(
+        active.map((source) =>
+          source.db.execute({
+            sql: `
+              SELECT SUM(white) AS white,
+                     SUM(draws) AS draws,
+                     SUM(black) AS black
+              FROM explorer_position
+              WHERE position = ?
+                AND rating_band IN (${bandPlace})
+                AND speed IN (${speedPlace})
+                ${monthSql}
+            `,
+            args,
+          }),
+        ),
+      ),
       loadOpeningBook(),
     ])
-    moveRows = movesResult.rows as unknown as typeof moveRows
-    totals = positionResult.rows[0] as unknown as typeof totals
+    moveRows = mergeMoveRows(moveResults.flatMap((result) => result.rows))
+    const positionRows = positionResults.map((result) => result.rows[0])
+    totals = {
+      white: positionRows.reduce((sum, row) => sum + num(row?.white), 0),
+      draws: positionRows.reduce((sum, row) => sum + num(row?.draws), 0),
+      black: positionRows.reduce((sum, row) => sum + num(row?.black), 0),
+    }
     bookLines = book.lines
   } catch (err) {
     const message = err instanceof Error ? err.message : 'explorer query failed'
@@ -128,7 +215,7 @@ export async function queryExplorerPosition(
         white,
         draws,
         black,
-        opening: openingFor(names, [...uciPath, uci]),
+        opening: exactOpening(names, [...uciPath, uci]),
       }
     })
     .filter((move) => move.uci && move.white + move.draws + move.black > 0)

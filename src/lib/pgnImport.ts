@@ -137,10 +137,11 @@ function loadPgnResilient(pgn: string): Chess {
   return fallback
 }
 
-/** PGN without clock comments, suitable for a query param. */
-export function historyToPgn(history: HistoryItem[]): string {
-  if (history.length === 0) return ''
+/** SAN list for the moves actually on the board. Check and mate marks are kept. */
+export function historyToSans(history: HistoryItem[]): string[] {
+  if (history.length === 0) return []
   const chess = new Chess()
+  const sans: string[] = []
   for (const item of history) {
     const from = positionToSquare(item.from)
     const to = positionToSquare(item.to)
@@ -149,6 +150,22 @@ export function historyToPgn(history: HistoryItem[]): string {
     try {
       const played = chess.move({ from, to, promotion })
       if (!played) break
+      sans.push(played.san)
+    } catch {
+      break
+    }
+  }
+  return sans
+}
+
+/** PGN without clock comments, suitable for a query param. */
+export function historyToPgn(history: HistoryItem[]): string {
+  const sans = historyToSans(history)
+  if (sans.length === 0) return ''
+  const chess = new Chess()
+  for (const san of sans) {
+    try {
+      if (!chess.move(san)) break
     } catch {
       break
     }

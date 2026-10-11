@@ -16,6 +16,7 @@ dist-ssr
 .data
 fixtures/slice-string
 fixtures/slice-fast
+fixtures/*.pgn
 
 # Editor directories and files
 .vscode/*

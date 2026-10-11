@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
 import { BorderBeam } from 'border-beam'
 import { PixelButton } from '@/components/ui/PixelButton'
 import { PixelHeading } from '@/components/ui/pixel-heading-character'
@@ -81,26 +81,17 @@ export function EndGameOverlay({
   canReview = false,
 }: Props) {
   const confetti = outcome === 'win'
-  const [starting, setStarting] = useState(false)
-
-  async function handleNewGame() {
-    if (starting || reviewBusy) return
-    setStarting(true)
-    try {
-      await new Promise<void>((r) => window.setTimeout(r, 900))
-      await onNewGame()
-    } catch {
-      setStarting(false)
-    }
-  }
 
   const card = (
     <EndGameCard
       outcome={outcome}
-      onNewGame={handleNewGame}
+      onNewGame={() => {
+        if (reviewBusy) return
+        void onNewGame()
+      }}
       onDismiss={onDismiss}
       onReviewGame={onReviewGame}
-      starting={starting}
+      starting={false}
       reviewBusy={reviewBusy}
       reviewProgress={reviewProgress}
       reviewError={reviewError}

@@ -2,9 +2,10 @@
 //!
 //! Pass 1 remembers which boards and moves were popular, in a fixed-size sketch.
 //! Pass 2 keeps one row per board: an 8-byte hash, the board text once, and a
-//! win/draw/loss grid over speed and rating band. `--pass bench` times that map
-//! against the old string keys. The website upload is still
-//! `npm run build:explorer:upload`.
+//! win/draw/loss grid over speed and rating band. It adds those rows into
+//! SQLite every million games and clears the memory, so a full month does not
+//! have to fit in RAM. `--pass bench` times that map against the old string
+//! keys. The website upload is still `npm run build:explorer:upload`.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -21,11 +22,14 @@ use shakmaty::san::San;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingSide, Chess, Color, EnPassantMode, Position};
 
+mod group;
+
 const WIDTH: usize = 1 << 27;
 const DEPTH: usize = 1;
 const PLY_CAP: usize = 50;
 const SKETCH_BYTES: usize = WIDTH * DEPTH * 2;
 const BATCH: usize = 4096;
+const CHUNK_GAMES: u64 = 1_000_000;
 const SPEEDS: [&str; 3] = ["blitz", "rapid", "classical"];
 const BANDS: [&str; 9] = [
     "0", "1000", "1200", "1400", "1600", "1800", "2000", "2200", "2500",
@@ -490,6 +494,96 @@ fn pump_games(
     games
 }
 
+struct GameStream {
+    child: Option<Child>,
+    reader: Box<dyn Read>,
+    buf: Vec<u8>,
+    tmp: Vec<u8>,
+    done: bool,
+}
+
+impl GameStream {
+    fn open(file: &Path) -> Self {
+        let zstd = if Path::new("/opt/homebrew/bin/zstd").exists() {
+            "/opt/homebrew/bin/zstd"
+        } else {
+            "zstd"
+        };
+        let mut child = Command::new(zstd)
+            .args(["-dc", "-T0", &file.to_string_lossy()])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("spawn zstd");
+        let reader = Box::new(child.stdout.take().expect("zstd stdout"));
+        Self {
+            child: Some(child),
+            reader,
+            buf: Vec::with_capacity(1 << 20),
+            tmp: vec![0u8; 1 << 20],
+            done: false,
+        }
+    }
+
+    fn send_up_to(&mut self, limit: u64, tx: Sender<String>) -> u64 {
+        if self.done {
+            return 0;
+        }
+        let mut games = 0u64;
+        loop {
+            while let Some(end) = find_game_end(&self.buf) {
+                if games >= limit {
+                    return games;
+                }
+                let game = String::from_utf8_lossy(&self.buf[..end]).into_owned();
+                self.buf.drain(..end + 2);
+                if game.starts_with('[') {
+                    games += 1;
+                    if tx.send(game).is_err() {
+                        return games;
+                    }
+                }
+            }
+            if games >= limit {
+                return games;
+            }
+            let n = self.reader.read(&mut self.tmp).expect("read pgn");
+            if n == 0 {
+                if games < limit && self.buf.starts_with(b"[") {
+                    let game = String::from_utf8_lossy(&self.buf).into_owned();
+                    self.buf.clear();
+                    games += 1;
+                    let _ = tx.send(game);
+                }
+                self.finish_child();
+                return games;
+            }
+            self.buf.extend_from_slice(&self.tmp[..n]);
+        }
+    }
+
+    fn finish_child(&mut self) {
+        self.done = true;
+        if let Some(mut child) = self.child.take() {
+            let _ = child.wait();
+        }
+    }
+
+    fn close(&mut self) {
+        self.done = true;
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for GameStream {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 fn worker_loop(
     rx: crossbeam_channel::Receiver<String>,
     pos: Arc<Sketch>,
@@ -584,10 +678,97 @@ fn shard_of(hash: u64, shards: usize) -> usize {
     ((hash >> 32) as usize) % shards
 }
 
+/// Most boards in a chunk are one speed and one rating band. A dense 81-wide
+/// grid made a 2,000,000-game chunk use about 20 GB. One cell stays inline.
+/// A second cell promotes that row to the full grid.
+enum Grid {
+    One { cell: u8, count: u32 },
+    All(Box<[u32; 81]>),
+}
+
+impl Grid {
+    fn one(cell: usize) -> Self {
+        Self::One {
+            cell: cell as u8,
+            count: 1,
+        }
+    }
+
+    fn add(&mut self, cell: usize) {
+        let promoted = match self {
+            Grid::One { cell: have, count } if *have as usize == cell => {
+                *count += 1;
+                return;
+            }
+            Grid::One { cell: have, count } => {
+                let mut all = Box::new([0u32; 81]);
+                all[*have as usize] = *count;
+                all[cell] = 1;
+                Some(all)
+            }
+            Grid::All(all) => {
+                all[cell] += 1;
+                None
+            }
+        };
+        if let Some(all) = promoted {
+            *self = Grid::All(all);
+        }
+    }
+
+    fn total(&self) -> u64 {
+        match self {
+            Grid::One { count, .. } => *count as u64,
+            Grid::All(all) => all.iter().map(|count| *count as u64).sum(),
+        }
+    }
+
+    fn count_at(&self, cell: usize) -> u32 {
+        match self {
+            Grid::One { cell: have, count } if *have as usize == cell => *count,
+            Grid::One { .. } => 0,
+            Grid::All(all) => all[cell],
+        }
+    }
+
+    fn visit_bands(&self, mut visit: impl FnMut(usize, usize, u32, u32, u32)) {
+        match self {
+            Grid::One { cell, count } => {
+                let cell = *cell as usize;
+                let speed = cell / 27;
+                let band = (cell % 27) / 3;
+                let mut white = 0;
+                let mut draws = 0;
+                let mut black = 0;
+                match cell % 3 {
+                    0 => white = *count,
+                    1 => draws = *count,
+                    _ => black = *count,
+                }
+                visit(speed, band, white, draws, black);
+            }
+            Grid::All(all) => {
+                for speed in 0..3 {
+                    for band in 0..9 {
+                        let base = (speed * 9 + band) * 3;
+                        let white = all[base];
+                        let draws = all[base + 1];
+                        let black = all[base + 2];
+                        if white == 0 && draws == 0 && black == 0 {
+                            continue;
+                        }
+                        visit(speed, band, white, draws, black);
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct PosRow {
     hash: u64,
     fen: String,
-    grid: [u32; 81],
+    grid: Grid,
 }
 
 struct MovRow {
@@ -595,7 +776,7 @@ struct MovRow {
     fen: String,
     uci: String,
     san: String,
-    grid: [u32; 81],
+    grid: Grid,
 }
 
 struct PosMap {
@@ -633,11 +814,10 @@ impl PosMap {
                 self.rows.push(PosRow {
                     hash,
                     fen: text,
-                    grid: [0; 81],
+                    grid: Grid::one(cell),
                 });
                 let idx = self.rows.len() as u32;
                 self.slots[i] = idx;
-                self.rows[idx as usize - 1].grid[cell] = 1;
                 return;
             }
             let row_i = slot as usize - 1;
@@ -647,7 +827,7 @@ impl PosMap {
                     Some(text) => self.rows[row_i].fen == text,
                 };
                 if same {
-                    self.rows[row_i].grid[cell] += 1;
+                    self.rows[row_i].grid.add(cell);
                     return;
                 }
             }
@@ -667,11 +847,10 @@ impl PosMap {
                 self.rows.push(PosRow {
                     hash,
                     fen: fen.expect("fen on first sight of a board"),
-                    grid: [0; 81],
+                    grid: Grid::one(cell),
                 });
                 let idx = self.rows.len() as u32;
                 self.slots[i] = idx;
-                self.rows[idx as usize - 1].grid[cell] = 1;
                 return;
             }
             let row_i = slot as usize - 1;
@@ -681,7 +860,7 @@ impl PosMap {
                     Some(text) => self.rows[row_i].fen == text,
                 };
                 if same {
-                    self.rows[row_i].grid[cell] += 1;
+                    self.rows[row_i].grid.add(cell);
                     return;
                 }
             }
@@ -733,11 +912,10 @@ impl MovMap {
                     fen: fen.expect("fen on first sight of a move"),
                     uci: uci.expect("uci on first sight of a move"),
                     san: san.expect("san on first sight of a move"),
-                    grid: [0; 81],
+                    grid: Grid::one(cell),
                 });
                 let idx = self.rows.len() as u32;
                 self.slots[i] = idx;
-                self.rows[idx as usize - 1].grid[cell] = 1;
                 return;
             }
             let row_i = slot as usize - 1;
@@ -750,7 +928,7 @@ impl MovMap {
                     (Some(fen), None) => self.rows[row_i].fen == fen,
                 };
                 if same {
-                    self.rows[row_i].grid[cell] += 1;
+                    self.rows[row_i].grid.add(cell);
                     return;
                 }
             }
@@ -1025,15 +1203,16 @@ fn parser_loop(
     parser.finish(&txs);
 }
 
-fn run_fast_pass(file: &Path, limit: u64, threshold: u64, data: &Path, workers: usize) {
-    println!("{{\"pass\":2,\"loading\":true}}");
-    let load_started = Instant::now();
-    let pos = Arc::new(Sketch::load(&data.join("explorer-sketch-position.bin")));
-    let mov = Arc::new(Sketch::load(&data.join("explorer-sketch-move.bin")));
-    println!(
-        "{{\"pass\":2,\"loadedSec\":{:.3}}}",
-        load_started.elapsed().as_secs_f64()
-    );
+fn count_chunk(
+    stream: &mut GameStream,
+    room: u64,
+    threshold: u16,
+    pos: &Arc<Sketch>,
+    mov: &Arc<Sketch>,
+    workers: usize,
+    seen: &Arc<AtomicU64>,
+    started: Instant,
+) -> (Vec<Shard>, u64) {
     let (game_tx, game_rx) = bounded::<String>(workers * 8);
     let mut txs = Vec::new();
     let mut handles = Vec::new();
@@ -1042,37 +1221,187 @@ fn run_fast_pass(file: &Path, limit: u64, threshold: u64, data: &Path, workers: 
         txs.push(tx);
         handles.push(std::thread::spawn(move || shard_loop(rx)));
     }
-    let seen = Arc::new(AtomicU64::new(0));
-    let started = Instant::now();
     let mut parsers = Vec::new();
     for _ in 0..workers {
         let rx = game_rx.clone();
         let txs = txs.clone();
-        let pos = Arc::clone(&pos);
-        let mov = Arc::clone(&mov);
-        let seen = Arc::clone(&seen);
+        let pos = Arc::clone(pos);
+        let mov = Arc::clone(mov);
+        let seen = Arc::clone(seen);
         parsers.push(std::thread::spawn(move || {
-            parser_loop(rx, txs, pos, mov, threshold as u16, seen, started)
+            parser_loop(rx, txs, pos, mov, threshold, seen, started)
         }));
     }
     drop(game_rx);
-    let queued = stream_games(file, limit, game_tx);
+    let games = stream.send_up_to(room, game_tx);
     for handle in parsers {
         handle.join().expect("parser");
     }
     drop(txs);
-    let shards: Vec<Shard> = handles
+    let shards = handles
         .into_iter()
         .map(|handle| handle.join().expect("shard"))
         .collect();
-    let seconds = started.elapsed().as_secs_f64();
-    println!("{{\"pass\":2,\"counted\":true,\"queued\":{queued},\"seconds\":{seconds:.3}}}");
-    let write_started = Instant::now();
-    write_compact(data, &shards, threshold);
+    (shards, games)
+}
+
+fn run_fast_pass(file: &Path, limit: u64, threshold: u64, data: &Path, workers: usize) {
+    println!("{{\"pass\":2,\"loading\":true,\"chunkGames\":{CHUNK_GAMES}}}");
+    let load_started = Instant::now();
+    let pos = Arc::new(Sketch::load(&data.join("explorer-sketch-position.bin")));
+    let mov = Arc::new(Sketch::load(&data.join("explorer-sketch-move.bin")));
     println!(
-        "{{\"pass\":2,\"wroteSec\":{:.3}}}",
-        write_started.elapsed().as_secs_f64()
+        "{{\"pass\":2,\"loadedSec\":{:.3}}}",
+        load_started.elapsed().as_secs_f64()
     );
+    let mut position_runs = group::ChunkRuns::create(&data.join("chunk-runs-position"));
+    let mut move_runs = group::ChunkRuns::create(&data.join("chunk-runs-move"));
+    let mut stream = GameStream::open(file);
+    let seen = Arc::new(AtomicU64::new(0));
+    let started = Instant::now();
+    let mut queued = 0u64;
+    let mut chunk = 0u64;
+    loop {
+        let room = if limit == 0 {
+            CHUNK_GAMES
+        } else {
+            CHUNK_GAMES.min(limit.saturating_sub(queued))
+        };
+        if room == 0 {
+            break;
+        }
+        let (shards, games) = count_chunk(
+            &mut stream,
+            room,
+            threshold as u16,
+            &pos,
+            &mov,
+            workers,
+            &seen,
+            started,
+        );
+        if games == 0 {
+            break;
+        }
+        chunk += 1;
+        queued += games;
+        let dump_started = Instant::now();
+        dump_chunk(&mut position_runs, &mut move_runs, shards);
+        println!(
+            "{{\"pass\":2,\"chunk\":{chunk},\"games\":{queued},\"dumpSec\":{:.3},\"rssMb\":{},\"posRuns\":{},\"movRuns\":{}}}",
+            dump_started.elapsed().as_secs_f64(),
+            mem_kb("VmRSS:") / 1024,
+            position_runs.runs(),
+            move_runs.runs()
+        );
+        if games < room {
+            break;
+        }
+    }
+    stream.close();
+    position_runs.finish();
+    move_runs.finish();
+    let seconds = started.elapsed().as_secs_f64();
+    println!(
+        "{{\"pass\":2,\"counted\":true,\"queued\":{queued},\"seconds\":{seconds:.3},\"posRuns\":{},\"movRuns\":{}}}",
+        position_runs.runs(),
+        move_runs.runs()
+    );
+}
+
+fn dump_chunk(positions: &mut group::ChunkRuns, moves: &mut group::ChunkRuns, shards: Vec<Shard>) {
+    for shard in shards {
+        for row in &shard.positions.rows {
+            row.grid.visit_bands(|speed, band, white, draws, black| {
+                positions.push(
+                    SPEEDS[speed],
+                    BANDS[band],
+                    &row.fen,
+                    "",
+                    "",
+                    white as i64,
+                    draws as i64,
+                    black as i64,
+                );
+            });
+        }
+        for row in &shard.moves.rows {
+            row.grid
+                .visit_bands(|speed, band, white, draws, black| {
+                    moves.push(
+                        SPEEDS[speed],
+                        BANDS[band],
+                        &row.fen,
+                        &row.uci,
+                        &row.san,
+                        white as i64,
+                        draws as i64,
+                        black as i64,
+                    );
+                });
+        }
+    }
+}
+
+fn is_month(month: &str) -> bool {
+    let bytes = month.as_bytes();
+    bytes.len() == 7
+        && bytes[4] == b'-'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..].iter().all(u8::is_ascii_digit)
+}
+
+fn month_of(file: &Path) -> String {
+    let name = file.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    name.split(|ch: char| ch != '-' && !ch.is_ascii_digit())
+        .find(|part| is_month(part))
+        .unwrap_or("2026-09")
+        .to_owned()
+}
+
+fn remember_month(data: &Path, month: &str) {
+    fs::write(data.join("explorer-month.txt"), month).expect("remember month");
+}
+
+fn load_month(data: &Path) -> Option<String> {
+    let text = fs::read_to_string(data.join("explorer-month.txt")).ok()?;
+    let month = text.trim();
+    if is_month(month) {
+        Some(month.to_owned())
+    } else {
+        None
+    }
+}
+
+/// Adds `month` after the tables exist. The hot insert path stays one month per file.
+pub(crate) fn stamp_month(db: &Connection, month: &str) {
+    assert!(is_month(month), "month must be YYYY-MM");
+    for table in ["explorer_position", "explorer_move"] {
+        let has: i64 = db
+            .query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = 'month'"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if has > 0 {
+            continue;
+        }
+        db.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN month TEXT NOT NULL DEFAULT '{month}'"
+        ))
+        .expect("add month");
+        db.execute_batch(&format!(
+            "CREATE INDEX IF NOT EXISTS {table}_month ON {table} (position, month, rating_band, speed)"
+        ))
+        .expect("month index");
+    }
+}
+
+pub(crate) fn stamp_saved_month(db: &Connection, data: &Path) {
+    if let Some(month) = load_month(data) {
+        stamp_month(db, &month);
+    }
 }
 
 fn write_part(path: &Path, shard: &Shard, threshold: u64) {
@@ -1173,32 +1502,16 @@ fn insert_position_rows(tx: &rusqlite::Transaction, rows: &[PosRow], threshold: 
         queued.clear();
     };
     for row in rows {
-        let total: u64 = row.grid.iter().map(|cell| *cell as u64).sum();
-        if total < threshold {
+        if row.grid.total() < threshold {
             continue;
         }
-        for speed in 0..3 {
-            for band in 0..9 {
-                let base = (speed * 9 + band) * 3;
-                let white = row.grid[base];
-                let draws = row.grid[base + 1];
-                let black = row.grid[base + 2];
-                if white == 0 && draws == 0 && black == 0 {
-                    continue;
-                }
-                queued.push((
-                    SPEEDS[speed],
-                    BANDS[band],
-                    row.fen.as_str(),
-                    white,
-                    draws,
-                    black,
-                ));
-                if queued.len() == N {
-                    flush(&mut queued, &mut batch, &mut one);
-                }
+        let fen = row.fen.as_str();
+        row.grid.visit_bands(|speed, band, white, draws, black| {
+            queued.push((SPEEDS[speed], BANDS[band], fen, white, draws, black));
+            if queued.len() == N {
+                flush(&mut queued, &mut batch, &mut one);
             }
-        }
+        });
     }
     flush(&mut queued, &mut batch, &mut one);
 }
@@ -1221,46 +1534,32 @@ fn insert_move_rows(tx: &rusqlite::Transaction, rows: &[MovRow], threshold: u64)
         .expect("prepare move");
     let mut queued: Vec<(&str, &str, &str, &str, &str, u32, u32, u32)> = Vec::with_capacity(N);
     for row in rows {
-        let total: u64 = row.grid.iter().map(|cell| *cell as u64).sum();
-        if total < threshold {
+        if row.grid.total() < threshold {
             continue;
         }
-        for speed in 0..3 {
-            for band in 0..9 {
-                let base = (speed * 9 + band) * 3;
-                let white = row.grid[base];
-                let draws = row.grid[base + 1];
-                let black = row.grid[base + 2];
-                if white == 0 && draws == 0 && black == 0 {
-                    continue;
+        let fen = row.fen.as_str();
+        let uci = row.uci.as_str();
+        let san = row.san.as_str();
+        row.grid.visit_bands(|speed, band, white, draws, black| {
+            queued.push((
+                SPEEDS[speed], BANDS[band], fen, uci, san, white, draws, black,
+            ));
+            if queued.len() == N {
+                for (i, item) in queued.iter().enumerate() {
+                    let b = i * 8;
+                    batch.raw_bind_parameter(b + 1, item.0).unwrap();
+                    batch.raw_bind_parameter(b + 2, item.1).unwrap();
+                    batch.raw_bind_parameter(b + 3, item.2).unwrap();
+                    batch.raw_bind_parameter(b + 4, item.3).unwrap();
+                    batch.raw_bind_parameter(b + 5, item.4).unwrap();
+                    batch.raw_bind_parameter(b + 6, item.5).unwrap();
+                    batch.raw_bind_parameter(b + 7, item.6).unwrap();
+                    batch.raw_bind_parameter(b + 8, item.7).unwrap();
                 }
-                queued.push((
-                    SPEEDS[speed],
-                    BANDS[band],
-                    row.fen.as_str(),
-                    row.uci.as_str(),
-                    row.san.as_str(),
-                    white,
-                    draws,
-                    black,
-                ));
-                if queued.len() == N {
-                    for (i, item) in queued.iter().enumerate() {
-                        let b = i * 8;
-                        batch.raw_bind_parameter(b + 1, item.0).unwrap();
-                        batch.raw_bind_parameter(b + 2, item.1).unwrap();
-                        batch.raw_bind_parameter(b + 3, item.2).unwrap();
-                        batch.raw_bind_parameter(b + 4, item.3).unwrap();
-                        batch.raw_bind_parameter(b + 5, item.4).unwrap();
-                        batch.raw_bind_parameter(b + 6, item.5).unwrap();
-                        batch.raw_bind_parameter(b + 7, item.6).unwrap();
-                        batch.raw_bind_parameter(b + 8, item.7).unwrap();
-                    }
-                    batch.raw_execute().expect("insert move");
-                    queued.clear();
-                }
+                batch.raw_execute().expect("insert move");
+                queued.clear();
             }
-        }
+        });
     }
     for item in &queued {
         one.execute(*item).expect("insert move");
@@ -1326,6 +1625,7 @@ fn write_compact(data: &Path, shards: &[Shard], threshold: u64) {
     let move_n: i64 = db
         .query_row("SELECT COUNT(*) FROM explorer_move", [], |row| row.get(0))
         .unwrap();
+    stamp_saved_month(&db, data);
     println!(
         "{{\"scratch\":\"{}\",\"positions\":{pos_n},\"moves\":{move_n}}}",
         path.display()
@@ -1392,7 +1692,7 @@ fn bench_compact_updates(
             map.bump(extra_hash[idx], Some(&extra[idx]), cell);
         }
     }
-    map.rows.iter().map(|row| row.grid[0] as u64).sum()
+    map.rows.iter().map(|row| row.grid.count_at(0) as u64).sum()
 }
 
 #[inline(never)]
@@ -1705,10 +2005,19 @@ fn main() {
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(8);
+    let month = month_of(&file);
     println!(
-        "{{\"file\":\"{}\",\"pass\":\"{pass}\",\"limit\":{limit},\"threshold\":{threshold},\"workers\":{workers}}}",
+        "{{\"file\":\"{}\",\"pass\":\"{pass}\",\"limit\":{limit},\"threshold\":{threshold},\"workers\":{workers},\"month\":\"{month}\"}}",
         file.display()
     );
+    if pass != "group" && pass != "fen" && pass != "bench" {
+        remember_month(&data, &month);
+    }
+
+    if pass == "group" {
+        group::run(&data, threshold);
+        return;
+    }
 
     if file.to_string_lossy().ends_with(".pgn") {
         run_pgn_bytes(&file, &pass, limit, threshold, &data, workers);

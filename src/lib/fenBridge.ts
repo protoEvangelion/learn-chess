@@ -254,6 +254,7 @@ export type PanelId =
   | 'explore'
   | 'my-games'
   | 'drill'
+  | 'coach'
 
 /** Analysis drawer, including the Explore and My Games tabs. */
 export function isAnalysisPanel(panel: PanelId | null): boolean {
@@ -267,16 +268,16 @@ export function readPanelFromUrl(
   search = window.location.search,
 ): PanelId | null {
   const p = new URLSearchParams(search).get('panel')
-  // Legacy import panel folded into analysis; coach → game (Moves|Coach tabs).
+  // Legacy import panel folded into analysis.
   if (p === 'import') return 'analysis'
-  if (p === 'coach') return 'game'
   if (
     p === 'settings' ||
     p === 'game' ||
     p === 'analysis' ||
     p === 'explore' ||
     p === 'my-games' ||
-    p === 'drill'
+    p === 'drill' ||
+    p === 'coach'
   ) {
     return p
   }

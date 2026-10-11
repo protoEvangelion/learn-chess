@@ -1,11 +1,18 @@
 import {
   EXPLORER_MOVE_CAP,
+  EXPLORER_SPEEDS,
+  isExplorerMonth,
+  isExplorerSpeed,
   isRatingBandId,
   lichessExplorerUrl,
+  normalizeMonths,
   normalizeRatings,
+  normalizeSpeeds,
   parseExplorerPosition,
+  type ExplorerMonth,
   type ExplorerPosition,
   type ExplorerQueryOptions,
+  type ExplorerSpeed,
   type RatingBandId,
 } from '../src/lib/lichessExplorer.js'
 
@@ -16,10 +23,20 @@ const USER_AGENT = 'learn-chess (https://learn-chess-fawn.vercel.app)'
 
 export function readExplorerQuery(
   rawUrl: string | undefined,
-): { fen: string; ratings: RatingBandId[]; options: ExplorerQueryOptions } | { error: string } {
+):
+  | {
+      fen: string
+      ratings: RatingBandId[]
+      speeds: ExplorerSpeed[]
+      months: ExplorerMonth[]
+      options: ExplorerQueryOptions
+    }
+  | { error: string } {
   const query = new URL(rawUrl ?? '', 'http://localhost').searchParams
   const fen = query.get('fen')?.trim() ?? ''
   const ratingRaw = query.get('ratings')?.trim() ?? ''
+  const speedRaw = query.get('speeds')?.trim() ?? ''
+  const monthRaw = query.get('months')?.trim() ?? ''
   const play = query.get('play')?.trim() ?? ''
   const movesRaw = Number(query.get('moves'))
   if (!fen || fen.length > 200) return { error: 'fen is required' }
@@ -30,6 +47,16 @@ export function readExplorerQuery(
   const ratings = normalizeRatings(
     parts.filter((part): part is RatingBandId => isRatingBandId(part)),
   )
+  const speedParts = speedRaw.split(',').map((part) => part.trim()).filter(Boolean)
+  if (speedParts.some((part) => !isExplorerSpeed(part))) {
+    return { error: 'speeds must be blitz, rapid, or classical' }
+  }
+  const speeds = normalizeSpeeds(speedParts.length > 0 ? speedParts : EXPLORER_SPEEDS)
+  const monthParts = monthRaw.split(',').map((part) => part.trim()).filter(Boolean)
+  if (monthParts.some((part) => !isExplorerMonth(part))) {
+    return { error: 'months must be YYYY-MM values the explorer knows' }
+  }
+  const months = normalizeMonths(monthParts)
   if (play && !UCI_PLAY.test(play)) return { error: 'play must be UCI moves' }
   const moves =
     Number.isInteger(movesRaw) && movesRaw >= 1
@@ -38,7 +65,9 @@ export function readExplorerQuery(
   return {
     fen,
     ratings,
-    options: { play: play || undefined, moves },
+    speeds,
+    months,
+    options: { play: play || undefined, moves, speeds, months },
   }
 }
 

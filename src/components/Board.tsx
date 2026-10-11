@@ -82,6 +82,8 @@ export const BoardComponent: FC<{
   showMoveIndicators?: boolean
   /** When true, ignore piece clicks / engine animation (imported review). */
   readOnly?: boolean
+  /** Analysis: drag whichever side is to move, not only your color. */
+  playBothSides?: boolean
   /** Return false to reject a player move attempt (e.g. drill mode). */
   validateMove?: (move: Move) => boolean
   /** Opening-tree arrows: more frequent moves are more opaque. */
@@ -109,6 +111,7 @@ export const BoardComponent: FC<{
   orbitDragMode = 'move',
   showMoveIndicators = true,
   readOnly = false,
+  playBothSides = false,
   validateMove,
   frequencyArrows = [],
 }) => {
@@ -162,8 +165,8 @@ export const BoardComponent: FC<{
       )
       if (move) viewBoard = applyMoveOnCopy(board, move)
     }
-    return pieceSafetyMap(viewBoard, playerColor)
-  }, [board, hoveredDestKey, moves, playerColor, selected, showMoveIndicators])
+    return pieceSafetyMap(viewBoard, playBothSides ? turn : playerColor)
+  }, [board, hoveredDestKey, moves, playBothSides, playerColor, selected, showMoveIndicators, turn])
 
   useEffect(() => {
     if (!selected || !showMoveIndicators) {
@@ -234,7 +237,8 @@ export const BoardComponent: FC<{
       setPremove(null)
       return
     }
-    if (tile.piece.color !== playerColor) return
+    const sideToMove = playBothSides ? turn : playerColor
+    if (tile.piece.color !== sideToMove) return
     // Keep an in-flight opponent move animating — don't cancel it to pick up.
     if (!movingTo) setMovingTo(null)
     setMoves(
@@ -263,6 +267,8 @@ export const BoardComponent: FC<{
   turnRef.current = turn
   const playerColorRef = useRef(playerColor)
   playerColorRef.current = playerColor
+  const playBothSidesRef = useRef(playBothSides)
+  playBothSidesRef.current = playBothSides
   const movingToRef = useRef(movingTo)
   movingToRef.current = movingTo
   const validateMoveRef = useRef(validateMove)
@@ -386,10 +392,13 @@ export const BoardComponent: FC<{
     // Opponent's turn (or their piece still settling) → queue a premove.
     // Also queue if an opponent move is still animating even if turn already
     // flipped (shouldn't normally happen, but keep the animation alive).
+    const sideToMove = playBothSidesRef.current
+      ? turnRef.current
+      : playerColorRef.current
     const opponentMoving =
       !!movingToRef.current &&
-      movingToRef.current.move.piece.color !== playerColorRef.current
-    if (turnRef.current !== playerColorRef.current || opponentMoving) {
+      movingToRef.current.move.piece.color !== sideToMove
+    if (turnRef.current !== sideToMove || opponentMoving) {
       setPremove({
         pieceId: piece.getId(),
         from: { ...piece.position },
@@ -611,7 +620,8 @@ export const BoardComponent: FC<{
   const beginDrag = (e: ThreePointerEvent, tile: Tile) => {
     e.stopPropagation()
     if (readOnly) return
-    if (!tile.piece || tile.piece.color !== playerColor) return
+    const sideToMove = playBothSides ? turn : playerColor
+    if (!tile.piece || tile.piece.color !== sideToMove) return
     // Don't grab a piece that is currently animating a move.
     if (
       movingTo &&
@@ -660,7 +670,10 @@ export const BoardComponent: FC<{
 
   const kingInCheck = isKingInCheck(board, turn)
   const checkedKingPos = kingInCheck ? findKingPosition(board, turn) : null
-  const oppKingPos = findKingPosition(board, oppositeColor(playerColor))
+  const oppKingPos = findKingPosition(
+    board,
+    oppositeColor(playBothSides ? turn : playerColor),
+  )
   const hoveredPreview =
     hoveredDestKey && movePreviews
       ? (movePreviews.get(hoveredDestKey) ?? null)

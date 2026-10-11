@@ -57,6 +57,10 @@ type Props = {
   onPanelResizeEnd?: (width: number) => void
   onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
   onPlaySan?: (sans: string[], play?: string) => void
+  playedSans?: string[]
+  linePly?: number
+  lineLength?: number
+  onLineStep?: (index: number) => void
   tab?: TabId
   onTabChange?: (tab: TabId) => void
 }
@@ -295,6 +299,10 @@ export const AnalysisDialog: FC<Props> = ({
   onPanelResizeEnd,
   onFrequencyArrows,
   onPlaySan,
+  playedSans = [],
+  linePly = 0,
+  lineLength = 0,
+  onLineStep,
   tab: tabProp,
   onTabChange,
 }) => {
@@ -383,17 +391,30 @@ export const AnalysisDialog: FC<Props> = ({
     importWasBusy.current = Boolean(importBusy)
   }, [importBusy, importError])
 
+  const transportIndex = report ? scrubIndex : linePly
+  const transportMax = report ? maxPly : lineLength
+  const onLineStepRef = useRef(onLineStep)
+  onLineStepRef.current = onLineStep
+  const stepTransport = (index: number) => {
+    setPlaying(false)
+    if (report) onScrubTo(index)
+    else onLineStepRef.current?.(index)
+  }
+
   useEffect(() => {
-    if (!open || !playing || !report) return
-    if (scrubIndex >= maxPly) {
+    if (!open || !playing) return
+    if (!report && lineLength <= 0) return
+    if (transportIndex >= transportMax) {
       setPlaying(false)
       return
     }
     const id = window.setTimeout(() => {
-      onScrubToRef.current(Math.min(maxPly, scrubIndex + 1))
+      const next = Math.min(transportMax, transportIndex + 1)
+      if (report) onScrubToRef.current(next)
+      else onLineStepRef.current?.(next)
     }, 650)
     return () => window.clearTimeout(id)
-  }, [open, playing, report, scrubIndex, maxPly])
+  }, [open, playing, report, transportIndex, transportMax, lineLength])
 
   useEffect(() => {
     if (!open) setPlaying(false)
@@ -524,7 +545,7 @@ export const AnalysisDialog: FC<Props> = ({
 
         <div className="analysis-dialog-body">
           {tab === 'explore' && open ? (
-            <ExploreOpenings onPlaySan={onPlaySan} />
+            <ExploreOpenings onPlaySan={onPlaySan} playedSans={playedSans} />
           ) : null}
 
           {tab === 'games' ? (
@@ -820,31 +841,25 @@ export const AnalysisDialog: FC<Props> = ({
         <footer className="analysis-transport">
           <PixelButton
             ghost
-            disabled={!report || scrubIndex <= 0}
-            onClick={() => {
-              setPlaying(false)
-              onScrubTo(0)
-            }}
+            disabled={transportIndex <= 0}
+            onClick={() => stepTransport(0)}
             aria-label="Start"
           >
             |&lt;
           </PixelButton>
           <PixelButton
             ghost
-            disabled={!report || scrubIndex <= 0}
-            onClick={() => {
-              setPlaying(false)
-              onScrubTo(scrubIndex - 1)
-            }}
+            disabled={transportIndex <= 0}
+            onClick={() => stepTransport(transportIndex - 1)}
             aria-label="Previous"
           >
             &lt;
           </PixelButton>
           <PixelButton
             ghost
-            disabled={!report || maxPly === 0}
+            disabled={transportMax === 0}
             onClick={() => {
-              if (scrubIndex >= maxPly) onScrubTo(0)
+              if (transportIndex >= transportMax) stepTransport(0)
               setPlaying((p) => !p)
             }}
             aria-label={playing ? 'Pause' : 'Play'}
@@ -852,26 +867,20 @@ export const AnalysisDialog: FC<Props> = ({
             {playing ? '||' : '>'}
           </PixelButton>
           <span className="analysis-transport-label">
-            {scrubIndex}/{maxPly}
+            {transportIndex}/{transportMax}
           </span>
           <PixelButton
             ghost
-            disabled={!report || scrubIndex >= maxPly}
-            onClick={() => {
-              setPlaying(false)
-              onScrubTo(scrubIndex + 1)
-            }}
+            disabled={transportIndex >= transportMax}
+            onClick={() => stepTransport(transportIndex + 1)}
             aria-label="Next"
           >
             &gt;
           </PixelButton>
           <PixelButton
             ghost
-            disabled={!report || scrubIndex >= maxPly}
-            onClick={() => {
-              setPlaying(false)
-              onScrubTo(maxPly)
-            }}
+            disabled={transportIndex >= transportMax}
+            onClick={() => stepTransport(transportMax)}
             aria-label="End"
           >
             &gt;|

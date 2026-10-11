@@ -5,7 +5,7 @@ import {
   EXPLAIN_MODEL,
   streamCoachAsk,
 } from './aiCoach.js'
-import { queryExplorerPosition } from './explorerStats.js'
+import { listExplorerMonths, queryExplorerPosition } from './explorerStats.js'
 import { readExplorerQuery } from './lichessExplorerProxy.js'
 import {
   loadBlackDefenses,
@@ -804,6 +804,7 @@ export async function handleExplainApi(
             const defenses = await loadBlackDefenses(
               parsed.ratings,
               controller.signal,
+              parsed.speeds,
             )
             sendJson(res, 200, defenses)
           } catch (err) {
@@ -846,6 +847,7 @@ export async function handleExplainApi(
               parsed.ratings,
               parsed.options.play,
               controller.signal,
+              parsed.speeds,
             )
             sendJson(res, 200, branch)
           } catch (err) {
@@ -855,6 +857,28 @@ export async function handleExplainApi(
             sendJson(res, 500, { error: message })
           } finally {
             req.off('close', onClose)
+          }
+          return
+        }
+
+        if (url === '/api/explorer-months') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'GET') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          try {
+            const months = await listExplorerMonths()
+            sendJson(res, 200, { months })
+          } catch (err) {
+            sendJson(res, 500, {
+              error: err instanceof Error ? err.message : 'explorer months failed',
+            })
           }
           return
         }
@@ -883,6 +907,8 @@ export async function handleExplainApi(
               parsed.fen,
               parsed.ratings,
               parsed.options.play ?? '',
+              parsed.speeds,
+              parsed.months,
             )
             sendJson(res, 200, position)
           } catch (err) {

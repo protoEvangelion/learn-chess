@@ -21,7 +21,6 @@ import {
   STRENGTH_LEVELS,
   type StrengthLevel,
 } from '@/lib/stockfishOpponent'
-import type { Color } from '@logic/pieces'
 import { AnimatedSwitch } from '@/components/ui/animated-switch'
 import { PixelButton } from '@/components/ui/PixelButton'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
@@ -36,7 +35,6 @@ type Props = {
   volume: number
   musicTrackId: MusicTrackId
   strength: StrengthLevel
-  playerColor: Color
   fen: string
   showBestMove: boolean
   bestMoveDelaySec: number
@@ -49,7 +47,6 @@ type Props = {
   onVolumeChange: (volume: number) => void
   onMusicTrackChange: (id: MusicTrackId) => void
   onStrengthChange: (level: StrengthLevel) => void
-  onColorChange: (color: Color) => void
   onFenChange: (fen: string) => void
   onFenCommit: () => void
   onDumpView: () => void
@@ -123,7 +120,6 @@ export const SettingsDrawer: FC<Props> = ({
   volume,
   musicTrackId,
   strength,
-  playerColor,
   fen,
   showBestMove,
   bestMoveDelaySec,
@@ -136,7 +132,6 @@ export const SettingsDrawer: FC<Props> = ({
   onVolumeChange,
   onMusicTrackChange,
   onStrengthChange,
-  onColorChange,
   onFenChange,
   onFenCommit,
   onDumpView,
@@ -197,20 +192,6 @@ export const SettingsDrawer: FC<Props> = ({
           <div className="slider-ends">
             <span>1 weak</span>
             <span>8 strong</span>
-          </div>
-          <div className="btn-row">
-            <PixelButton
-              ghost={playerColor !== 'white'}
-              onClick={() => onColorChange('white')}
-            >
-              Play White
-            </PixelButton>
-            <PixelButton
-              ghost={playerColor !== 'black'}
-              onClick={() => onColorChange('black')}
-            >
-              Play Black
-            </PixelButton>
           </div>
           <div className="settings-row" style={{ marginTop: '0.85rem' }}>
             <span id="settings-move-indicators-label">Show move indicators</span>

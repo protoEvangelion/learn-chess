@@ -14,13 +14,16 @@ import type { Board } from '@logic/board'
 import type { Color, Move, Piece } from '@logic/pieces'
 import { detectGameOver, getTile, movesForPiece } from '@logic/pieces'
 import { BoardComponent, type GameOver } from '@/components/Board'
-import { GamePanel, type GameTabId } from '@/components/GamePanel'
+import { GamePanel } from '@/components/GamePanel'
+import { NewGameDialog } from '@/components/NewGameDialog'
+import { CoachPanel } from '@/components/CoachPanel'
 import type { CoachChatMessage } from '@/components/CoachPane'
 import { AnalysisDialog } from '@/components/AnalysisDialog'
 import { DrillDialog } from '@/components/DrillDialog'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
 import { PanelViewFit } from '@/components/PanelViewFit'
 import {
+  CoachBotIcon,
   GradientButtonGroup,
 } from '@/components/ui/gradient-button-group'
 import { HudEval } from '@/components/HudEval'
@@ -70,6 +73,7 @@ import {
 } from '@/lib/gameReview'
 import {
   historyToPgn,
+  historyToSans,
   isChessComGameUrl,
   parsePgnToImportedGame,
   positionAtPly,
@@ -371,7 +375,6 @@ export default function App() {
   >('idle')
   const [coachChatError, setCoachChatError] = useState<string | null>(null)
   const [coachReviewMode, setCoachReviewMode] = useState(false)
-  const [gameTab, setGameTab] = useState<GameTabId>('moves')
   const [reviewBusy, setReviewBusy] = useState(false)
   const [reviewProgress, setReviewProgress] = useState<string | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
@@ -410,8 +413,9 @@ export default function App() {
   const analysisOpen = isAnalysisPanel(panel)
   const analysisTab = panel === 'my-games' ? 'games' : 'explore'
   const drillOpen = panel === 'drill'
+  const coachOpen = panel === 'coach'
   const rightPanelOpen =
-    settingsOpen || gameOpen || analysisOpen || drillOpen
+    settingsOpen || gameOpen || analysisOpen || drillOpen || coachOpen
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const [panelFitEpoch, setPanelFitEpoch] = useState(0)
 
@@ -442,6 +446,8 @@ export default function App() {
     'move',
   )
   const skipEngineOnce = useRef(false)
+  const startAsBlackRef = useRef(false)
+  const [newGameOpen, setNewGameOpen] = useState(false)
   /** Explore line to apply once the board is idle. SAN path wins; UCI is the fallback. */
   const exploreLineRef = useRef<ExploreLineTarget | null>(null)
   const viewportHeightRef = useRef(-1)
@@ -477,6 +483,11 @@ export default function App() {
   const gameIdRef = useRef<string | null>(gameId)
   gameIdRef.current = gameId
   const [urlHistoryIndex, setUrlHistoryIndex] = useState(0)
+  const exploreFutureRef = useRef<
+    { item: HistoryItem; boardAfter: ReturnType<typeof copyBoard>; turnAfter: Color }[]
+  >([])
+  const steppingLineRef = useRef(false)
+  const [exploreFutureCount, setExploreFutureCount] = useState(0)
   const fpsParentRef = useRef<HTMLDivElement>(null)
 
   const [drillLine, setDrillLine] = useState<DrillLine | null>(null)
@@ -526,6 +537,10 @@ export default function App() {
 
   const fenHistory =
     reviewImport != null ? history.slice(0, scrubIndex) : history
+  const playedSans = useMemo(
+    () => historyToSans(reviewImport != null ? history.slice(0, scrubIndex) : history),
+    [history, reviewImport, scrubIndex],
+  )
   const fen = useMemo(
     () => boardToFen(board, turn, fenHistory),
     [board, turn, fenHistory],
@@ -587,6 +602,19 @@ export default function App() {
       setUrlHistoryIndex(nextIdx)
     }
   }, [sharePgn, gameId, reviewImport])
+
+  useEffect(() => {
+    return useGameState.subscribe((state, prev) => {
+      if (state.history === prev.history) return
+      if (steppingLineRef.current) {
+        steppingLineRef.current = false
+        return
+      }
+      if (exploreFutureRef.current.length === 0) return
+      exploreFutureRef.current = []
+      setExploreFutureCount(0)
+    })
+  }, [])
 
   useEffect(() => {
     if (!gameOver) setEndgameDismissed(false)
@@ -654,7 +682,7 @@ export default function App() {
     }
     replacePanelInUrl(next)
     // Game panel coach needs gameId in the URL for session resume.
-    if (next === 'game' && gameId) {
+    if ((next === 'game' || next === 'coach') && gameId) {
       replaceGameInUrl(sharePgn, gameId, urlHistoryIndexRef.current)
     }
   }, [drillLine, sharePgn, gameId])
@@ -676,7 +704,7 @@ export default function App() {
 
   const showBestArrow =
     (showBestMove && bestMoveDelayElapsed) ||
-    (gameOpen && gameTab === 'coach' && !!best)
+    (coachOpen && !!best)
 
   const drillHintSquares = useMemo(() => {
     if (
@@ -782,18 +810,25 @@ export default function App() {
   // Opponent Stockfish replies
   useEffect(() => {
     if (
+      analysisOpen ||
       reviewImport ||
       drillActive ||
       drillOpen ||
       gameOver ||
       movingTo ||
       pendingEngineMove
-    )
+    ) {
+      // Analysis is for looking at a line yourself. Stockfish must not answer.
+      if (analysisOpen && pendingEngineMove) setPendingEngineMove(null)
       return
+    }
     if (turn === playerColor) return
     // A URL with no position stays the initial board. Stockfish must not
     // play White's first move and then write that pgn onto the empty link.
-    if (history.length === 0 && !readPgnFromUrl() && !readFenFromUrl()) return
+    if (history.length === 0 && !readPgnFromUrl() && !readFenFromUrl()) {
+      if (!(startAsBlackRef.current && playerColor === 'black')) return
+      startAsBlackRef.current = false
+    }
     if (skipEngineOnce.current) {
       skipEngineOnce.current = false
       return
@@ -850,6 +885,7 @@ export default function App() {
     reviewImport,
     drillActive,
     drillOpen,
+    analysisOpen,
   ])
 
   // Leave drill session cleanly when closing the panel — restore live game,
@@ -1675,7 +1711,7 @@ export default function App() {
     reviewGame,
   ])
 
-  async function reset() {
+  async function reset(color: Color = playerColor) {
     let id = gameId
     try {
       id = await mintGameId()
@@ -1683,7 +1719,10 @@ export default function App() {
       id = null
     }
 
-    skipEngineOnce.current = playerColor === 'black'
+    setPlayerColor(color)
+    localStorage.setItem(COLOR_KEY, color)
+    startAsBlackRef.current = color === 'black'
+    skipEngineOnce.current = false
     syncingFromUrlRef.current = true
     urlReadyRef.current = true
     urlHistoryIndexRef.current = 0
@@ -1730,21 +1769,54 @@ export default function App() {
     if (!applyFen(next)) setFenDraft(fen)
   }
 
-  function onColorChange(color: Color) {
-    setPlayerColor(color)
-    localStorage.setItem(COLOR_KEY, color)
-    skipEngineOnce.current = turn === color
-  }
-
   function onStrengthChange(level: StrengthLevel) {
     setStrength(level)
     localStorage.setItem(STRENGTH_KEY, String(level))
   }
 
-  function onUndo() {
-    if (urlHistoryIndex <= 0 || opponentThinking || movingTo) return
-    // Full turn = your ply + opponent reply (two URL entries when available)
-    window.history.go(urlHistoryIndex >= 2 ? -2 : -1)
+  function stepLiveLine(index: number) {
+    if (movingTo || reviewImport) return
+    const future = exploreFutureRef.current
+    const total = history.length + future.length
+    const next = Math.max(0, Math.min(index, total))
+    if (next === history.length) return
+    steppingLineRef.current = true
+    if (next < history.length) {
+      let boardNow = board
+      let turnNow = turn
+      const kept = history.slice(0, next)
+      const removed = history.slice(next)
+      for (let i = removed.length - 1; i >= 0; i -= 1) {
+        const item = removed[i]
+        future.unshift({
+          item,
+          boardAfter: i === removed.length - 1 ? copyBoard(boardNow) : copyBoard(removed[i + 1].board),
+          turnAfter: i === removed.length - 1 ? turnNow : removed[i + 1].piece.color,
+        })
+        boardNow = item.board
+        turnNow = item.piece.color
+      }
+      setBoard(copyBoard(boardNow))
+      useGameState.setState({ history: kept, turn: turnNow, movingTo: null })
+    } else {
+      const kept = history.slice()
+      let boardNow = board
+      let turnNow = turn
+      while (kept.length < next && future.length > 0) {
+        const step = future.shift()
+        if (!step) break
+        kept.push(step.item)
+        boardNow = step.boardAfter
+        turnNow = step.turnAfter
+      }
+      setBoard(copyBoard(boardNow))
+      useGameState.setState({ history: kept, turn: turnNow, movingTo: null })
+    }
+    exploreFutureRef.current = future
+    setExploreFutureCount(future.length)
+    setSelected(null)
+    setMoves([])
+    setPendingEngineMove(null)
   }
 
   const onEngineMoveConsumed = useCallback(() => {
@@ -1894,7 +1966,7 @@ export default function App() {
       {endOutcome && !endgameDismissed && !drillOpen && (
         <EndGameOverlay
           outcome={endOutcome}
-          onNewGame={reset}
+          onNewGame={() => setNewGameOpen(true)}
           onDismiss={() => setEndgameDismissed(true)}
           onReviewGame={() => void reviewGame()}
           canReview={history.length > 0 && !importBusy}
@@ -1903,6 +1975,15 @@ export default function App() {
           reviewError={reviewError}
         />
       )}
+
+      <NewGameDialog
+        open={newGameOpen}
+        onClose={() => setNewGameOpen(false)}
+        onPick={(color) => {
+          setNewGameOpen(false)
+          void reset(color)
+        }}
+      />
 
       <SettingsDrawer
         open={settingsOpen}
@@ -1914,7 +1995,6 @@ export default function App() {
         volume={volume}
         musicTrackId={musicTrackId}
         strength={strength}
-        playerColor={playerColor}
         fen={fenDraft}
         showBestMove={showBestMove}
         bestMoveDelaySec={bestMoveDelaySec}
@@ -1927,7 +2007,6 @@ export default function App() {
         onVolumeChange={setVolumeState}
         onMusicTrackChange={setMusicTrackId}
         onStrengthChange={onStrengthChange}
-        onColorChange={onColorChange}
         onFenChange={onFenChange}
         onFenCommit={onFenCommit}
         onDumpView={dumpView}
@@ -1978,6 +2057,10 @@ export default function App() {
         onPanelResizeEnd={onPanelResizeEnd}
         onFrequencyArrows={setFrequencyArrows}
         onPlaySan={playExploreLine}
+        playedSans={playedSans}
+        linePly={history.length}
+        lineLength={history.length + exploreFutureCount}
+        onLineStep={stepLiveLine}
         tab={analysisTab}
         onTabChange={onAnalysisTab}
       />
@@ -2025,11 +2108,18 @@ export default function App() {
       <GamePanel
         open={gameOpen}
         onClose={() => openPanel(null)}
-        onNewGame={reset}
-        tab={gameTab}
-        onTabChange={setGameTab}
+        onNewGame={() => setNewGameOpen(true)}
         history={fenHistory}
         playerColor={playerColor}
+        reviewMode={coachReviewMode}
+        panelWidth={panelWidth}
+        onPanelWidthChange={onPanelWidthChange}
+        onPanelResizeEnd={onPanelResizeEnd}
+      />
+
+      <CoachPanel
+        open={coachOpen}
+        onClose={() => openPanel(null)}
         explanation={coachExplanation}
         coachStatus={coachStatus}
         coachError={coachError}
@@ -2050,7 +2140,6 @@ export default function App() {
             <div className="hud-cluster">
               <div className="hud-brand">
                 <BrandMark title={`Analysis · ${status}`} />
-                <h1 className="hud-title">Analysis</h1>
                 <span className="sr-only">{status}</span>
               </div>
               <div
@@ -2149,26 +2238,16 @@ export default function App() {
                 }
                 items={[
                   {
-                    id: 'undo',
-                    label: 'Undo',
-                    icon: (
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M3 7v6h6" />
-                        <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.36 2.64L3 13" />
-                      </svg>
-                    ),
-                    onClick: onUndo,
-                    disabled: urlHistoryIndex <= 0 || opponentThinking,
+                    id: 'coach',
+                    label: 'Coach',
+                    icon: <CoachBotIcon />,
+                    onClick: () => {
+                      if (coachStatus === 'error') {
+                        setCoachStatus('idle')
+                        setCoachError(null)
+                      }
+                      openPanel(panel === 'coach' ? null : 'coach')
+                    },
                   },
                   {
                     id: 'analysis',
@@ -2322,6 +2401,7 @@ export default function App() {
                   drillStatus === 'complete' ||
                   !!drillMistake
                 }
+                playBothSides={analysisOpen && !drillOpen}
                 validateMove={
                   drillStatus === 'playing' ? validateDrillMove : undefined
                 }

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FC } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from 'react'
+import { createPortal } from 'react-dom'
 import { Chess } from 'chess.js'
 import {
   createColumnHelper,
@@ -15,7 +16,8 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import { ChevronRight } from 'lucide-react'
-import { RatingBandMultiSelect } from '@/components/RatingBandMultiSelect'
+import { ExplorerFilters } from '@/components/ExplorerFilters'
+import { monthEnd, monthStart, monthsCovered } from '@/components/ExplorerDateRange'
 import { Button } from '@/components/ui/button'
 import {
   Table,
@@ -26,30 +28,28 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+  loadExplorerRange,
+  loadExplorerRatings,
+  loadExplorerSpeeds,
+  saveExplorerRange,
+  saveExplorerRatings,
+  saveExplorerSpeeds,
+} from '@/lib/explorerFilterPrefs'
 import { START_FEN } from '@/lib/fenBridge'
 import { cn } from '@/lib/utils'
 import {
-  DEFAULT_RATING_BAND,
   EXPLORER_MOVE_CAP,
-  blackWinRate,
-  fetchBlackDefenses,
   fetchLichessExplorer,
-  fetchOpeningBranch,
-  isOpeningVariation,
   isRatingBandId,
+  normalizeMonths,
   normalizeRatings,
+  normalizeSpeeds,
   openingExplorerApiUrl,
-  sortBlackDefenses,
-  sortBranchLines,
   sortByWinRate,
   whiteWinRate,
+  type ExplorerMonth,
   type ExplorerOpening,
-  type OpeningBranchLine,
+  type ExplorerSpeed,
   type RatingBandId,
 } from '@/lib/lichessExplorer'
 
@@ -67,8 +67,6 @@ const features = tableFeatures({
   },
 })
 
-type Side = 'white' | 'black'
-
 type ExploreRow = {
   id: string
   san: string
@@ -79,6 +77,8 @@ type ExploreRow = {
   black: number
   averageRating: number
   games: number
+  /** Games in the position before this move. Share is games / parentGames. */
+  parentGames: number
   winRate: number
   play: string
   path: string[]
@@ -103,9 +103,12 @@ type Snapshot = {
   status: 'ready' | 'error'
   error: string | null
   groups: OpeningGroup[]
+  total: number
 }
 
 const columnHelper = createColumnHelper<typeof features, ExploreRow>()
+const ROW_WINDOW_OVERSCAN = 2
+const ROW_HEIGHT_FALLBACK = 36
 
 function percentLabel(white: number, draws: number, black: number) {
   const total = white + draws + black
@@ -130,21 +133,14 @@ function lineLabel(name: string, parentName: string) {
   return name
 }
 
-function childLineText(line: OpeningBranchLine, parentName: string) {
-  if (!line.name || line.name === parentName) return line.san ?? ''
-  const variation = lineLabel(line.name, parentName)
-  const titled = line.san ? `${line.san} - ${variation}` : variation
-  if (parentName) return titled
-  return `${line.eco ? `${line.eco} ` : ''}${titled}`.trim()
+function childLabel(name: string, parentName: string) {
+  if (!name || name === parentName) return ''
+  return lineLabel(name, parentName)
 }
 
-function moverForPlay(play: string): 'white' | 'black' {
-  return play.split(',').filter(Boolean).length % 2 === 1 ? 'white' : 'black'
-}
-
-function counts(white: number, draws: number, black: number, side: Side) {
+function counts(white: number, draws: number, black: number) {
   const games = white + draws + black
-  const winRate = side === 'black' ? blackWinRate({ white, draws, black }) : whiteWinRate({ white, draws, black })
+  const winRate = whiteWinRate({ white, draws, black })
   return { games, winRate }
 }
 
@@ -164,6 +160,7 @@ function statusRow(parentId: string, message: string): ExploreRow {
     black: 0,
     averageRating: 0,
     games: 0,
+    parentGames: 0,
     winRate: -1,
     play: '',
     path: [],
@@ -173,37 +170,8 @@ function statusRow(parentId: string, message: string): ExploreRow {
   }
 }
 
-function lineToRow(
-  line: OpeningBranchLine,
-  parentName: string,
-  path: string[],
-  parentId: string,
-  index: number,
-): ExploreRow {
-  const san = line.san ?? ''
-  const play = line.play ?? ''
-  const stats = counts(line.white, line.draws, line.black, 'white')
-  return {
-    id: treeId(parentId, index, san, play),
-    san,
-    name: childLineText(line, parentName),
-    eco: line.eco,
-    white: line.white,
-    draws: line.draws,
-    black: line.black,
-    averageRating: line.averageRating,
-    games: stats.games,
-    winRate: stats.winRate,
-    play,
-    path: san ? [...path, san] : path,
-    parentName,
-    kind: 'line',
-    canExpand: Boolean(line.play),
-  }
-}
-
-function groupToRow(group: OpeningGroup, index: number): ExploreRow {
-  const stats = counts(group.white, group.draws, group.black, 'white')
+function groupToRow(group: OpeningGroup, index: number, parentGames: number): ExploreRow {
+  const stats = counts(group.white, group.draws, group.black)
   return {
     id: treeId('root', index, group.san, group.uci),
     san: group.san,
@@ -214,6 +182,7 @@ function groupToRow(group: OpeningGroup, index: number): ExploreRow {
     black: group.black,
     averageRating: group.averageRating,
     games: stats.games,
+    parentGames,
     winRate: stats.winRate,
     play: group.uci,
     path: [group.san],
@@ -234,6 +203,41 @@ function findRow(rows: readonly ExploreRow[], id: string): ExploreRow | null {
   return null
 }
 
+function sanKey(san: string) {
+  return san.replace(/[+#]$/, '')
+}
+
+/** Walk the played line, opening each move until its replies are loaded. */
+function followPlayedLine(
+  rows: readonly ExploreRow[],
+  played: readonly string[],
+  expanded: ExpandedState,
+): { activeId: string | null; expanded: ExpandedState | null } {
+  if (played.length === 0) return { activeId: null, expanded: null }
+  const open: Record<string, boolean> = expanded === true ? {} : { ...expanded }
+  let changed = false
+  let list: readonly ExploreRow[] | undefined = rows
+  let activeId: string | null = null
+  for (let i = 0; i < played.length; i += 1) {
+    if (!list) break
+    const want = sanKey(played[i] ?? '')
+    const match: ExploreRow | undefined = list.find(
+      (row) => row.kind !== 'status' && sanKey(row.san) === want,
+    )
+    if (!match) break
+    activeId = match.id
+    if (match.canExpand && !open[match.id]) {
+      open[match.id] = true
+      changed = true
+    }
+    const loading =
+      !match.subRows || (match.subRows.length === 1 && match.subRows[0]?.kind === 'status')
+    if (i === played.length - 1 || loading) break
+    list = match.subRows
+  }
+  return { activeId, expanded: changed ? open : null }
+}
+
 function patchRow(
   rows: readonly ExploreRow[],
   id: string,
@@ -248,12 +252,16 @@ function patchRow(
 
 async function loadGroups(
   ratings: RatingBandId[],
+  speeds: ExplorerSpeed[],
+  months: ExplorerMonth[],
   signal: AbortSignal,
-): Promise<OpeningGroup[]> {
+): Promise<{ groups: OpeningGroup[]; total: number }> {
   const root = await fetchLichessExplorer(START_FEN, ratings, signal, {
     moves: EXPLORER_MOVE_CAP,
+    speeds,
+    months,
   })
-  return sortByWinRate(
+  const groups = sortByWinRate(
     root.moves
       .filter((move) => WHITE_FIRST_MOVES.has(move.san))
       .map((move) => ({
@@ -268,65 +276,54 @@ async function loadGroups(
     'white',
     (move) => move.san,
   )
+  return { groups, total: root.white + root.draws + root.black }
 }
 
 async function loadChildRows(
   row: ExploreRow,
   ratings: RatingBandId[],
+  speeds: ExplorerSpeed[],
+  months: ExplorerMonth[],
   signal: AbortSignal,
-): Promise<{ children: ExploreRow[]; name: string; eco: string }> {
-  const branch = await fetchOpeningBranch(START_FEN, ratings, row.play, signal)
-  const parent = branch.opening?.name || row.name || row.parentName
-  let lines = sortBranchLines(
-    branch.lines.filter(
-      (child) => child.play !== row.play && isOpeningVariation(parent, child.name),
-    ),
-  )
-  if (lines.length === 0 && row.kind === 'line') {
-    const position = await fetchLichessExplorer(START_FEN, ratings, signal, {
-      play: row.play,
-      moves: EXPLORER_MOVE_CAP,
-    })
-    lines = sortBranchLines(
-      position.moves.map((move) => {
-        const reached = row.play ? `${row.play},${move.uci}` : move.uci
-        const openingName = move.opening?.name ?? ''
-        const named = Boolean(openingName) && openingName !== parent
-        return {
-          name: named ? openingName : '',
-          eco: named ? (move.opening?.eco ?? '') : '',
-          san: move.san,
-          play: reached,
-          white: move.white,
-          draws: move.draws,
-          black: move.black,
-          averageRating: move.averageRating,
-          mover: moverForPlay(reached),
-        }
-      }),
-    )
-  }
-  const name = branch.opening?.name || row.name
-  const eco = branch.opening?.eco || row.eco
-  if (lines.length === 0) {
-    const label = lineLabel(name, row.parentName) || row.san
+): Promise<{ children: ExploreRow[] }> {
+  const position = await fetchLichessExplorer(START_FEN, ratings, signal, {
+    play: row.play,
+    moves: EXPLORER_MOVE_CAP,
+    speeds,
+    months,
+  })
+  const ancestor = row.parentName || row.name
+  const moves = sortByWinRate(position.moves, 'white', (move) => move.san)
+  if (moves.length === 0) {
     return {
-      name,
-      eco,
-      children: [
-        statusRow(
-          row.id,
-          row.kind === 'opening'
-            ? `Lichess did not name a line under ${row.san} for these bands.`
-            : `Lichess did not name a line under ${label}.`,
-        ),
-      ],
+      children: [statusRow(row.id, 'No further moves in these filters.')],
     }
   }
   return {
-    name,
-    eco,
-    children: lines.map((line, index) => lineToRow(line, parent, row.path, row.id, index)),
+    children: moves.map((move, index) => {
+      const play = row.play ? `${row.play},${move.uci}` : move.uci
+      const exactName = move.opening?.name ?? ''
+      const label = childLabel(exactName, ancestor)
+      const stats = counts(move.white, move.draws, move.black)
+      return {
+        id: treeId(row.id, index, move.san, play),
+        san: move.san,
+        name: label,
+        eco: label ? (move.opening?.eco ?? '') : '',
+        white: move.white,
+        draws: move.draws,
+        black: move.black,
+        averageRating: move.averageRating,
+        games: stats.games,
+        parentGames: row.games,
+        winRate: stats.winRate,
+        play,
+        path: [...row.path, move.san],
+        parentName: exactName || ancestor,
+        kind: 'line' as const,
+        canExpand: true,
+      }
+    }),
   }
 }
 
@@ -334,27 +331,36 @@ function ResultBar({
   white,
   draws,
   black,
+  onTip,
+  onHide,
 }: {
   white: number
   draws: number
   black: number
+  onTip: (point: { clientX: number; clientY: number }, text: string) => void
+  onHide: () => void
 }) {
   const games = white + draws + black
   if (games <= 0) return null
   const percents = percentLabel(white, draws, black)
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="rating-band-bar" tabIndex={0} role="img" aria-label={percents}>
-          <span className="rating-band-bar-white" style={{ flexGrow: white }} />
-          <span className="rating-band-bar-draw" style={{ flexGrow: draws }} />
-          <span className="rating-band-bar-black" style={{ flexGrow: black }} />
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="top" sideOffset={6}>
-        {percents}
-      </TooltipContent>
-    </Tooltip>
+    <div
+      className="rating-band-bar"
+      tabIndex={0}
+      role="img"
+      aria-label={percents}
+      onMouseEnter={(event) => onTip(event, percents)}
+      onFocus={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect()
+        onTip({ clientX: rect.left, clientY: rect.top }, percents)
+      }}
+      onMouseLeave={onHide}
+      onBlur={onHide}
+    >
+      <span className="rating-band-bar-white" style={{ flexGrow: white }} />
+      <span className="rating-band-bar-draw" style={{ flexGrow: draws }} />
+      <span className="rating-band-bar-black" style={{ flexGrow: black }} />
+    </div>
   )
 }
 
@@ -382,17 +388,70 @@ function SortHeader({
 function MoveTable({
   rows,
   ratings,
+  speeds,
+  months,
+  playedSans,
   onPlaySan,
 }: {
   rows: ExploreRow[]
   ratings: RatingBandId[]
+  speeds: ExplorerSpeed[]
+  months: ExplorerMonth[]
+  playedSans: string[]
   onPlaySan?: (sans: string[], play?: string) => void
 }) {
   const [data, setData] = useState(rows)
   const [expanded, setExpanded] = useState<ExpandedState>({})
   const [sorting, setSorting] = useState<SortingState>([{ id: 'winRate', desc: true }])
+  const [span, setSpan] = useState({ start: 0, end: 40 })
+  const [activeId, setActiveId] = useState<string | null>(null)
   const aborts = useRef(new Map<string, AbortController>())
   const loaded = useRef(new Set<string>())
+  const dataRef = useRef(data)
+  dataRef.current = data
+  const playRef = useRef(onPlaySan)
+  playRef.current = onPlaySan
+  const tipRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const metrics = useRef({ rowH: ROW_HEIGHT_FALLBACK, headerH: 32, measured: false })
+  const [rowH, setRowH] = useState(ROW_HEIGHT_FALLBACK)
+  const rowCountRef = useRef(0)
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
+  const playedKey = playedSans.join(' ')
+
+  const showTip = useCallback((point: { clientX: number; clientY: number }, text: string) => {
+    const tip = tipRef.current
+    if (!tip) return
+    tip.textContent = text
+    tip.hidden = false
+    tip.style.left = `${point.clientX}px`
+    tip.style.top = `${point.clientY}px`
+  }, [])
+
+  const hideTip = useCallback(() => {
+    if (tipRef.current) tipRef.current.hidden = true
+  }, [])
+
+  const syncWindow = useCallback(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const thead = el.querySelector('thead')
+    if (thead) {
+      const headerH = thead.getBoundingClientRect().height
+      if (headerH > 0) metrics.current.headerH = headerH
+    }
+    const { rowH, headerH } = metrics.current
+    const start = Math.max(
+      0,
+      Math.floor(Math.max(0, el.scrollTop - headerH) / rowH) - ROW_WINDOW_OVERSCAN,
+    )
+    const end = Math.min(
+      rowCountRef.current,
+      start + Math.ceil(el.clientHeight / rowH) + ROW_WINDOW_OVERSCAN * 2,
+    )
+    setSpan((prev) => (prev.start === start && prev.end === end ? prev : { start, end }))
+  }, [])
 
   useEffect(() => {
     setData(rows)
@@ -412,9 +471,10 @@ function MoveTable({
 
   useEffect(() => {
     if (expanded === true) return
+    const current = dataRef.current
     for (const [id, open] of Object.entries(expanded)) {
       if (!open || loaded.current.has(id) || aborts.current.has(id)) continue
-      const row = findRow(data, id)
+      const row = findRow(current, id)
       if (!row?.canExpand || row.subRows) continue
       loaded.current.add(id)
       const controller = new AbortController()
@@ -425,7 +485,7 @@ function MoveTable({
           subRows: [statusRow(id, 'Loading lines…')],
         })),
       )
-      void loadChildRows(row, ratings, controller.signal)
+      void loadChildRows(row, ratings, speeds, months, controller.signal)
         .then((result) => {
           if (controller.signal.aborted) return
           setData((current) =>
@@ -449,7 +509,13 @@ function MoveTable({
           )
         })
     }
-  }, [data, expanded, ratings])
+  }, [expanded, ratings, speeds, months])
+
+  useEffect(() => {
+    const next = followPlayedLine(data, playedSans, expandedRef.current)
+    setActiveId(next.activeId)
+    if (next.expanded) setExpanded(next.expanded)
+  }, [data, playedKey, playedSans])
 
   const columns = useMemo(
     () =>
@@ -465,11 +531,13 @@ function MoveTable({
           ),
           cell: ({ row }) => {
             const item = row.original
-            const title = item.kind === 'line' ? item.name || item.san : item.san || item.name
+            const title = item.san || item.name
             const detail =
-              item.kind === 'opening' || item.kind === 'defense'
-                ? `${item.eco ? `${item.eco} ` : ''}${item.name}`.trim()
-                : ''
+              item.kind === 'line'
+                ? item.name
+                : item.kind === 'opening' || item.kind === 'defense'
+                  ? `${item.eco ? `${item.eco} ` : ''}${item.name}`.trim()
+                  : ''
             const playable = item.path.length > 0 && Boolean(item.san)
             return (
               <div
@@ -483,7 +551,10 @@ function MoveTable({
                     variant="ghost"
                     aria-label={row.getIsExpanded() ? `Collapse ${title}` : `Expand ${title}`}
                     aria-expanded={row.getIsExpanded()}
-                    onClick={row.getToggleExpandedHandler()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      row.toggleExpanded()
+                    }}
                   >
                     <ChevronRight
                       className={cn('size-3 transition-transform', row.getIsExpanded() && 'rotate-90')}
@@ -493,16 +564,12 @@ function MoveTable({
                   <span className="size-6 shrink-0" />
                 )}
                 {playable ? (
-                  <button
-                    type="button"
-                    className="min-w-0 truncate text-left"
-                    onClick={() => onPlaySan?.(item.path, item.play)}
-                  >
+                  <span className="min-w-0 truncate text-left">
                     <span className="font-semibold">{title}</span>
                     {detail ? (
                       <span className="ml-1.5 font-normal text-muted-foreground">{detail}</span>
                     ) : null}
-                  </button>
+                  </span>
                 ) : (
                   <span className={cn('min-w-0 truncate', item.kind === 'status' && 'text-muted-foreground')}>
                     <span className="font-semibold">{title}</span>
@@ -516,33 +583,40 @@ function MoveTable({
           },
           sortFn: 'alphanumeric',
         }),
-        columnHelper.accessor('games', {
-          id: 'games',
+        columnHelper.accessor((row) => (row.parentGames > 0 ? row.games / row.parentGames : -1), {
+          id: 'share',
           header: ({ header }) => (
             <SortHeader
-              label="Games"
+              label="%"
               sorted={header.column.getIsSorted()}
               onToggle={header.column.getToggleSortingHandler()}
             />
           ),
           cell: ({ row }) => {
             const item = row.original
-            if (item.kind === 'status' || item.games <= 0) return null
-            const label = item.games.toLocaleString('en-US')
-            if (item.averageRating <= 0) {
-              return <span className="tabular-nums text-muted-foreground">{label}</span>
-            }
+            if (item.kind === 'status' || item.parentGames <= 0 || item.games <= 0) return null
+            const share = item.games / item.parentGames
+            const shown = (share * 100).toFixed(1)
+            const label = share > 0 && shown === '0.0' ? '<0.1%' : `${shown}%`
+            const rating =
+              item.averageRating > 0
+                ? ` · avg ${item.averageRating.toLocaleString('en-US')}`
+                : ''
+            const tip = `${item.games.toLocaleString('en-US')} of ${item.parentGames.toLocaleString('en-US')} games${rating}`
             return (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="cursor-help tabular-nums text-muted-foreground" tabIndex={0}>
-                    {label}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={6}>
-                  Average rating {item.averageRating.toLocaleString('en-US')}
-                </TooltipContent>
-              </Tooltip>
+              <span
+                className="cursor-help tabular-nums text-muted-foreground"
+                tabIndex={0}
+                onMouseEnter={(event) => showTip(event, tip)}
+                onFocus={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  showTip({ clientX: rect.left, clientY: rect.top }, tip)
+                }}
+                onMouseLeave={hideTip}
+                onBlur={hideTip}
+              >
+                {label}
+              </span>
             )
           },
           sortFn: 'basic',
@@ -579,11 +653,13 @@ function MoveTable({
                 white={row.original.white}
                 draws={row.original.draws}
                 black={row.original.black}
+                onTip={showTip}
+                onHide={hideTip}
               />
             ),
         }),
       ]),
-    [onPlaySan],
+    [hideTip, showTip],
   )
 
   const table = useTable({
@@ -603,78 +679,212 @@ function MoveTable({
     },
   })
 
+  const modelRows = table.getRowModel().rows
+  rowCountRef.current = modelRows.length
+
+  useEffect(() => {
+    syncWindow()
+    const el = scrollerRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => syncWindow())
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [modelRows.length, syncWindow])
+
+  const measureRow = useCallback((node: HTMLTableRowElement | null) => {
+    if (!node || metrics.current.measured) return
+    const height = node.getBoundingClientRect().height
+    if (height <= 0) return
+    metrics.current.measured = true
+    if (Math.abs(height - metrics.current.rowH) > 0.5) {
+      metrics.current.rowH = height
+      setRowH(height)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!activeId) return
+    const index = modelRows.findIndex((row) => row.id === activeId)
+    const el = scrollerRef.current
+    if (index < 0 || !el) return
+    const top = metrics.current.headerH + index * metrics.current.rowH
+    const bottom = top + metrics.current.rowH
+    const viewTop = el.scrollTop + metrics.current.headerH
+    const viewBottom = el.scrollTop + el.clientHeight
+    if (top < viewTop || bottom > viewBottom) {
+      el.scrollTop = Math.max(0, top - metrics.current.headerH - metrics.current.rowH)
+    }
+  }, [activeId, modelRows])
+
+  const start = Math.min(span.start, modelRows.length)
+  const end = Math.min(Math.max(span.end, start), modelRows.length)
+  const visibleRows = modelRows.slice(start, end)
+  const padTop = start * rowH
+  const padBottom = (modelRows.length - end) * rowH
+
   return (
-    <Table className="table-fixed">
-      <TableHeader>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <TableRow key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <TableHead
-                key={header.id}
-                className={cn(
-                  'h-8 px-1.5 text-xs',
-                  header.column.id === 'move' ? 'w-[46%]' : 'w-[18%]',
-                )}
-              >
-                {header.isPlaceholder
-                  ? null
-                  : flexRender(header.column.columnDef.header, header.getContext())}
-              </TableHead>
+    <>
+      <div ref={scrollerRef} className="explorer-table-scroll" onScroll={syncWindow}>
+        <Table
+          containerClassName="static overflow-visible"
+          className="table-fixed border-separate border-spacing-0"
+        >
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableHead
+                    key={header.id}
+                    className={cn(
+                      'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] px-1.5 text-xs',
+                      header.column.id === 'move'
+                        ? 'w-[52%]'
+                        : header.column.id === 'result'
+                          ? 'w-[22%]'
+                          : 'w-[13%]',
+                    )}
+                  >
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(header.column.columnDef.header, header.getContext())}
+                  </TableHead>
+                ))}
+              </TableRow>
             ))}
-          </TableRow>
-        ))}
-      </TableHeader>
-      <TableBody>
-        {table.getRowModel().rows.map((row) => (
-          <TableRow key={row.id} data-san={row.original.san || undefined}>
-            {row.getAllCells().map((cell) => (
-              <TableCell
-                key={cell.id}
+          </TableHeader>
+          <TableBody>
+            {padTop > 0 ? (
+              <tr aria-hidden="true">
+                <td colSpan={4} style={{ height: padTop, padding: 0, border: 0 }} />
+              </tr>
+            ) : null}
+            {visibleRows.map((row, index) => (
+              <TableRow
+                key={row.id}
+                ref={index === 0 ? measureRow : undefined}
                 className={cn(
-                  'overflow-hidden px-1.5 py-1.5 text-xs',
-                  cell.column.id === 'move' && 'whitespace-normal',
+                  'h-9',
+                  row.getCanExpand() && 'is-expandable',
+                  row.original.path.length > 0 && 'cursor-pointer',
+                  row.id === activeId && 'is-current',
                 )}
+                data-san={row.original.san || undefined}
+                data-row-id={row.id}
+                onMouseDown={(event) => {
+                  const target = event.target
+                  if (target instanceof Element && target.closest('button')) return
+                  event.preventDefault()
+                }}
+                onClick={() => {
+                  const item = row.original
+                  if (item.kind === 'status' || item.path.length === 0) return
+                  playRef.current?.(item.path, item.play)
+                }}
               >
-                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-              </TableCell>
+                {row.getAllCells().map((cell) => (
+                  <TableCell
+                    key={cell.id}
+                    className="h-9 overflow-hidden px-1.5 py-0 text-xs"
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
+                ))}
+              </TableRow>
             ))}
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+            {padBottom > 0 ? (
+              <tr aria-hidden="true">
+                <td colSpan={4} style={{ height: padBottom, padding: 0, border: 0 }} />
+              </tr>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
+      {createPortal(<div ref={tipRef} className="explorer-tip" hidden />, document.body)}
+    </>
   )
 }
 
 export const ExploreOpenings: FC<{
   onPlaySan?: (sans: string[], play?: string) => void
-}> = ({ onPlaySan }) => {
-  const [ratings, setRatings] = useState<RatingBandId[]>([DEFAULT_RATING_BAND])
-  const [side, setSide] = useState<Side>('white')
+  playedSans?: string[]
+}> = ({ onPlaySan, playedSans = [] }) => {
+  const [ratings, setRatings] = useState<RatingBandId[]>(() => loadExplorerRatings())
+  const [speeds, setSpeeds] = useState<ExplorerSpeed[]>(() => loadExplorerSpeeds())
+  const [availableMonths, setAvailableMonths] = useState<ExplorerMonth[]>([])
+  const [rangeFrom, setRangeFrom] = useState<Date | null>(null)
+  const [rangeTo, setRangeTo] = useState<Date | null>(null)
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
-  const [defenses, setDefenses] = useState<ExploreRow[] | null>(null)
-  const [defenseError, setDefenseError] = useState<string | null>(null)
-  const [defenseLoading, setDefenseLoading] = useState(false)
-  const selected = normalizeRatings(ratings)
+  const selected = useMemo(() => normalizeRatings(ratings), [ratings])
+  const selectedSpeeds = useMemo(() => normalizeSpeeds(speeds), [speeds])
+  const selectedMonths = useMemo(() => {
+    if (!rangeFrom || !rangeTo || availableMonths.length === 0) return []
+    const covered = monthsCovered(availableMonths, rangeFrom, rangeTo)
+    if (covered.length === availableMonths.length) return []
+    return normalizeMonths(covered)
+  }, [availableMonths, rangeFrom, rangeTo])
   const ratingKey = selected.join(',')
+  const speedKey = selectedSpeeds.join(',')
+  const monthKey = selectedMonths.join(',')
+  const filterKey = `${ratingKey}|${speedKey}|${monthKey}`
   const bands = useMemo(() => bandsFromKey(ratingKey), [ratingKey])
   const requestUrl = openingExplorerApiUrl(START_FEN, selected, {
     moves: EXPLORER_MOVE_CAP,
+    speeds: selectedSpeeds,
+    months: selectedMonths,
   })
-  const current = snapshot && snapshot.key === ratingKey ? snapshot : null
+  const current = snapshot && snapshot.key === filterKey ? snapshot : null
   const whiteStatus = current?.status ?? 'loading'
   const whiteRows = useMemo(
-    () => (current?.status === 'ready' ? current.groups.map((group, index) => groupToRow(group, index)) : []),
+    () =>
+      current?.status === 'ready'
+        ? current.groups.map((group, index) => groupToRow(group, index, current.total))
+        : [],
     [current],
   )
 
   useEffect(() => {
     const controller = new AbortController()
-    const key = ratingKey
+    void fetch('/api/explorer-months', { signal: controller.signal })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error('months'))))
+      .then((body: { months?: unknown }) => {
+        if (controller.signal.aborted) return
+        const months = normalizeMonths(
+          Array.isArray(body.months) ? body.months.filter((month) => typeof month === 'string') : [],
+        )
+        setAvailableMonths(months)
+        if (months.length === 0) return
+        const fullFrom = monthStart(months[0])
+        const fullTo = monthEnd(months[months.length - 1])
+        const saved = loadExplorerRange()
+        if (!saved) {
+          setRangeFrom(fullFrom)
+          setRangeTo(fullTo)
+          return
+        }
+        const from = saved.from < fullFrom ? fullFrom : saved.from
+        const to = saved.to > fullTo ? fullTo : saved.to
+        if (from > to) {
+          setRangeFrom(fullFrom)
+          setRangeTo(fullTo)
+          return
+        }
+        setRangeFrom(from)
+        setRangeTo(to)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+      })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const key = filterKey
     const timer = window.setTimeout(() => {
-      void loadGroups(bands, controller.signal)
-        .then((groups) => {
+      void loadGroups(bands, selectedSpeeds, selectedMonths, controller.signal)
+        .then((loaded) => {
           if (controller.signal.aborted) return
-          setSnapshot({ key, status: 'ready', error: null, groups })
+          setSnapshot({ key, status: 'ready', error: null, groups: loaded.groups, total: loaded.total })
         })
         .catch((err: unknown) => {
           if (controller.signal.aborted) return
@@ -684,6 +894,7 @@ export const ExploreOpenings: FC<{
             status: 'error',
             error: err instanceof Error ? err.message : 'Lichess explorer failed.',
             groups: [],
+            total: 0,
           })
         })
     }, DEBOUNCE_MS)
@@ -691,53 +902,19 @@ export const ExploreOpenings: FC<{
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [bands, ratingKey])
+  }, [bands, filterKey, selectedMonths, selectedSpeeds])
 
   useEffect(() => {
-    if (side !== 'black') return
-    const controller = new AbortController()
-    setDefenseLoading(true)
-    setDefenseError(null)
-    setDefenses(null)
-    void fetchBlackDefenses(START_FEN, bands, controller.signal)
-      .then((list) => {
-        if (controller.signal.aborted) return
-        setDefenses(
-          sortBlackDefenses(list.defenses).map((defense, index) => {
-            const stats = counts(defense.white, defense.draws, defense.black, 'black')
-            return {
-              id: treeId('black', index, defense.san, defense.name),
-              san: defense.san,
-              name: defense.name,
-              eco: defense.eco,
-              white: defense.white,
-              draws: defense.draws,
-              black: defense.black,
-              averageRating: defense.averageRating,
-              games: stats.games,
-              winRate: stats.winRate,
-              play: '',
-              path: [],
-              parentName: '',
-              kind: 'defense' as const,
-              canExpand: false,
-            }
-          }),
-        )
-        setDefenseLoading(false)
-      })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        setDefenseError(err instanceof Error ? err.message : 'Opening defenses failed.')
-        setDefenseLoading(false)
-      })
-    return () => controller.abort()
-  }, [bands, side])
+    saveExplorerRatings(selected)
+  }, [selected])
 
-  const activeRows = side === 'white' ? whiteRows : (defenses ?? [])
-  const activeError = side === 'white' ? current?.error : defenseError
-  const activeLoading = side === 'white' ? whiteStatus === 'loading' : defenseLoading
+  useEffect(() => {
+    saveExplorerSpeeds(selectedSpeeds)
+  }, [selectedSpeeds])
+
+  const activeRows = whiteRows
+  const activeError = current?.error
+  const activeLoading = whiteStatus === 'loading'
 
   return (
     <section
@@ -746,36 +923,31 @@ export const ExploreOpenings: FC<{
       aria-busy={activeLoading}
       data-explorer-url={requestUrl}
       data-ratings={selected.join(',')}
+      data-speeds={selectedSpeeds.join(',')}
+      data-months={monthKey || 'all'}
     >
       <div className="rating-band-head">
         <h3 className="rating-band-title" id="explore-heading">
           Openings
         </h3>
-        <RatingBandMultiSelect value={selected} onChange={setRatings} />
       </div>
-      <div className="flex gap-1">
-        <Button
-          type="button"
-          size="sm"
-          variant={side === 'white' ? 'secondary' : 'ghost'}
-          aria-pressed={side === 'white'}
-          onClick={() => setSide('white')}
-        >
-          White
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={side === 'black' ? 'secondary' : 'ghost'}
-          aria-pressed={side === 'black'}
-          onClick={() => setSide('black')}
-        >
-          Black
-        </Button>
-      </div>
+      <ExplorerFilters
+        ratings={selected}
+        speeds={selectedSpeeds}
+        availableMonths={availableMonths}
+        rangeFrom={rangeFrom}
+        rangeTo={rangeTo}
+        onRatingsChange={setRatings}
+        onSpeedsChange={setSpeeds}
+        onRangeChange={(from, to) => {
+          setRangeFrom(from)
+          setRangeTo(to)
+          saveExplorerRange(from, to)
+        }}
+      />
       {activeLoading ? (
         <p className="rating-band-note" role="status">
-          {side === 'white' ? 'Loading openings…' : 'Loading defenses…'}
+          Loading openings…
         </p>
       ) : null}
       {activeError ? (
@@ -785,20 +957,19 @@ export const ExploreOpenings: FC<{
       ) : null}
       {!activeLoading && !activeError && activeRows.length === 0 ? (
         <p className="rating-band-note" role="status">
-          {side === 'white'
-            ? 'No rated games in these bands reached the starting position.'
-            : 'Lichess did not name a defense for these bands.'}
+          No rated games in these bands reached the starting position.
         </p>
       ) : null}
       {activeRows.length > 0 ? (
-        <TooltipProvider delayDuration={250}>
-          <MoveTable
-            key={`${side}:${ratingKey}`}
-            rows={activeRows}
-            ratings={bands}
-            onPlaySan={onPlaySan}
-          />
-        </TooltipProvider>
+        <MoveTable
+          key={filterKey}
+          rows={activeRows}
+          ratings={bands}
+          speeds={selectedSpeeds}
+          months={selectedMonths}
+          playedSans={playedSans}
+          onPlaySan={onPlaySan}
+        />
       ) : null}
     </section>
   )

@@ -1,12 +1,55 @@
 /**
  * Opening explorer counts, shaped like the Lichess explorer response.
  * The browser calls `/api/opening-explorer`. The server sums `explorer_move`
- * and `explorer_position` in Turso. Names come from the opening book.
+ * and `explorer_position` in the local explorer database. Names come from the opening book.
  */
 
 export const LICHESS_EXPLORER_ENDPOINT = 'https://explorer.lichess.org/lichess'
 
-export const EXPLORER_SPEEDS = 'blitz,rapid,classical'
+export const EXPLORER_SPEEDS = ['blitz', 'rapid', 'classical'] as const
+
+export type ExplorerSpeed = (typeof EXPLORER_SPEEDS)[number]
+
+export const EXPLORER_SPEED_LABELS: Record<ExplorerSpeed, string> = {
+  blitz: 'Blitz',
+  rapid: 'Rapid',
+  classical: 'Classical',
+}
+
+/** `YYYY-MM`. Empty selection means every loaded month. */
+export type ExplorerMonth = string
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+
+const MONTH_LABELS: Record<string, string> = {
+  '01': 'Jan',
+  '02': 'Feb',
+  '03': 'Mar',
+  '04': 'Apr',
+  '05': 'May',
+  '06': 'Jun',
+  '07': 'Jul',
+  '08': 'Aug',
+  '09': 'Sep',
+  '10': 'Oct',
+  '11': 'Nov',
+  '12': 'Dec',
+}
+
+export function isExplorerMonth(value: string): value is ExplorerMonth {
+  return MONTH_RE.test(value)
+}
+
+/** Chip label for `YYYY-MM`. */
+export function explorerMonthLabel(month: string): string {
+  const [year, mm] = month.split('-')
+  return `${MONTH_LABELS[mm] ?? mm} ${year}`
+}
+
+/** Valid months, earliest first. Unknown values are dropped. */
+export function normalizeMonths(months: readonly string[]): ExplorerMonth[] {
+  return [...new Set(months.filter(isExplorerMonth))].sort()
+}
 /**
  * Lichess defaults this to 12, which hides rare first moves such as a4.
  * 100 covers every legal reply in a normal opening position.
@@ -32,6 +75,15 @@ export const DEFAULT_RATING_BAND: RatingBandId = '1600'
 
 export function isRatingBandId(value: string): value is RatingBandId {
   return RATING_BANDS.some((band) => band.id === value)
+}
+
+export function isExplorerSpeed(value: string): value is ExplorerSpeed {
+  return (EXPLORER_SPEEDS as readonly string[]).includes(value)
+}
+
+/** Every band, in display order. The explorer starts with all of them on. */
+export function allRatingBands(): RatingBandId[] {
+  return RATING_BANDS.map((band) => band.id)
 }
 
 export type ExplorerOpening = {
@@ -86,6 +138,10 @@ export type OpeningBranch = {
 /** A named Black defense reached by a White first move plus Black's reply. */
 export type BlackDefense = {
   san: string
+  /** White's first move, then Black's reply. */
+  line: string[]
+  /** UCI of that same two-move line, comma-separated. */
+  play: string
   eco: string
   name: string
   white: number
@@ -109,12 +165,23 @@ export type ExplorerQueryOptions = {
   /** Comma-separated UCI moves played from `fen`. Needed for opening names. */
   play?: string
   moves?: number
+  /** Blitz, rapid, and classical. Omitted means all three. */
+  speeds?: readonly ExplorerSpeed[]
+  /** `YYYY-MM` values. Omitted or empty means every month. */
+  months?: readonly ExplorerMonth[]
 }
 
 /** Bands in Lichess enum order, duplicates dropped. */
 export function normalizeRatings(ratings: readonly RatingBandId[]): RatingBandId[] {
   const selected = new Set(ratings)
   return RATING_BANDS.map((band) => band.id).filter((id) => selected.has(id))
+}
+
+/** Speeds in blitz, rapid, classical order. An empty pick falls back to all three. */
+export function normalizeSpeeds(speeds: readonly string[]): ExplorerSpeed[] {
+  const selected = new Set(speeds)
+  const list = EXPLORER_SPEEDS.filter((speed) => selected.has(speed))
+  return list.length > 0 ? [...list] : [...EXPLORER_SPEEDS]
 }
 
 /** Query string matching the official example (slashes left intact, spaces as %20). */
@@ -125,16 +192,19 @@ export function lichessExplorerQuery(
 ): string {
   const fenParam = encodeURIComponent(fen).replace(/%2F/g, '/')
   const bandList = normalizeRatings(ratings)
+  const speedList = normalizeSpeeds(options.speeds ?? EXPLORER_SPEEDS)
+  const monthList = normalizeMonths(options.months ?? [])
   const moveCap = options.moves ?? EXPLORER_MOVE_CAP
   const parts = [
     `fen=${fenParam}`,
     'variant=standard',
-    `speeds=${EXPLORER_SPEEDS}`,
+    `speeds=${speedList.join(',')}`,
     `ratings=${bandList.join(',')}`,
     `moves=${moveCap}`,
     'topGames=0',
     'recentGames=0',
   ]
+  if (monthList.length > 0) parts.push(`months=${monthList.join(',')}`)
   if (options.play) parts.push(`play=${options.play}`)
   return parts.join('&')
 }
@@ -353,10 +423,12 @@ export function openingBranchApiUrl(
   fen: string,
   ratings: readonly RatingBandId[],
   play: string,
+  speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
 ): string {
   return `/api/opening-branch?${lichessExplorerQuery(fen, ratings, {
     play,
     moves: EXPLORER_MOVE_CAP,
+    speeds,
   })}`
 }
 
@@ -365,8 +437,9 @@ export async function fetchOpeningBranch(
   ratings: readonly RatingBandId[],
   play: string,
   signal: AbortSignal,
+  speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
 ): Promise<OpeningBranch> {
-  const url = openingBranchApiUrl(fen, ratings, play)
+  const url = openingBranchApiUrl(fen, ratings, play, speeds)
   let res: Response
   try {
     res = await fetch(url, {
@@ -408,8 +481,13 @@ export function parseBlackDefenses(payload: unknown): BlackDefenseList {
     const row = item as Record<string, unknown>
     if (typeof row.name !== 'string' || row.name.trim() === '') continue
     if (typeof row.san !== 'string' || row.san.trim() === '') continue
+    const line = Array.isArray(row.line)
+      ? row.line.filter((move): move is string => typeof move === 'string' && move.trim() !== '')
+      : []
     defenses.push({
       san: row.san.trim(),
+      line,
+      play: typeof row.play === 'string' ? row.play : '',
       eco: typeof row.eco === 'string' ? row.eco : '',
       name: row.name.trim(),
       white: readCount(row.white),
@@ -424,9 +502,11 @@ export function parseBlackDefenses(payload: unknown): BlackDefenseList {
 export function openingDefensesApiUrl(
   fen: string,
   ratings: readonly RatingBandId[],
+  speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
 ): string {
   return `/api/opening-defenses?${lichessExplorerQuery(fen, ratings, {
     moves: EXPLORER_MOVE_CAP,
+    speeds,
   })}`
 }
 
@@ -434,8 +514,9 @@ export async function fetchBlackDefenses(
   fen: string,
   ratings: readonly RatingBandId[],
   signal: AbortSignal,
+  speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
 ): Promise<BlackDefenseList> {
-  const url = openingDefensesApiUrl(fen, ratings)
+  const url = openingDefensesApiUrl(fen, ratings, speeds)
   let res: Response
   try {
     res = await fetch(url, {

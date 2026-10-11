@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js'
-import { getTurso } from './turso.js'
+import { getExplorerDb } from './explorerDb.js'
 import { queryExplorerPosition } from './explorerStats.js'
 import {
   branchKeyFrom,
@@ -14,13 +14,14 @@ import type {
   BlackDefenseList,
   BranchMover,
   ExplorerOpening,
+  ExplorerSpeed,
   OpeningBranch,
   OpeningBranchLine,
   RatingBandId,
 } from '../src/lib/lichessExplorer.js'
-import { isOpeningVariation } from '../src/lib/lichessExplorer.js'
+import { EXPLORER_SPEEDS, isOpeningVariation, normalizeSpeeds } from '../src/lib/lichessExplorer.js'
 
-const CACHE_VERSION = 'v3'
+const CACHE_VERSION = 'v4'
 const START_FEN =
   'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 /** Serve a stored row only while it is under 7 days old. */
@@ -33,12 +34,17 @@ let nowFn = () => Date.now()
 const memory = new Map<string, Timed<OpeningBranch>>()
 const defenseMemory = new Map<string, Timed<BlackDefenseList>>()
 
-function cacheKey(fen: string, ratings: readonly RatingBandId[], play: string) {
-  return `${CACHE_VERSION}|${ratings.join(',')}|${play}|${fen}`
+function cacheKey(
+  fen: string,
+  ratings: readonly RatingBandId[],
+  speeds: readonly ExplorerSpeed[],
+  play: string,
+) {
+  return `${CACHE_VERSION}|${ratings.join(',')}|${speeds.join(',')}|${play}|${fen}`
 }
 
-function defenseCacheKey(ratings: readonly RatingBandId[]) {
-  return `${CACHE_VERSION}|defenses|${ratings.join(',')}`
+function defenseCacheKey(ratings: readonly RatingBandId[], speeds: readonly ExplorerSpeed[]) {
+  return `${CACHE_VERSION}|defenses|${ratings.join(',')}|${speeds.join(',')}`
 }
 
 function cacheNow() {
@@ -104,7 +110,7 @@ function lastMover(fen: string, play: string): BranchMover {
 
 async function ensureSchema() {
   if (!schemaReady) {
-    schemaReady = getTurso()
+    schemaReady = getExplorerDb()
       .execute(`
         CREATE TABLE IF NOT EXISTS explorer_branches (
           cache_key TEXT PRIMARY KEY,
@@ -131,7 +137,7 @@ async function readStored(key: string): Promise<OpeningBranch | null> {
   if (cached) return cached
   try {
     await ensureSchema()
-    const result = await getTurso().execute({
+    const result = await getExplorerDb().execute({
       sql: 'SELECT payload, updated_at FROM explorer_branches WHERE cache_key = ?',
       args: [key],
     })
@@ -154,7 +160,7 @@ async function writeStored(key: string, payload: OpeningBranch) {
   remember(memory, key, payload, stamped)
   try {
     await ensureSchema()
-    await getTurso().execute({
+    await getExplorerDb().execute({
       sql: `
         INSERT INTO explorer_branches (cache_key, payload, updated_at)
         VALUES (?, ?, datetime('now'))
@@ -179,7 +185,7 @@ export async function purgeExpiredExplorerBranches(): Promise<number> {
   for (const [key, entry] of defenseMemory) {
     if (!exploreUpdatedAtFresh(entry.updatedAtMs, now)) defenseMemory.delete(key)
   }
-  const result = await getTurso().execute(
+  const result = await getExplorerDb().execute(
     `DELETE FROM explorer_branches WHERE updated_at < datetime('now', '-7 days')`,
   )
   return Number(result.rowsAffected ?? 0)
@@ -188,11 +194,12 @@ export async function purgeExpiredExplorerBranches(): Promise<number> {
 async function fetchPosition(
   fen: string,
   ratings: readonly RatingBandId[],
+  speeds: readonly ExplorerSpeed[],
   play: string,
   signal: AbortSignal,
 ) {
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
-  const position = await queryExplorerPosition(fen, ratings, play)
+  const position = await queryExplorerPosition(fen, ratings, play, speeds)
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
   return { position }
 }
@@ -278,11 +285,10 @@ function defenseGames(row: { white: number; draws: number; black: number }) {
 }
 
 function isDefenseList(value: unknown): value is BlackDefenseList {
-  return Boolean(
-    value &&
-      typeof value === 'object' &&
-      Array.isArray((value as BlackDefenseList).defenses),
-  )
+  if (!value || typeof value !== 'object') return false
+  const defenses = (value as BlackDefenseList).defenses
+  if (!Array.isArray(defenses)) return false
+  return defenses.every((row) => Array.isArray(row.line) && row.line.length >= 2 && typeof row.play === 'string')
 }
 
 async function readDefense(key: string): Promise<BlackDefenseList | null> {
@@ -291,7 +297,7 @@ async function readDefense(key: string): Promise<BlackDefenseList | null> {
   if (cached) return cached
   try {
     await ensureSchema()
-    const result = await getTurso().execute({
+    const result = await getExplorerDb().execute({
       sql: 'SELECT payload, updated_at FROM explorer_branches WHERE cache_key = ?',
       args: [key],
     })
@@ -313,7 +319,7 @@ async function writeDefense(key: string, payload: BlackDefenseList) {
   remember(defenseMemory, key, payload, cacheNow())
   try {
     await ensureSchema()
-    await getTurso().execute({
+    await getExplorerDb().execute({
       sql: `
         INSERT INTO explorer_branches (cache_key, payload, updated_at)
         VALUES (?, ?, datetime('now'))
@@ -338,21 +344,23 @@ export async function loadOpeningBranch(
   ratings: readonly RatingBandId[],
   play: string,
   signal?: AbortSignal,
+  speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
 ): Promise<OpeningBranch> {
+  const selectedSpeeds = normalizeSpeeds(speeds)
   const ac = new AbortController()
   const onAbort = () => ac.abort()
   if (signal) {
     if (signal.aborted) ac.abort()
     else signal.addEventListener('abort', onAbort, { once: true })
   }
-  const key = cacheKey(fen, ratings, play)
+  const key = cacheKey(fen, ratings, selectedSpeeds, play)
   try {
     const stored = await readStored(key)
     if (stored) {
       return { ...stored, lines: await attachMissingSans(fen, play, stored.lines) }
     }
 
-    const { position } = await fetchPosition(fen, ratings, play, ac.signal)
+    const { position } = await fetchPosition(fen, ratings, selectedSpeeds, play, ac.signal)
     const replySide = lastMover(fen, play) === 'white' ? 'black' : 'white'
     const collected: OpeningBranchLine[] = []
     for (const move of position.moves) {
@@ -403,6 +411,7 @@ export async function loadOpeningBranch(
             const { position: reached } = await fetchPosition(
               fen,
               ratings,
+              selectedSpeeds,
               fullPlay,
               ac.signal,
             )
@@ -460,19 +469,21 @@ export async function loadOpeningBranch(
 export async function loadBlackDefenses(
   ratings: readonly RatingBandId[],
   signal?: AbortSignal,
+  speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
 ): Promise<BlackDefenseList> {
+  const selectedSpeeds = normalizeSpeeds(speeds)
   const ac = new AbortController()
   const onAbort = () => ac.abort()
   if (signal) {
     if (signal.aborted) ac.abort()
     else signal.addEventListener('abort', onAbort, { once: true })
   }
-  const key = defenseCacheKey(ratings)
+  const key = defenseCacheKey(ratings, selectedSpeeds)
   try {
     const stored = await readDefense(key)
     if (stored) return stored
 
-    const { position } = await fetchPosition(START_FEN, ratings, '', ac.signal)
+    const { position } = await fetchPosition(START_FEN, ratings, selectedSpeeds, '', ac.signal)
     const total = position.white + position.draws + position.black
     const byName = new Map<string, BlackDefense>()
     for (const move of position.moves) {
@@ -481,6 +492,7 @@ export async function loadBlackDefenses(
       const { position: after } = await fetchPosition(
         START_FEN,
         ratings,
+        selectedSpeeds,
         move.uci,
         ac.signal,
       )
@@ -491,6 +503,8 @@ export async function loadBlackDefenses(
         if (isOpeningVariation(parentName, name)) continue
         const candidate: BlackDefense = {
           san: reply.san,
+          line: [move.san, reply.san],
+          play: `${move.uci},${reply.uci}`,
           eco: reply.opening.eco,
           name,
           white: reply.white,

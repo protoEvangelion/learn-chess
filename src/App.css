@@ -334,15 +334,6 @@ body,
   height: 2.5rem;
 }
 
-.hud-title {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  color: var(--sw-text);
-  pointer-events: none;
-}
-
 .hud-brand-mark {
   width: 2.5rem;
   height: 2.5rem;
@@ -1175,10 +1166,63 @@ body.is-panel-resizing canvas {
   padding-right: 0.1rem;
 }
 
-.analysis-dialog-body:has(.analysis-report) {
+.analysis-dialog-body:has(.analysis-report),
+.analysis-dialog-body:has(.rating-band) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.explorer-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background-color: var(--sw-bg0);
+  contain: paint;
+  user-select: none;
+}
+
+.explorer-table-scroll tr,
+.explorer-table-scroll button {
+  transition: none;
+}
+
+.explorer-table-scroll tbody tr {
+  background-color: var(--sw-bg0);
+}
+
+.explorer-table-scroll tbody tr:hover {
+  background-color: color-mix(in srgb, var(--sw-teal) 16%, var(--sw-bg0));
+}
+
+.explorer-table-scroll tbody tr.is-expandable,
+.explorer-table-scroll tbody tr.is-expandable td,
+.explorer-table-scroll tbody tr.is-expandable button {
+  cursor: pointer;
+}
+
+.explorer-table-scroll tbody tr.is-current {
+  background-color: color-mix(in srgb, var(--sw-teal) 34%, var(--sw-bg0));
+  box-shadow: inset 3px 0 0 var(--sw-teal);
+}
+
+.explorer-table-scroll tbody tr.is-current:hover {
+  background-color: color-mix(in srgb, var(--sw-teal) 44%, var(--sw-bg0));
+}
+
+.explorer-tip {
+  position: fixed;
+  z-index: 80;
+  max-width: 16rem;
+  transform: translate(-50%, calc(-100% - 8px));
+  pointer-events: none;
+  border-radius: 6px;
+  background: var(--foreground);
+  color: var(--background);
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .analysis-report {
@@ -1538,8 +1582,11 @@ body.is-review-coach-resizing canvas {
 
 .rating-band {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.4rem;
+  min-height: 0;
+  overflow: hidden;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--sw-border);
 }
@@ -2108,9 +2155,10 @@ body.is-review-coach-resizing canvas {
   flex-shrink: 0;
 }
 
-.game-new-btn {
-  cursor: pointer;
-  font-weight: 650;
+.game-new-btn.bg-animate-btn .bg-animate-btn-label {
+  min-height: 2rem;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.62rem;
 }
 
 .game-dialog-title {
@@ -2287,8 +2335,40 @@ body.is-review-coach-resizing canvas {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 1.1rem;
+  margin-bottom: 0.85rem;
   flex-shrink: 0;
+}
+
+.coach-dialog-mark {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.coach-dialog-glyph {
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex-shrink: 0;
+  border-radius: 12px;
+  color: var(--sw-teal);
+  background: color-mix(in srgb, var(--sw-teal) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sw-teal) 32%, transparent);
+}
+
+.coach-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.coach-dialog-body .coach-pane {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .coach-dialog-scroll {
@@ -3069,9 +3149,16 @@ body.is-review-coach-resizing canvas {
   min-height: 0;
 }
 
+.coach-chat-thread:has(.coach-chat-empty:only-child) {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
 .coach-chat-empty {
   margin: 0;
-  font-size: 0.85rem;
+  max-width: 16rem;
+  font-size: 0.9rem;
   line-height: 1.45;
   color: var(--sw-muted);
 }
@@ -3240,6 +3327,61 @@ body.is-review-coach-resizing canvas {
 
 .coach-actions {
   margin-top: 0.85rem;
+}
+
+.new-game-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(7, 4, 15, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.new-game-card {
+  width: min(100%, 380px);
+  padding: 1.5rem 1.35rem 1.15rem;
+  border-radius: 14px;
+  border: 1px solid var(--sw-border);
+  background:
+    radial-gradient(90% 50% at 0% 0%, rgba(45, 212, 191, 0.12), transparent 55%),
+    radial-gradient(80% 45% at 100% 0%, rgba(168, 85, 247, 0.16), transparent 50%),
+    linear-gradient(180deg, var(--sw-panel) 0%, var(--sw-bg0) 100%);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.new-game-eyebrow {
+  margin: 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sw-teal);
+  font-weight: 700;
+}
+
+.new-game-card h2 {
+  margin: 0.2rem 0 0;
+  font-size: 1.45rem;
+  font-weight: 650;
+}
+
+.new-game-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+  margin: 1.1rem 0 0.85rem;
+}
+
+.new-game-sides .bg-animate-btn {
+  width: 100%;
+}
+
+.new-game-sides .bg-animate-btn-label {
+  min-height: 2.5rem;
+  width: 100%;
 }
 
 .endgame-overlay {
