@@ -22,6 +22,7 @@ use shakmaty::san::San;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingSide, Chess, Color, EnPassantMode, Position};
 
+mod cards;
 mod group;
 
 const WIDTH: usize = 1 << 27;
@@ -1245,8 +1246,16 @@ fn count_chunk(
     (shards, games)
 }
 
-fn run_fast_pass(file: &Path, limit: u64, threshold: u64, data: &Path, workers: usize) {
-    println!("{{\"pass\":2,\"loading\":true,\"chunkGames\":{CHUNK_GAMES}}}");
+fn run_fast_pass(
+    file: &Path,
+    limit: u64,
+    threshold: u64,
+    data: &Path,
+    workers: usize,
+    chunk_games: u64,
+) {
+    let chunk_games = chunk_games.max(1);
+    println!("{{\"pass\":2,\"loading\":true,\"chunkGames\":{chunk_games}}}");
     let load_started = Instant::now();
     let pos = Arc::new(Sketch::load(&data.join("explorer-sketch-position.bin")));
     let mov = Arc::new(Sketch::load(&data.join("explorer-sketch-move.bin")));
@@ -1263,9 +1272,9 @@ fn run_fast_pass(file: &Path, limit: u64, threshold: u64, data: &Path, workers: 
     let mut chunk = 0u64;
     loop {
         let room = if limit == 0 {
-            CHUNK_GAMES
+            chunk_games
         } else {
-            CHUNK_GAMES.min(limit.saturating_sub(queued))
+            chunk_games.min(limit.saturating_sub(queued))
         };
         if room == 0 {
             break;
@@ -2005,6 +2014,22 @@ fn main() {
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(8);
+    let chunk_games = arg("chunk")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(CHUNK_GAMES);
+    if pass == "cards-stat" {
+        cards::stat(&data);
+        return;
+    }
+    if pass == "cards-serve" {
+        cards::serve(&data);
+        return;
+    }
+    if pass == "cards" {
+        fs::create_dir_all(&data).ok();
+        cards::run(&file, &data, limit, chunk_games);
+        return;
+    }
     let month = month_of(&file);
     println!(
         "{{\"file\":\"{}\",\"pass\":\"{pass}\",\"limit\":{limit},\"threshold\":{threshold},\"workers\":{workers},\"month\":\"{month}\"}}",
@@ -2027,6 +2052,6 @@ fn main() {
         run_pass(&file, limit, &data, workers);
     }
     if pass == "2" || pass == "all" {
-        run_fast_pass(&file, limit, threshold, &data, workers);
+        run_fast_pass(&file, limit, threshold, &data, workers, chunk_games);
     }
 }

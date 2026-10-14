@@ -23,6 +23,8 @@ export type ImportedGame = {
   finalFen: string
   whiteName: string | null
   blackName: string | null
+  whiteElo: number | null
+  blackElo: number | null
   result: string | null
   /** Compact PGN (no clock comments) for the URL. */
   pgn: string
@@ -174,6 +176,13 @@ export function historyToPgn(history: HistoryItem[]): string {
   return stripPlaceholderHeaders(chess.pgn({ maxWidth: 0 }))
 }
 
+function readElo(value: string | undefined): number | null {
+  if (!value) return null
+  const elo = Number(value)
+  if (!Number.isFinite(elo) || elo <= 0) return null
+  return Math.round(elo)
+}
+
 function stripPlaceholderHeaders(pgn: string): string {
   return pgn
     .replace(/\[(?:Event|Site|Round) "\?"\]\r?\n/g, '')
@@ -244,6 +253,8 @@ export function parsePgnToImportedGame(
   const header = chess.header()
   const whiteName = header.White?.trim() || null
   const blackName = header.Black?.trim() || null
+  const whiteElo = readElo(header.WhiteElo)
+  const blackElo = readElo(header.BlackElo)
   const result = header.Result?.trim() || null
   const playerColor = resolvePlayerColor(whiteName, blackName, opts)
 
@@ -321,6 +332,8 @@ export function parsePgnToImportedGame(
       : finalFen || START_FEN,
     whiteName,
     blackName,
+    whiteElo,
+    blackElo,
     result,
     pgn: pgnWithNames(history, whiteName, blackName, result) || trimmed,
   }

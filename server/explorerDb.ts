@@ -12,6 +12,9 @@ let client: Client | null = null
 export function explorerDatabasePath(root = process.cwd()): string {
   const configured = process.env.EXPLORER_DATABASE_PATH
   if (configured) return path.resolve(configured)
+  const unlimitedDir = path.join(root, '.data', 'run-2026-09-all')
+  const unlimited = path.join(unlimitedDir, 'explorer-2026-09.sqlite')
+  if (existsSync(path.join(unlimitedDir, 'READY')) && existsSync(unlimited)) return unlimited
   return path.join(root, '.data', 'explorer-2026-09.sqlite')
 }
 

@@ -9,7 +9,7 @@ import {
 import { Canvas, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { Environment, Stats } from '@react-three/drei'
-import { copyBoard, createBoard } from '@logic/board'
+import { copyBoard, createBoard, type Position } from '@logic/board'
 import type { Board } from '@logic/board'
 import type { Color, Move, Piece } from '@logic/pieces'
 import { detectGameOver, getTile, movesForPiece } from '@logic/pieces'
@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/gradient-button-group'
 import { HudEval } from '@/components/HudEval'
 import { BrandMark } from '@/components/BrandMark'
+import { BootScreen } from '@/components/BootScreen'
 import { SettingsDrawer } from '@/components/SettingsDrawer'
 import { Chess } from 'chess.js'
 import { Hammer, Joystick } from 'lucide-react'
@@ -58,6 +59,7 @@ import {
   type UrlGameState,
 } from '@/lib/fenBridge'
 import {
+  stockfishAnalysis,
   stockfishOpponent,
   type BestMoveResult,
   type StrengthLevel,
@@ -69,8 +71,10 @@ import {
   buildPlyTimeline,
   buildReportSummary,
   formatReviewBriefForCoach,
+  pliesForCoachApi,
   type AnalysisReport,
 } from '@/lib/gameReview'
+import { loadLatestChessComPgn } from '@/lib/chessComLatest'
 import {
   historyToPgn,
   historyToSans,
@@ -193,6 +197,56 @@ async function mintGameId(signal?: AbortSignal): Promise<string> {
   const data = (await res.json()) as { gameId?: string }
   if (!data.gameId) throw new Error('No gameId returned')
   return data.gameId
+}
+
+/** Win, loss, or draw for the recap. Unknown stays unknown so the coach is not told a fake result. */
+function reviewOutcomeForCoach(
+  gameOver: GameOver | null,
+  playerColor: Color,
+  result: string | null,
+): 'win' | 'loss' | 'draw' | 'unknown' {
+  const ended = outcomeFromResult(gameOver, playerColor)
+  if (ended === 'win' || ended === 'loss' || ended === 'draw') return ended
+  if (result === '1-0') return playerColor === 'white' ? 'win' : 'loss'
+  if (result === '0-1') return playerColor === 'black' ? 'win' : 'loss'
+  if (result === '1/2-1/2') return 'draw'
+  return 'unknown'
+}
+
+/** Read the coach SSE stream and return the parsed explanation card. */
+async function readCoachExplanation(res: Response): Promise<string> {
+  if (!res.ok || !res.body) throw new Error(`Review failed (${res.status})`)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let assembled = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n')
+    buffer = parts.pop() ?? ''
+    for (const line of parts) {
+      if (!line.startsWith('data:')) continue
+      const payload = JSON.parse(line.slice(5).trim()) as {
+        type: string
+        text?: string
+        error?: string
+      }
+      if (payload.type === 'delta' && payload.text) {
+        assembled += payload.text
+      } else if (payload.type === 'done') {
+        if (payload.text) assembled = payload.text
+      } else if (payload.type === 'error') {
+        throw new Error(payload.error || 'Review failed')
+      }
+    }
+  }
+  const explained = parseCoachExplain(assembled)
+  if (!explained?.explanation) {
+    throw new Error('Coach reply was not in the expected format')
+  }
+  return explained.explanation
 }
 
 function gameOverFromBoard(board: Board, turn: Color): GameOver | null {
@@ -393,6 +447,8 @@ export default function App() {
   const [frequencyArrows, setFrequencyArrows] = useState<FrequencyArrow[]>([])
   const [opponentThinking, setOpponentThinking] = useState(false)
   const [pendingEngineMove, setPendingEngineMove] = useState<Move | null>(null)
+  const [heldEngineMove, setHeldEngineMove] = useState<Move | null>(null)
+  const heldEngineMoveRef = useRef<Move | null>(null)
   const [gameId, setGameId] = useState<string | null>(() => readGameIdFromUrl())
   const [boardId, setBoardId] = useState(loadBoardId)
   const [pieceSetId, setPieceSetId] = useState(loadPieceSetId)
@@ -401,6 +457,8 @@ export default function App() {
   const [volume, setVolumeState] = useState(loadVolume)
   const [musicTrackId, setMusicTrackId] = useState<MusicTrackId>(loadMusicTrackId)
   const [showBestMove, setShowBestMove] = useState(loadShowBestMove)
+  const showBestMoveRef = useRef(showBestMove)
+  showBestMoveRef.current = showBestMove
   const [bestMoveDelaySec, setBestMoveDelaySec] = useState(loadBestMoveDelaySec)
   const [bestMoveDelayElapsed, setBestMoveDelayElapsed] = useState(false)
   const [showFps, setShowFps] = useState(loadShowFps)
@@ -549,6 +607,11 @@ export default function App() {
     if (reviewImport?.pgn) return reviewImport.pgn
     return historyToPgn(history) || fenToSetupPgn(fen)
   }, [fen, history, reviewImport])
+  const analysisPgn = useMemo(() => {
+    if (reviewImport?.pgn) return reviewImport.pgn
+    const future = exploreFutureRef.current.map((step) => step.item)
+    return historyToPgn([...history, ...future]) || fenToSetupPgn(fen)
+  }, [fen, history, reviewImport, exploreFutureCount])
 
   // Ignore analysis from a previous FEN (avoids one-frame stale lines after a move).
   const lines =
@@ -691,7 +754,9 @@ export default function App() {
   useEffect(() => {
     setBestMoveDelayElapsed(false)
     if (!showBestMove || !analysisReadyForFen) return
-    if (bestMoveDelaySec <= 0) {
+    // The delay is thinking time on your turn. On the other side, show the
+    // arrow as soon as the search finishes.
+    if (bestMoveDelaySec <= 0 || turn !== playerColor) {
       setBestMoveDelayElapsed(true)
       return
     }
@@ -700,7 +765,7 @@ export default function App() {
       bestMoveDelaySec * 1000,
     )
     return () => window.clearTimeout(timer)
-  }, [fen, showBestMove, bestMoveDelaySec, analysisReadyForFen])
+  }, [fen, showBestMove, bestMoveDelaySec, analysisReadyForFen, turn, playerColor])
 
   const showBestArrow =
     (showBestMove && bestMoveDelayElapsed) ||
@@ -728,11 +793,30 @@ export default function App() {
     turn,
   ])
 
+  const reviewArrow = useMemo(() => {
+    if (!reviewImport || !analysisReport || scrubIndex <= 0) return null
+    // scrubIndex is the position after the selected move, so that move's
+    // engine best is the previous ply.
+    const uci = analysisReport.plies[scrubIndex - 1]?.bestUci
+    if (!uci || uci.length < 4) return null
+    return {
+      from: squareToPosition(uci.slice(0, 2)),
+      to: squareToPosition(uci.slice(2, 4)),
+    }
+  }, [analysisReport, reviewImport, scrubIndex])
+  const [previewArrow, setPreviewArrow] = useState<{
+    from: Position
+    to: Position
+  } | null>(null)
   const tipFrom =
     drillHintSquares?.from ??
+    previewArrow?.from ??
+    reviewArrow?.from ??
     (showBestArrow && best ? squareToPosition(best.from) : null)
   const tipTo =
     drillHintSquares?.to ??
+    previewArrow?.to ??
+    reviewArrow?.to ??
     (showBestArrow && best ? squareToPosition(best.to) : null)
 
   const endOutcome = outcomeFromResult(gameOver, playerColor)
@@ -741,9 +825,9 @@ export default function App() {
   const terminalOver = !!gameOver && !scrubbingImport
   const drillActive = drillStatus === 'playing' || drillStatus === 'complete'
 
-  // Analyze on the player's turn only. Full MultiPV shares one Stockfish worker with
-  // getMove — running it while the opponent is to move queues the reply behind ~depth-18
-  // and can stall "Opponent thinking…" for ~30s instead of a few seconds.
+  // Best-move search runs for whoever is to move. It uses its own Stockfish
+  // instance so the opponent's reply is not stuck behind this deeper search.
+  // Skip the other side when the arrow is off — the coach only needs your turn.
   useEffect(() => {
     if (terminalOver || drillOpen || reviewImport) {
       setAnalysis(null)
@@ -751,7 +835,7 @@ export default function App() {
       setAnalysisStatus('idle')
       return
     }
-    if (turn !== playerColor) {
+    if (turn !== playerColor && !showBestMove) {
       setAnalysis(null)
       setMoveOptionIndex(0)
       setAnalysisStatus('idle')
@@ -768,7 +852,7 @@ export default function App() {
     let cancelled = false
     const timer = window.setTimeout(async () => {
       try {
-        const result = await stockfishOpponent.getBestMove(
+        const result = await stockfishAnalysis.getBestMove(
           analyzedFen,
           controller.signal,
         )
@@ -792,7 +876,7 @@ export default function App() {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [fen, terminalOver, turn, playerColor, drillOpen, reviewImport])
+  }, [fen, terminalOver, turn, playerColor, drillOpen, reviewImport, showBestMove])
 
   // Wipe position-specific tips when the board changes (keep chat).
   // Imported review scrubbing / coach review mode must keep the recap.
@@ -859,11 +943,17 @@ export default function App() {
           setOpponentThinking(false)
           return
         }
+        // Keep the reply in hand until that side's best-move arrow is on the board.
+        if (showBestMoveRef.current) {
+          heldEngineMoveRef.current = match
+          setHeldEngineMove(match)
+          return
+        }
         setPendingEngineMove(match)
       } catch {
         /* ignore */
       } finally {
-        if (!cancelled) setOpponentThinking(false)
+        if (!cancelled && !heldEngineMoveRef.current) setOpponentThinking(false)
       }
     }, 400)
 
@@ -871,6 +961,8 @@ export default function App() {
       cancelled = true
       window.clearTimeout(timer)
       setOpponentThinking(false)
+      heldEngineMoveRef.current = null
+      setHeldEngineMove(null)
     }
   }, [
     turn,
@@ -886,7 +978,31 @@ export default function App() {
     drillActive,
     drillOpen,
     analysisOpen,
+    showBestMove,
   ])
+
+  // Play the held reply once its best-move arrow is visible.
+  useEffect(() => {
+    if (!heldEngineMove) return
+    if (!showBestMove || analysisStatus === 'error') {
+      const move = heldEngineMove
+      heldEngineMoveRef.current = null
+      setHeldEngineMove(null)
+      setOpponentThinking(false)
+      setPendingEngineMove(move)
+      return
+    }
+    if (!showBestArrow) return
+    const move = heldEngineMove
+    const timer = window.setTimeout(() => {
+      if (heldEngineMoveRef.current !== move) return
+      heldEngineMoveRef.current = null
+      setHeldEngineMove(null)
+      setOpponentThinking(false)
+      setPendingEngineMove(move)
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [heldEngineMove, showBestMove, showBestArrow, analysisStatus])
 
   // Leave drill session cleanly when closing the panel — restore live game,
   // but keep the selected line so the picker still shows it on reopen.
@@ -1469,6 +1585,8 @@ export default function App() {
           finalFen: reviewFen,
           whiteName,
           blackName,
+          whiteElo: null,
+          blackElo: null,
           result: null,
           pgn: historyToPgn(hist) || fenToSetupPgn(reviewFen),
         }
@@ -1494,15 +1612,55 @@ export default function App() {
         )
 
         const summary = buildReportSummary(tagged)
-        setAnalysisReport({
+        const report: AnalysisReport = {
           plies: tagged,
           summary,
           whiteName,
           blackName,
           playerColor: color,
-        })
+        }
+        setAnalysisReport(report)
+        setCoachExplanation(null)
+        setCoachError(null)
+        setCoachStatus('loading')
         setReviewBusy(false)
         setReviewProgress(null)
+
+        try {
+          let id = gameId
+          if (!id) {
+            id = await mintGameId(controller.signal)
+            if (controller.signal.aborted) return
+            setGameId(id)
+            replaceGameInUrl(sharePgn, id, urlHistoryIndexRef.current)
+          }
+          const res = await fetch('/api/review', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              gameId: id,
+              playerColor: color,
+              outcome: reviewOutcomeForCoach(
+                session.gameOver,
+                color,
+                session.result,
+              ),
+              playerElo:
+                color === 'white' ? session.whiteElo : session.blackElo,
+              plies: pliesForCoachApi(tagged),
+            }),
+          })
+          const explanation = await readCoachExplanation(res)
+          if (controller.signal.aborted) return
+          setCoachExplanation(explanation)
+          setCoachStatus('idle')
+        } catch (err) {
+          if (controller.signal.aborted) return
+          if (err instanceof DOMException && err.name === 'AbortError') return
+          setCoachStatus('error')
+          setCoachError(err instanceof Error ? err.message : 'Game review failed')
+        }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setReviewBusy(false)
@@ -1514,11 +1672,13 @@ export default function App() {
     [
       board,
       fen,
+      gameId,
       gameOver,
       openPanel,
       playerColor,
       reviewBusy,
       reviewImport,
+      sharePgn,
       turn,
     ],
   )
@@ -1610,17 +1770,54 @@ export default function App() {
     })
   }, [boot.imported, reviewGame])
 
+  const scrubIndexRef = useRef(scrubIndex)
+  scrubIndexRef.current = scrubIndex
+
   const scrubTo = useCallback(
     (index: number) => {
       if (!reviewImport) return
       const next = Math.max(0, Math.min(index, reviewImport.history.length))
       const pos = positionAtPly(reviewImport, next)
       setScrubIndex(next)
+      setPreviewArrow(null)
       setBoard(pos.board)
       useGameState.setState({ turn: pos.turn, movingTo: null })
       setSelected(null)
       setMoves([])
       setPendingEngineMove(null)
+    },
+    [reviewImport],
+  )
+
+  const previewReviewMove = useCallback(
+    (move: { fen: string; san: string } | null) => {
+      if (!reviewImport) return
+      if (!move) {
+        const pos = positionAtPly(reviewImport, scrubIndexRef.current)
+        setPreviewArrow(null)
+        setBoard(pos.board)
+        useGameState.setState({ turn: pos.turn, movingTo: null })
+        setSelected(null)
+        setMoves([])
+        return
+      }
+      try {
+        const chess = new Chess(move.fen)
+        const played = chess.move(move.san)
+        if (!played) return
+        const after = fenToGame(chess.fen())
+        if (!after) return
+        setPreviewArrow({
+          from: squareToPosition(played.from),
+          to: squareToPosition(played.to),
+        })
+        setBoard(after.board)
+        useGameState.setState({ turn: after.turn, movingTo: null })
+        setSelected(null)
+        setMoves([])
+      } catch {
+        // Leave the board on the move that was played in the game.
+      }
     },
     [reviewImport],
   )
@@ -1637,16 +1834,7 @@ export default function App() {
       let pgn = raw
       if (!raw) {
         setImportStatus('Fetching your latest chess.com game…')
-        const res = await fetch('/api/import-chesscom-latest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username }),
-        })
-        const data = (await res.json()) as { pgn?: string; error?: string }
-        if (!res.ok || !data.pgn) {
-          throw new Error(data.error || `Import failed (${res.status})`)
-        }
-        pgn = data.pgn
+        pgn = await loadLatestChessComPgn(username)
       } else if (isChessComGameUrl(raw)) {
         setImportStatus('Fetching chess.com game…')
         const res = await fetch('/api/import-chesscom', {
@@ -1963,6 +2151,7 @@ export default function App() {
 
   return (
     <div className="app" onPointerDown={() => unlockSfx()}>
+      <BootScreen />
       {endOutcome && !endgameDismissed && !drillOpen && (
         <EndGameOverlay
           outcome={endOutcome}
@@ -2056,6 +2245,7 @@ export default function App() {
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
         onFrequencyArrows={setFrequencyArrows}
+        onPreviewMove={previewReviewMove}
         onPlaySan={playExploreLine}
         playedSans={playedSans}
         linePly={history.length}
@@ -2063,6 +2253,7 @@ export default function App() {
         onLineStep={stepLiveLine}
         tab={analysisTab}
         onTabChange={onAnalysisTab}
+        pgn={analysisPgn}
       />
 
       <DrillDialog
@@ -2360,6 +2551,7 @@ export default function App() {
               boardOrigin={roomTheme.boardOffset ?? DEFAULT_CAMERA_TARGET}
               sceneKey={`${roomId}:${boardId}:${pieceSetId}:${drillOpen ? 'drill' : 'play'}`}
               roomId={roomId}
+              seatYaw={reviewImport && playerColor === 'black' ? Math.PI : 0}
             />
             <color attach="background" args={[roomTheme.background]} />
             <Environment files={roomTheme.hdr} environmentIntensity={0.6} />

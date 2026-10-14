@@ -6,6 +6,11 @@ import {
   streamCoachAsk,
 } from './aiCoach.js'
 import { listExplorerMonths, queryExplorerPosition } from './explorerStats.js'
+import {
+  allRatingBands,
+  ratingBandForElo,
+  ratingBandRangeLabel,
+} from '../src/lib/lichessExplorer.js'
 import { readExplorerQuery } from './lichessExplorerProxy.js'
 import {
   loadBlackDefenses,
@@ -96,7 +101,9 @@ export type ReviewPlyPayload = {
 export type ReviewRequest = {
   gameId: string
   playerColor: 'white' | 'black'
-  outcome: 'win' | 'loss' | 'draw'
+  outcome: 'win' | 'loss' | 'draw' | 'unknown'
+  /** This player's Elo from the PGN, when the game recorded one. */
+  playerElo?: number | null
   plies: ReviewPlyPayload[]
 }
 
@@ -241,7 +248,96 @@ function buildPrompt(body: ExplainRequest, openingBrief?: string): string {
     .join('\n')
 }
 
-function buildReviewPrompt(body: ReviewRequest): string {
+function percent(count: number, total: number): number {
+  if (total <= 0) return 0
+  return Math.round((count / total) * 100)
+}
+
+/**
+ * Win rates for the first two moves, from the explorer at this player's Elo band.
+ * The model is told to quote these numbers and not invent its own.
+ */
+async function reviewOpeningFacts(body: ReviewRequest): Promise<string> {
+  const first = body.plies.slice(0, 2)
+  const startFen = first[0]?.fen
+  if (!startFen) return 'Opening stats: unavailable. Do not invent a win rate.'
+
+  const chess = new Chess(startFen)
+  const uci: string[] = []
+  for (const ply of first) {
+    let played: { from: string; to: string; promotion?: string } | null = null
+    try {
+      played = chess.move(ply.san)
+    } catch {
+      played = null
+    }
+    if (!played) break
+    uci.push(`${played.from}${played.to}${played.promotion ?? ''}`)
+  }
+  if (uci.length === 0) return 'Opening stats: unavailable. Do not invent a win rate.'
+
+  const elo =
+    typeof body.playerElo === 'number' && Number.isFinite(body.playerElo)
+      ? Math.round(body.playerElo)
+      : null
+  const band = elo != null ? ratingBandForElo(elo) : null
+  const ratings = band ? [band] : allRatingBands()
+
+  let position: Awaited<ReturnType<typeof queryExplorerPosition>>
+  try {
+    position = await queryExplorerPosition(startFen, ratings, uci.join(','))
+  } catch {
+    return 'Opening stats: unavailable. Do not invent a win rate.'
+  }
+
+  const total = position.white + position.draws + position.black
+  if (total <= 0) {
+    return 'Opening stats: no games in this rating band. Do not invent a win rate.'
+  }
+
+  const youWins = body.playerColor === 'white' ? position.white : position.black
+  const oppWins = body.playerColor === 'white' ? position.black : position.white
+  const youPct = percent(youWins, total)
+  const drawPct = percent(position.draws, total)
+  const oppPct = percent(oppWins, total)
+  const edge =
+    youWins > oppWins
+      ? 'You win more often than the opponent from here, so this is a practical edge.'
+      : youWins < oppWins
+        ? 'The opponent wins more often from here.'
+        : 'Wins are about even from here.'
+
+  const playerPly = first.find((ply) => ply.by === 'player')
+  const evalText = playerPly?.playedEval?.trim()
+  const evalNumber = evalText ? Number(evalText) : NaN
+  const whiteIsBetter = Number.isFinite(evalNumber)
+    ? evalNumber > 0.15
+    : evalText?.startsWith('M') === true
+  const blackIsBetter = Number.isFinite(evalNumber)
+    ? evalNumber < -0.15
+    : evalText?.startsWith('-') === true
+  const engineDisadvantage =
+    (body.playerColor === 'white' && blackIsBetter) ||
+    (body.playerColor === 'black' && whiteIsBetter)
+  const engine = !evalText || evalText === '—'
+    ? 'Stockfish eval for these moves: not recorded. Do not claim the engine dislikes the opening.'
+    : engineDisadvantage
+      ? `Stockfish (White's point of view) is ${evalText} after your early move, a disadvantage for you. Mention that only as a contrast with the win rate. Do not call the opening a mistake.`
+      : `Stockfish (White's point of view) is ${evalText} after your early move. Do not criticize the opening.`
+
+  const name = position.opening?.name?.trim()
+  return [
+    'OPENING FACTS for the first two moves. Quote these numbers. Do not invent a percentage or an opening name.',
+    elo != null && band
+      ? `Rating band: ${ratingBandRangeLabel(band)} (player Elo ${elo}).`
+      : 'Rating band: all ratings combined (this game had no Elo).',
+    name ? `Opening name: ${name}.` : 'Opening name: none. Say “these first two moves”.',
+    `You win ${youPct}%, draws ${drawPct}%, opponent wins ${oppPct}% (${total} games). ${edge}`,
+    engine,
+  ].join('\n')
+}
+
+function buildReviewPrompt(body: ReviewRequest, openingFacts: string): string {
   const you = body.playerColor === 'white' ? 'White' : 'Black'
   const plyLines = body.plies.map((p) => {
     const who = p.by === 'player' ? 'YOU' : 'opp'
@@ -261,16 +357,22 @@ function buildReviewPrompt(body: ReviewRequest): string {
     'CRITICAL — the player cannot replay move numbers yet. Do NOT cite move numbers, SAN, or UCI',
     '(no “7.Qe1”, no “1.b3”, no “Nxg6”). Talk in ideas a beginner can picture on the board:',
     'pieces, files, king safety, pawn weaknesses, development, checks, captures, hanging pieces.',
-    'You may say “early on”, “in the opening”, “later”, “the finishing blow” — not ply indices.',
-    'Write a post-game recap:',
-    '1) One opening takeaway (development / center / king safety),',
-    '2) 2–4 turning ideas from tagged mistakes/blunders, described as what went wrong and the safer idea,',
-    '3) The main attacking or defensive theme if it showed up,',
-    '4) One habit to practice next (e.g. checks, captures, king attacks).',
-    '8–14 short sentences, plain English, no markdown headings or bullet lists.',
+    'You may say “early on”, “later”, “the finishing blow” — not ply indices.',
+    'Write at most 3 short sentences. Never write a fourth. Plain English. No markdown headings or bullet lists.',
+    'Sentence 1, say this first: the single biggest room for improvement, and the habit that builds it.',
+    'Use the worst tagged mistake or blunder after the opening. Describe what went wrong and the safer habit (checks, captures, hanging pieces, king safety).',
+    'Sentence 2: the first two moves only, using OPENING FACTS. Name the opening when one is given.',
+    'State the win rate for their rating band. If the facts say you win more often even though Stockfish shows a disadvantage, say the opening is solid for their rating and still gives a practical edge.',
+    'If the facts say the opponent wins more often, say that in the same sentence and move on. Do not explain why the opening is dubious.',
+    'Do not critique the opening. Do not spend sentence 2 on development, the center, or king safety.',
+    'Sentence 3 only if the habit still needs one plainer line. Otherwise stop after sentence 2.',
     'Reply with ONLY a single JSON object (no markdown fences): {"explanation":"..."}',
     '',
-    `Outcome: ${you} ${body.outcome}.`,
+    openingFacts,
+    '',
+    body.outcome === 'unknown'
+      ? 'Outcome: not recorded.'
+      : `Outcome: ${you} ${body.outcome}.`,
     `You played ${you}.`,
     `Plies: ${body.plies.length}`,
     '',
@@ -419,16 +521,45 @@ type ChessComArchiveGame = {
 }
 
 async function fetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'learn-chess-import/1.0',
-    },
-  })
-  if (!res.ok) {
-    throw new Error(`Fetch failed ${res.status} for ${url}`)
+  let last: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          // Chess.com rejects requests with no contact-style user agent.
+          'User-Agent': 'learn-chess/1.0 (game import)',
+        },
+        signal: AbortSignal.timeout(20000),
+      })
+      if (res.status === 429 || res.status >= 500) {
+        last = new Error(`Chess.com returned ${res.status}`)
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+        continue
+      }
+      if (!res.ok) {
+        throw new Error(`Chess.com returned ${res.status}`)
+      }
+      return await res.json()
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message.startsWith('Chess.com returned') &&
+        !err.message.includes('429') &&
+        !/Chess\.com returned 5\d\d/.test(err.message)
+      ) {
+        throw err
+      }
+      const message = err instanceof Error ? err.message : String(err)
+      const cause =
+        err instanceof Error && err.cause instanceof Error ? err.cause.message : ''
+      last = new Error(cause ? `${message}: ${cause}` : message)
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+      }
+    }
   }
-  return res.json()
+  throw last ?? new Error('Chess.com request failed')
 }
 
 type OpeningReplyMove = {
@@ -561,21 +692,48 @@ async function latestChessComPgn(username: string): Promise<{ pgn: string }> {
   if (!user || !/^[a-z0-9_-]{2,25}$/i.test(username.trim())) {
     throw new Error('Enter a chess.com username')
   }
-  for (const { yyyy, mm } of recentChessComMonths(6)) {
+
+  // The archive list is tiny. It names the real months this player has games,
+  // so we download one month instead of guessing and swallowing failures.
+  let listed: { archives?: string[] }
+  try {
+    listed = (await fetchJson(
+      `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/archives`,
+    )) as { archives?: string[] }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Chess.com request failed'
+    if (message.includes('404')) {
+      throw new Error('No chess.com player with that username')
+    }
+    throw new Error(`Could not reach chess.com (${message})`)
+  }
+
+  const months = listed.archives ?? []
+  if (months.length === 0) throw new Error('No chess.com games for that username')
+
+  let lastErr: Error | null = null
+  const stop = Math.max(0, months.length - 3)
+  for (let i = months.length - 1; i >= stop; i--) {
     try {
-      const archive = (await fetchJson(
-        `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/${yyyy}/${mm}`,
-      )) as { games?: Array<{ pgn?: string }> }
-      const games = archive.games ?? []
-      for (let i = games.length - 1; i >= 0; i--) {
-        const pgn = games[i]?.pgn
-        if (pgn?.trim()) return { pgn }
+      const archive = (await fetchJson(months[i])) as {
+        games?: Array<{ pgn?: string; end_time?: number }>
       }
-    } catch {
-      continue
+      let best: { pgn: string; endTime: number } | null = null
+      for (const game of archive.games ?? []) {
+        const pgn = game.pgn?.trim()
+        if (!pgn) continue
+        const endTime = game.end_time ?? 0
+        if (!best || endTime >= best.endTime) best = { pgn, endTime }
+      }
+      if (best) return { pgn: best.pgn }
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err))
     }
   }
-  throw new Error('No recent chess.com games for that username')
+
+  throw (
+    lastErr ?? new Error('No recent chess.com games for that username')
+  )
 }
 
 function chessComMonthFromUnix(sec: number): { yyyy: string; mm: string } {
@@ -1076,7 +1234,7 @@ export async function handleExplainApi(
             if (
               !body.gameId ||
               (body.playerColor !== 'white' && body.playerColor !== 'black') ||
-              !['win', 'loss', 'draw'].includes(body.outcome) ||
+              !['win', 'loss', 'draw', 'unknown'].includes(body.outcome) ||
               !Array.isArray(body.plies) ||
               body.plies.length === 0
             ) {
@@ -1101,8 +1259,9 @@ export async function handleExplainApi(
 
             send({ type: 'model', model: EXPLAIN_MODEL, gameId: body.gameId })
 
+            const openingFacts = await reviewOpeningFacts(body)
             const stream = streamCoachAsk(
-              buildReviewPrompt(body),
+              buildReviewPrompt(body, openingFacts),
               (text) => send({ type: 'delta', text }),
               (fullText) => {
                 send({ type: 'done', text: fullText })

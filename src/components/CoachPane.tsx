@@ -22,6 +22,8 @@ type Props = {
   /** Practice: always allow chat (wrong-move coaching). */
   drillMode?: boolean
   emptyHint?: string
+  /** Input only, until the user has started a thread. */
+  compact?: boolean
 }
 
 /** Chat-first coach UI — optional explain card + thread. */
@@ -37,6 +39,7 @@ export const CoachPane: FC<Props> = ({
   reviewMode = false,
   drillMode = false,
   emptyHint,
+  compact = false,
 }) => {
   const [draft, setDraft] = useState('')
   const threadRef = useRef<HTMLDivElement>(null)
@@ -57,6 +60,32 @@ export const CoachPane: FC<Props> = ({
     if (!q || !chatReady || chatBusy) return
     setDraft('')
     onSendChat(q)
+  }
+
+  if (compact) {
+    return (
+      <form className="coach-chat-form" onSubmit={submitChat}>
+        <input
+          type="text"
+          className="coach-chat-input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={
+            chatReady ? 'Ask the coach…' : 'Waiting for your turn…'
+          }
+          disabled={!chatReady || chatBusy}
+          aria-label="Question for the coach"
+          autoComplete="off"
+        />
+        <PixelButton
+          type="submit"
+          disabled={!chatReady || chatBusy || !draft.trim()}
+          aria-label="Send"
+        >
+          Send
+        </PixelButton>
+      </form>
+    )
   }
 
   return (

@@ -1,4 +1,5 @@
 import { Chess } from 'chess.js'
+import { listCardMonths, queryCardStore } from './explorerCards.js'
 import { getExplorerDb, listExplorerSources } from './explorerDb.js'
 import { loadOpeningBook, positionKey, type BookLine } from './openingBook.js'
 import {
@@ -50,10 +51,15 @@ function openingFor(index: NameIndex, uci: readonly string[]): ExplorerOpening |
 let monthColumn: Promise<boolean> | null = null
 
 /** The live file has no month until the next build. All-time queries skip the column. */
-/** Months attached for the explorer, earliest first. */
+/**
+ * Months the explorer can filter. A finished card file replaces that month.
+ * While any card file exists, the old SQLite file stays on disk and is not queried.
+ */
 export async function listExplorerMonths(): Promise<string[]> {
+  const cards = listCardMonths()
+  if (cards.length > 0) return cards
   const sources = await listExplorerSources()
-  return sources.map((source) => source.month)
+  return sources.map((source) => source.month).filter(Boolean).sort()
 }
 
 function explorerHasMonth(): Promise<boolean> {
@@ -123,7 +129,14 @@ export async function queryExplorerPosition(
   const key = positionKey(chess.fen())
   const selectedSpeeds = normalizeSpeeds(speeds)
   const selectedMonths = normalizeMonths(months)
-  const hasMonth = selectedMonths.length > 0 && (await explorerHasMonth())
+  const cardMonths = listCardMonths()
+  const cardMonthSet = new Set(cardMonths)
+  const queryCards =
+    selectedMonths.length > 0
+      ? selectedMonths.filter((month) => cardMonthSet.has(month))
+      : cardMonths
+  const hasMonth =
+    cardMonths.length === 0 && selectedMonths.length > 0 && (await explorerHasMonth())
   const bandPlace = ratings.map(() => '?').join(', ')
   const speedPlace = selectedSpeeds.map(() => '?').join(', ')
   const monthPlace = selectedMonths.map(() => '?').join(', ')
@@ -134,18 +147,27 @@ export async function queryExplorerPosition(
     ...selectedSpeeds,
     ...(hasMonth ? selectedMonths : []),
   ]
-  const sources = await listExplorerSources()
+  const sources = cardMonths.length > 0 ? [] : await listExplorerSources()
+  const sqliteSources = sources.filter((source) => !cardMonthSet.has(source.month))
   const active =
-    sources.length === 0
-      ? [{ month: '', db: getExplorerDb() }]
-      : selectedMonths.length > 0
-        ? sources.filter((source) => selectedMonths.includes(source.month))
-        : sources
+    selectedMonths.length > 0
+      ? sqliteSources.filter((source) => selectedMonths.includes(source.month))
+      : sqliteSources
   let moveRows: { uci: unknown; san: unknown; white: unknown; draws: unknown; black: unknown }[]
   let totals: { white: unknown; draws: unknown; black: unknown } | undefined
   let bookLines: BookLine[]
   try {
-    const [moveResults, positionResults, book] = await Promise.all([
+    const cardPromise =
+      queryCards.length > 0
+        ? queryCardStore({
+            fen,
+            play,
+            speeds: selectedSpeeds,
+            ratings,
+            months: queryCards,
+          })
+        : Promise.resolve(null)
+    const [moveResults, positionResults, book, card] = await Promise.all([
       Promise.all(
         active.map((source) =>
           source.db.execute({
@@ -183,6 +205,7 @@ export async function queryExplorerPosition(
         ),
       ),
       loadOpeningBook(),
+      cardPromise,
     ])
     moveRows = mergeMoveRows(moveResults.flatMap((result) => result.rows))
     const positionRows = positionResults.map((result) => result.rows[0])
@@ -190,6 +213,21 @@ export async function queryExplorerPosition(
       white: positionRows.reduce((sum, row) => sum + num(row?.white), 0),
       draws: positionRows.reduce((sum, row) => sum + num(row?.draws), 0),
       black: positionRows.reduce((sum, row) => sum + num(row?.black), 0),
+    }
+    if (card) {
+      totals.white += card.white
+      totals.draws += card.draws
+      totals.black += card.black
+      moveRows = mergeMoveRows([
+        ...moveRows,
+        ...card.moves.map((move) => ({
+          uci: move.uci,
+          san: move.san,
+          white: move.white,
+          draws: move.draws,
+          black: move.black,
+        })),
+      ])
     }
     bookLines = book.lines
   } catch (err) {

@@ -6,14 +6,24 @@
 
 export const LICHESS_EXPLORER_ENDPOINT = 'https://explorer.lichess.org/lichess'
 
-export const EXPLORER_SPEEDS = ['blitz', 'rapid', 'classical'] as const
+export const EXPLORER_SPEEDS = [
+  'ultraBullet',
+  'bullet',
+  'blitz',
+  'rapid',
+  'classical',
+  'correspondence',
+] as const
 
 export type ExplorerSpeed = (typeof EXPLORER_SPEEDS)[number]
 
 export const EXPLORER_SPEED_LABELS: Record<ExplorerSpeed, string> = {
+  ultraBullet: 'UltraBullet',
+  bullet: 'Bullet',
   blitz: 'Blitz',
   rapid: 'Rapid',
   classical: 'Classical',
+  correspondence: 'Correspondence',
 }
 
 /** `YYYY-MM`. Empty selection means every loaded month. */
@@ -75,6 +85,24 @@ export const DEFAULT_RATING_BAND: RatingBandId = '1600'
 
 export function isRatingBandId(value: string): value is RatingBandId {
   return RATING_BANDS.some((band) => band.id === value)
+}
+
+/** Band that contains this Elo. 366 → under 1000, 1450 → 1400–1599. */
+export function ratingBandForElo(elo: number): RatingBandId {
+  let chosen: RatingBandId = RATING_BANDS[0].id
+  for (const band of RATING_BANDS) {
+    if (elo >= Number(band.id)) chosen = band.id
+  }
+  return chosen
+}
+
+/** Plain range for a band, matching the “from this value up to the next” rule. */
+export function ratingBandRangeLabel(id: RatingBandId): string {
+  const index = RATING_BANDS.findIndex((band) => band.id === id)
+  const next = RATING_BANDS[index + 1]
+  if (!next) return `${id} and up`
+  if (id === '0') return 'under 1000'
+  return `${id}–${Number(next.id) - 1}`
 }
 
 export function isExplorerSpeed(value: string): value is ExplorerSpeed {
@@ -165,7 +193,7 @@ export type ExplorerQueryOptions = {
   /** Comma-separated UCI moves played from `fen`. Needed for opening names. */
   play?: string
   moves?: number
-  /** Blitz, rapid, and classical. Omitted means all three. */
+  /** Omitted means every speed the explorer knows. */
   speeds?: readonly ExplorerSpeed[]
   /** `YYYY-MM` values. Omitted or empty means every month. */
   months?: readonly ExplorerMonth[]
@@ -177,7 +205,7 @@ export function normalizeRatings(ratings: readonly RatingBandId[]): RatingBandId
   return RATING_BANDS.map((band) => band.id).filter((id) => selected.has(id))
 }
 
-/** Speeds in blitz, rapid, classical order. An empty pick falls back to all three. */
+/** Speeds in chip order. An empty pick falls back to every speed. */
 export function normalizeSpeeds(speeds: readonly string[]): ExplorerSpeed[] {
   const selected = new Set(speeds)
   const list = EXPLORER_SPEEDS.filter((speed) => selected.has(speed))

@@ -62,8 +62,9 @@ function projectBounds(
 
 /**
  * Refit the orbit camera so the board fills the free strip beside a right
- * drawer (pan to center, dolly in/out to fit). Uses the saved default angle
- * for this room when present; otherwise keeps the pre-panel viewing angle.
+ * drawer. The orbit hinge stays on the board center. The framing shift is a
+ * camera view offset (the picture slides in the frame; the hinge does not).
+ * `seatYaw` of π turns that same hinge so Black sits on the near side.
  * Restores the pre-panel view when the drawer closes.
  */
 export function PanelViewFit({
@@ -73,6 +74,7 @@ export function PanelViewFit({
   boardOrigin,
   sceneKey,
   roomId,
+  seatYaw = 0,
 }: {
   active: boolean
   panelWidth: number
@@ -81,6 +83,8 @@ export function PanelViewFit({
   /** Room / board / pieces — clears baseline so fit restarts from the new framing. */
   sceneKey: string
   roomId: string
+  /** Radians around the board center. π seats the camera on Black's side. */
+  seatYaw?: number
 }) {
   const { camera, controls, size, invalidate, gl } = useThree()
   const baseline = useRef<Baseline | null>(null)
@@ -103,6 +107,7 @@ export function PanelViewFit({
     }
 
     if (!active || panelWidth <= 0) {
+      cam.clearViewOffset()
       if (baseline.current && orbit) {
         cam.position.copy(baseline.current.position)
         orbit.target.copy(baseline.current.target)
@@ -151,10 +156,20 @@ export function PanelViewFit({
       ? new THREE.Vector3(...pref.target)
       : base.target
 
-    orbit.target.copy(angleTarget)
+    // Hinge stays on the board. Saved angles are the White-side seat;
+    // seatYaw turns that offset around the board (π = Black's side).
+    orbit.target.copy(origin)
     let offset = anglePos.clone().sub(angleTarget)
     if (offset.lengthSq() < 1e-8) {
       offset = base.position.clone().sub(base.target)
+    }
+    if (seatYaw) {
+      const c = Math.cos(seatYaw)
+      const s = Math.sin(seatYaw)
+      const x = offset.x * c - offset.z * s
+      const z = offset.x * s + offset.z * c
+      offset.x = x
+      offset.z = z
     }
 
     const minD = orbit.minDistance ?? 2
@@ -163,51 +178,31 @@ export function PanelViewFit({
       THREE.MathUtils.clamp(offset.length(), minD, maxD),
     )
 
+    cam.clearViewOffset()
+    const targetW = freeAvailW * 0.92
+    const targetH = freeAvailH * 0.9
     for (let i = 0; i < 18; i++) {
-      cam.position.copy(orbit.target).add(offset)
-      cam.lookAt(orbit.target)
+      cam.position.copy(origin).add(offset)
+      cam.lookAt(origin)
       cam.updateProjectionMatrix()
       cam.updateMatrixWorld(true)
 
       const b = projectBounds(cam, corners, fullW, fullH)
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion)
-      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion)
-      const dist = Math.max(offset.length(), 0.01)
-      const vFov = (cam.fov * Math.PI) / 180
-      const worldH = 2 * Math.tan(vFov / 2) * dist
-      const worldW = worldH * (fullW / fullH)
-
-      const dxPx = freeMidX - b.midX
-      const dyPx = freeMidY - b.midY
-      if (Math.abs(dxPx) >= 0.5) {
-        orbit.target.addScaledVector(right, -(dxPx / fullW) * worldW)
-      }
-      if (Math.abs(dyPx) >= 0.5) {
-        orbit.target.addScaledVector(up, (dyPx / fullH) * worldH)
-      }
-
-      cam.position.copy(orbit.target).add(offset)
-      cam.updateMatrixWorld(true)
-      const b2 = projectBounds(cam, corners, fullW, fullH)
-
-      const targetW = freeAvailW * 0.92
-      const targetH = freeAvailH * 0.9
-      const scaleW = b2.w / targetW
-      const scaleH = b2.h / targetH
-      const scale = Math.max(scaleW, scaleH)
-
-      let adjusted = Math.abs(dxPx) >= 0.5 || Math.abs(dyPx) >= 0.5
-      if (scale > 1.02 || scale < 0.96) {
-        offset.multiplyScalar(THREE.MathUtils.clamp(scale, 0.72, 1.55))
-        offset.setLength(THREE.MathUtils.clamp(offset.length(), minD, maxD))
-        adjusted = true
-      }
-
-      if (!adjusted) break
+      const scale = Math.max(b.w / targetW, b.h / targetH)
+      if (scale <= 1.02 && scale >= 0.96) break
+      offset.multiplyScalar(THREE.MathUtils.clamp(scale, 0.72, 1.55))
+      offset.setLength(THREE.MathUtils.clamp(offset.length(), minD, maxD))
     }
 
-    cam.position.copy(orbit.target).add(offset)
-    cam.lookAt(orbit.target)
+    cam.position.copy(origin).add(offset)
+    cam.lookAt(origin)
+    // Slide the picture so the board sits in the free strip. The orbit
+    // target stays `origin`, so a drag still spins around the board center.
+    const viewX = fullW / 2 - freeMidX
+    const viewY = fullH / 2 - freeMidY
+    if (Math.abs(viewX) >= 0.5 || Math.abs(viewY) >= 0.5) {
+      cam.setViewOffset(fullW, fullH, viewX, viewY, fullW, fullH)
+    }
     cam.updateProjectionMatrix()
     orbit.update()
     invalidate()
@@ -241,6 +236,7 @@ export function PanelViewFit({
     boardOrigin,
     sceneKey,
     roomId,
+    seatYaw,
     camera,
     controls,
     size.width,

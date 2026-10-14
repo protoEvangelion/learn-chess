@@ -427,34 +427,34 @@ export const PIECE_SETS: PieceSetTheme[] = [
     kind: 'flat',
     paths: {
       pawn: {
-        white: '/assets/pieces-2d/pawn-w.png',
-        black: '/assets/pieces-2d/pawn-b.png',
+        white: '/assets/pieces-2d/pawn-w.svg',
+        black: '/assets/pieces-2d/pawn-b.svg',
       },
       rook: {
-        white: '/assets/pieces-2d/rook-w.png',
-        black: '/assets/pieces-2d/rook-b.png',
+        white: '/assets/pieces-2d/rook-w.svg',
+        black: '/assets/pieces-2d/rook-b.svg',
       },
       knight: {
-        white: '/assets/pieces-2d/knight-w.png',
-        black: '/assets/pieces-2d/knight-b.png',
+        white: '/assets/pieces-2d/knight-w.svg',
+        black: '/assets/pieces-2d/knight-b.svg',
       },
       bishop: {
-        white: '/assets/pieces-2d/bishop-w.png',
-        black: '/assets/pieces-2d/bishop-b.png',
+        white: '/assets/pieces-2d/bishop-w.svg',
+        black: '/assets/pieces-2d/bishop-b.svg',
       },
       queen: {
-        white: '/assets/pieces-2d/queen-w.png',
-        black: '/assets/pieces-2d/queen-b.png',
+        white: '/assets/pieces-2d/queen-w.svg',
+        black: '/assets/pieces-2d/queen-b.svg',
       },
       king: {
-        white: '/assets/pieces-2d/king-w.png',
-        black: '/assets/pieces-2d/king-b.png',
+        white: '/assets/pieces-2d/king-w.svg',
+        black: '/assets/pieces-2d/king-b.svg',
       },
     },
     wrapperScale: 0.95,
     meshScale: 1,
     previewColor: '#e8dcc8',
-    preview: '/assets/pieces-2d/queen-w.png',
+    preview: '/assets/pieces-2d/queen-w.svg',
   },
 ]
 

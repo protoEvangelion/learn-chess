@@ -178,6 +178,8 @@ export class StockfishOpponent {
   private listeners = new Set<(line: string) => void>()
   private queue: Promise<unknown> = Promise.resolve()
 
+  constructor(private readonly hashMb = 64) {}
+
   async init(): Promise<void> {
     if (this.ready) return
     if (this.initPromise) return this.initPromise
@@ -202,7 +204,7 @@ export class StockfishOpponent {
       this.waitFor((l) => l === 'uciok', 20000)
         .then(async () => {
           this.send('setoption name Threads value 1')
-          this.send('setoption name Hash value 64')
+          this.send(`setoption name Hash value ${this.hashMb}`)
           this.send('isready')
           await this.waitFor((l) => l === 'readyok', 20000)
           this.ready = true
@@ -414,3 +416,5 @@ export class StockfishOpponent {
 }
 
 export const stockfishOpponent = new StockfishOpponent()
+/** Arrow / eval search. Kept off the opponent's engine so both can run at once. */
+export const stockfishAnalysis = new StockfishOpponent(32)

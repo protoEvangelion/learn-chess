@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 crossbeam-channel = "0.5"
+redb = "2.6"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rustc-hash = "2"
 shakmaty = "0.29"

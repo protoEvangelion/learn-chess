@@ -74,6 +74,8 @@ export type ReviewPly = {
   evalPawns?: number
   playedEval?: string
   bestSan?: string
+  /** UCI of the engine's best move from this ply's position. */
+  bestUci?: string
   bestEval?: string
 }
 
@@ -87,7 +89,7 @@ export type ReportSummary = {
   whiteCounts: SideCounts
   blackCounts: SideCounts
   /** Eval after each ply, White-pov pawns, for the graph. */
-  evalSeries: Array<{ ply: number; pawns: number }>
+  evalSeries: Array<{ ply: number; pawns: number; label?: string }>
 }
 
 export type AnalysisReport = {
@@ -233,11 +235,15 @@ export function buildReportSummary(plies: ReviewPly[]): ReportSummary {
   const blackCounts = emptyCounts()
   const whiteScores: number[] = []
   const blackScores: number[] = []
-  const evalSeries: Array<{ ply: number; pawns: number }> = []
+  const evalSeries: Array<{ ply: number; pawns: number; label?: string }> = []
 
   for (const ply of plies) {
     if (ply.evalPawns != null) {
-      evalSeries.push({ ply: ply.ply, pawns: ply.evalPawns })
+      evalSeries.push({
+        ply: ply.ply,
+        pawns: ply.evalPawns,
+        label: ply.playedEval,
+      })
     }
     if (!ply.tag) continue
     if (ply.color === 'white') {
@@ -324,6 +330,7 @@ export async function analyzeGamePlies(
       evalPawns: evalToPawns(after) ?? undefined,
       playedEval: after.evalLabel,
       bestSan: sanForUci(ply.fen, before.uci),
+      bestUci: before.uci,
       bestEval: before.evalLabel,
     })
   }

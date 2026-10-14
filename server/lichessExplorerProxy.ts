@@ -49,7 +49,7 @@ export function readExplorerQuery(
   )
   const speedParts = speedRaw.split(',').map((part) => part.trim()).filter(Boolean)
   if (speedParts.some((part) => !isExplorerSpeed(part))) {
-    return { error: 'speeds must be blitz, rapid, or classical' }
+    return { error: 'speeds must be ultraBullet, bullet, blitz, rapid, classical, or correspondence' }
   }
   const speeds = normalizeSpeeds(speedParts.length > 0 ? speedParts : EXPLORER_SPEEDS)
   const monthParts = monthRaw.split(',').map((part) => part.trim()).filter(Boolean)
