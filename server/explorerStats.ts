@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js'
 import { listCardMonths, queryCardStore } from './explorerCards.js'
+import { explorerOrigin, fetchRemoteMonths, fetchRemotePosition } from './explorerRemote.js'
 import { getExplorerDb, listExplorerSources } from './explorerDb.js'
 import { loadOpeningBook, positionKey, type BookLine } from './openingBook.js'
 import {
@@ -56,6 +57,7 @@ let monthColumn: Promise<boolean> | null = null
  * While any card file exists, the old SQLite file stays on disk and is not queried.
  */
 export async function listExplorerMonths(): Promise<string[]> {
+  if (explorerOrigin()) return fetchRemoteMonths()
   const cards = listCardMonths()
   if (cards.length > 0) return cards
   const sources = await listExplorerSources()
@@ -115,6 +117,9 @@ export async function queryExplorerPosition(
   speeds: readonly ExplorerSpeed[] = EXPLORER_SPEEDS,
   months: readonly ExplorerMonth[] = [],
 ): Promise<ExplorerPosition> {
+  if (explorerOrigin()) {
+    return fetchRemotePosition({ fen, ratings, play, speeds, months })
+  }
   const chess = new Chess(fen)
   const uciPath: string[] = []
   for (const step of play.split(',').filter(Boolean)) {
@@ -215,9 +220,9 @@ export async function queryExplorerPosition(
       black: positionRows.reduce((sum, row) => sum + num(row?.black), 0),
     }
     if (card) {
-      totals.white += card.white
-      totals.draws += card.draws
-      totals.black += card.black
+      totals.white = num(totals.white) + card.white
+      totals.draws = num(totals.draws) + card.draws
+      totals.black = num(totals.black) + card.black
       moveRows = mergeMoveRows([
         ...moveRows,
         ...card.moves.map((move) => ({

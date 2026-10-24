@@ -488,6 +488,13 @@ async function openingBriefFor(lineId?: string): Promise<string | undefined> {
   }
 }
 
+function explorerFailureStatus(message: string): number {
+  if (message.includes('busy')) return 503
+  if (message.includes('too long')) return 504
+  if (message.includes('offline')) return 502
+  return 500
+}
+
 function sendJson(
   res: import('http').ServerResponse,
   status: number,
@@ -1034,9 +1041,9 @@ export async function handleExplainApi(
             const months = await listExplorerMonths()
             sendJson(res, 200, { months })
           } catch (err) {
-            sendJson(res, 500, {
-              error: err instanceof Error ? err.message : 'explorer months failed',
-            })
+            const message =
+              err instanceof Error ? err.message : 'explorer months failed'
+            sendJson(res, explorerFailureStatus(message), { error: message })
           }
           return
         }
@@ -1073,7 +1080,7 @@ export async function handleExplainApi(
             if (controller.signal.aborted) return
             const message =
               err instanceof Error ? err.message : 'opening explorer failed'
-            sendJson(res, 500, { error: message })
+            sendJson(res, explorerFailureStatus(message), { error: message })
           } finally {
             req.off('close', onClose)
           }

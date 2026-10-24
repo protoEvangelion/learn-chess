@@ -253,8 +253,8 @@ export function parsePgnToImportedGame(
   const header = chess.header()
   const whiteName = header.White?.trim() || null
   const blackName = header.Black?.trim() || null
-  const whiteElo = readElo(header.WhiteElo)
-  const blackElo = readElo(header.BlackElo)
+  const whiteElo = readElo(header.WhiteElo ?? undefined)
+  const blackElo = readElo(header.BlackElo ?? undefined)
   const result = header.Result?.trim() || null
   const playerColor = resolvePlayerColor(whiteName, blackName, opts)
 

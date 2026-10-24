@@ -177,8 +177,11 @@ export class StockfishOpponent {
   private initPromise: Promise<void> | null = null
   private listeners = new Set<(line: string) => void>()
   private queue: Promise<unknown> = Promise.resolve()
+  private readonly hashMb: number
 
-  constructor(private readonly hashMb = 64) {}
+  constructor(hashMb = 64) {
+    this.hashMb = hashMb
+  }
 
   async init(): Promise<void> {
     if (this.ready) return

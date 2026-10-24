@@ -1,10 +1,8 @@
 /**
- * Opening explorer counts, shaped like the Lichess explorer response.
- * The browser calls `/api/opening-explorer`. The server sums `explorer_move`
- * and `explorer_position` in the local explorer database. Names come from the opening book.
+ * Opening explorer counts.
+ * The browser calls `/api/opening-explorer`. The server reads the month files
+ * on this machine. Names come from the opening book.
  */
-
-export const LICHESS_EXPLORER_ENDPOINT = 'https://explorer.lichess.org/lichess'
 
 export const EXPLORER_SPEEDS = [
   'ultraBullet',
@@ -237,14 +235,6 @@ export function lichessExplorerQuery(
   return parts.join('&')
 }
 
-export function lichessExplorerUrl(
-  fen: string,
-  ratings: readonly RatingBandId[],
-  options: ExplorerQueryOptions = {},
-): string {
-  return `${LICHESS_EXPLORER_ENDPOINT}?${lichessExplorerQuery(fen, ratings, options)}`
-}
-
 /** Same-origin request the Explore tab actually sends. */
 export function openingExplorerApiUrl(
   fen: string,
@@ -287,7 +277,7 @@ function parseMove(value: unknown): ExplorerMove | null {
 
 export function parseExplorerPosition(payload: unknown): ExplorerPosition {
   if (!payload || typeof payload !== 'object') {
-    throw new Error('Lichess explorer returned an unexpected response.')
+    throw new Error('The opening explorer returned an unexpected response.')
   }
   const body = payload as Record<string, unknown>
   const rawMoves = Array.isArray(body.moves) ? body.moves : []
@@ -426,7 +416,7 @@ export async function fetchLichessExplorer(
     })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err
-    throw new Error("Couldn't reach the Lichess explorer.")
+    throw new Error("Couldn't reach the opening explorer.")
   }
   let payload: unknown = null
   try {
@@ -441,7 +431,7 @@ export async function fetchLichessExplorer(
       'error' in payload &&
       typeof (payload as { error?: unknown }).error === 'string'
         ? (payload as { error: string }).error
-        : `Lichess explorer returned ${res.status}.`
+        : `The opening explorer returned ${res.status}.`
     throw new Error(message)
   }
   return parseExplorerPosition(payload)

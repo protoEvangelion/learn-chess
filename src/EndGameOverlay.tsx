@@ -129,20 +129,20 @@ export function EndGameOverlay({
         <BorderBeam
           className={[
             'endgame-beam',
-            starting || reviewBusy ? 'endgame-beam-loading' : '',
+            reviewBusy ? 'endgame-beam-loading' : '',
           ]
             .filter(Boolean)
             .join(' ')}
           size="md"
           colorVariant="ocean"
           theme="dark"
-          duration={starting || reviewBusy ? 1.1 : 2.4}
+          duration={reviewBusy ? 1.1 : 2.4}
           borderRadius={14}
-          strength={starting || reviewBusy ? 1.35 : 0.85}
-          brightness={starting || reviewBusy ? 2.8 : 1.6}
+          strength={reviewBusy ? 1.35 : 0.85}
+          brightness={reviewBusy ? 2.8 : 1.6}
           saturation={1.6}
           hueRange={50}
-          active={starting || reviewBusy}
+          active={reviewBusy}
         >
           {card}
         </BorderBeam>

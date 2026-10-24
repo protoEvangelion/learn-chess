@@ -7,7 +7,8 @@ let loaded = false
 
 /**
  * Vite only copies `VITE_*` into the dev server. Server secrets
- * (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `LICHESS_API_TOKEN`, `AI_GATEWAY_API_KEY`, `VERCEL_OIDC_TOKEN`) live in
+ * (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `AI_GATEWAY_API_KEY`, `VERCEL_OIDC_TOKEN`,
+ * `EXPLORER_ORIGIN`, `EXPLORER_GATEWAY_SECRET`) live in
  * `.env` / `.env.local` and must be applied to `process.env` here.
  * Existing process env wins, so Vercel-injected values are left alone.
  */

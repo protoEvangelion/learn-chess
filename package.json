@@ -10,7 +10,8 @@
     "seed:opening-cards": "tsx scripts/seed-opening-cards.ts",
     "build:explorer": "$HOME/.cargo/bin/cargo run --release --manifest-path explorer-rs/Cargo.toml --",
     "build:explorer:upload": "node --max-old-space-size=12288 scripts/build-explorer-month.mjs --pass upload",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "explorer:gateway": "tsx server/explorerGateway.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
