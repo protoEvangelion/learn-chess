@@ -1026,7 +1026,11 @@ export async function handleExplainApi(
           return
         }
 
-        if (url === '/api/explorer-months') {
+        const monthList =
+          url === '/api/explorer-months' ||
+          (url === '/api/opening-explorer' &&
+            new URL(req.url ?? '', 'http://localhost').searchParams.get('view') === 'months')
+        if (monthList) {
           if (req.method === 'OPTIONS') {
             res.statusCode = 204
             res.end()

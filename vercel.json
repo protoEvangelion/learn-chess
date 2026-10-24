@@ -4,6 +4,12 @@
       "maxDuration": 60
     }
   },
+  "rewrites": [
+    {
+      "source": "/api/explorer-months",
+      "destination": "/api/opening-explorer?view=months"
+    }
+  ],
   "crons": [
     {
       "path": "/api/explore-cache",
