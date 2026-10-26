@@ -43,6 +43,11 @@ import {
   whiteWinRate,
 } from '@/lib/lichessExplorer'
 import { loadExplorerRatings, loadExplorerSpeeds } from '@/lib/explorerFilterPrefs'
+import {
+  evalGraphHalfRange,
+  evalGraphY,
+  seriesPawnValue,
+} from '@/lib/evalGraphScale'
 
 type TabId = 'explore' | 'games'
 
@@ -222,7 +227,7 @@ function formatGraphEval(label: string | undefined, pawns: number) {
   return `${sign}${n.toFixed(2)}`
 }
 
-function EvalGraph({
+export function EvalGraph({
   series,
   scrubIndex,
   onScrubTo,
@@ -250,9 +255,12 @@ function EvalGraph({
 
   const points = [{ ply: 0, pawns: 0, label: '0.00' }, ...series]
   const plotH = h - padY * 2
+  // Plot the tooltip's number (the label), not a value chopped at ±5.
+  const plotted = points.map((s) => seriesPawnValue(s))
+  const halfRange = evalGraphHalfRange(plotted)
   const pts = points.map((s, i) => {
     const x = padX + (i / Math.max(1, points.length - 1)) * (w - padX * 2)
-    const y = padY + ((5 - s.pawns) / 10) * plotH
+    const y = evalGraphY(plotted[i], halfRange, padY, plotH)
     return { ...s, x, y }
   })
   const d = pts

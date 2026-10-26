@@ -3,6 +3,7 @@ import type { Color } from '@logic/pieces'
 import { isPawn } from '@logic/pieces/pawn'
 import type { HistoryItem } from '@/state/game'
 import { boardToFen, positionToSquare } from '@/lib/fenBridge'
+import { mateLeadPawns } from '@/lib/evalGraphScale'
 import {
   REVIEW_ANALYSIS,
   stockfishOpponent,
@@ -70,7 +71,7 @@ export type ReviewPly = {
   tag?: MoveQualityTag
   /** Centipawn loss for the side that moved (0 = best). */
   lossCp?: number
-  /** Eval after the move, White-pov pawns (mates clamped). */
+  /** Eval after the move, White-pov pawns (mates as a finite lead). */
   evalPawns?: number
   playedEval?: string
   bestSan?: string
@@ -124,10 +125,12 @@ function sideScore(line: BestMoveResult, side: Color): number | null {
 function evalToPawns(line: BestMoveResult | null): number | null {
   if (!line) return null
   if (line.whiteMate != null) {
-    return line.whiteMate > 0 ? 5 : -5
+    const lead = mateLeadPawns(line.whiteMate)
+    return line.whiteMate > 0 ? lead : -lead
   }
   if (line.whiteCp == null) return null
-  return Math.max(-5, Math.min(5, line.whiteCp / 100))
+  // Full pawn value. Chopping at ±5 made +5 and +10 draw on the same pixel.
+  return line.whiteCp / 100
 }
 
 function tagFromLossCp(
