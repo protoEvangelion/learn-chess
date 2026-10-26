@@ -1,8 +1,18 @@
+import { sideForUsername, type PlayerSide } from '@/lib/playerSide'
+
 const USER_RE = /^[a-z0-9_-]{2,25}$/i
+
+export type LatestChessComGame = {
+  pgn: string
+  /** Side the account played. Null only when neither name matched. */
+  playerColor: PlayerSide | null
+}
 
 type ArchiveGame = {
   pgn?: string
   end_time?: number
+  white?: { username?: string }
+  black?: { username?: string }
 }
 
 function usernameOrThrow(username: string): string {
@@ -26,7 +36,9 @@ function isNetworkError(err: unknown): boolean {
 }
 
 /** Latest finished game, read from chess.com's public API in the browser. */
-export async function fetchLatestChessComPgn(username: string): Promise<string> {
+export async function fetchLatestChessComPgn(
+  username: string,
+): Promise<LatestChessComGame> {
   const user = usernameOrThrow(username)
   const archivesRes = await fetch(
     `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/archives`,
@@ -54,14 +66,28 @@ export async function fetchLatestChessComPgn(username: string): Promise<string> 
         continue
       }
       const month = (await monthRes.json()) as { games?: ArchiveGame[] }
-      let best: { pgn: string; endTime: number } | null = null
+      let best: {
+        pgn: string
+        endTime: number
+        playerColor: PlayerSide | null
+      } | null = null
       for (const game of month.games ?? []) {
         const pgn = game.pgn?.trim()
         if (!pgn) continue
         const endTime = game.end_time ?? 0
-        if (!best || endTime >= best.endTime) best = { pgn, endTime }
+        if (!best || endTime >= best.endTime) {
+          best = {
+            pgn,
+            endTime,
+            playerColor: sideForUsername(
+              game.white?.username,
+              game.black?.username,
+              user,
+            ),
+          }
+        }
       }
-      if (best) return best.pgn
+      if (best) return { pgn: best.pgn, playerColor: best.playerColor }
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err))
     }
@@ -72,17 +98,23 @@ export async function fetchLatestChessComPgn(username: string): Promise<string> 
   )
 }
 
-async function readApiBody(res: Response): Promise<{ pgn?: string; error?: string }> {
+async function readApiBody(
+  res: Response,
+): Promise<{ pgn?: string; playerColor?: PlayerSide | null; error?: string }> {
   const text = await res.text()
   if (!text.trim()) throw new Error(`Import failed (${res.status})`)
   try {
-    return JSON.parse(text) as { pgn?: string; error?: string }
+    return JSON.parse(text) as {
+      pgn?: string
+      playerColor?: PlayerSide | null
+      error?: string
+    }
   } catch {
     throw new Error(`Import failed (${res.status})`)
   }
 }
 
-async function pgnFromOurApi(username: string): Promise<string> {
+async function pgnFromOurApi(username: string): Promise<LatestChessComGame> {
   const res = await fetch('/api/import-chesscom-latest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -92,7 +124,11 @@ async function pgnFromOurApi(username: string): Promise<string> {
   if (!res.ok || !data.pgn) {
     throw new Error(data.error || `Import failed (${res.status})`)
   }
-  return data.pgn
+  const playerColor =
+    data.playerColor === 'white' || data.playerColor === 'black'
+      ? data.playerColor
+      : null
+  return { pgn: data.pgn, playerColor }
 }
 
 /**
@@ -100,7 +136,9 @@ async function pgnFromOurApi(username: string): Promise<string> {
  * server could not get the game, read chess.com's public archive in the browser.
  * Chess.com allows that from a normal browser (Access-Control-Allow-Origin: *).
  */
-export async function loadLatestChessComPgn(username: string): Promise<string> {
+export async function loadLatestChessComPgn(
+  username: string,
+): Promise<LatestChessComGame> {
   usernameOrThrow(username)
   let last: Error | null = null
   for (let attempt = 0; attempt < 2; attempt++) {

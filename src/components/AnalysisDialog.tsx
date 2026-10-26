@@ -1039,7 +1039,7 @@ export const AnalysisDialog: FC<Props> = ({
               {onSendCoachChat && coachQuestionCount === 0 && (
                 <div className="analysis-coach-dock">
                   <CoachPane
-                    explanation={null}
+                    explanation={coachExplanation}
                     coachStatus={coachStatus}
                     coachError={coachError}
                     chatMessages={coachChat}

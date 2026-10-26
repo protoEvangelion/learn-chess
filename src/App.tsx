@@ -1386,7 +1386,13 @@ export default function App() {
       const q = question.trim()
       if (!q || coachChatStatus === 'loading') return
       const analysisCoach = analysisOpen && !!analysisReport
-      if (!coachReviewMode && !drillOpen && !analysisCoach && turn !== playerColor)
+      if (
+        !coachReviewMode &&
+        !drillOpen &&
+        !analysisCoach &&
+        !reviewImport &&
+        turn !== playerColor
+      )
         return
 
       coachChatAbortRef.current?.abort()
@@ -1448,9 +1454,13 @@ export default function App() {
             })),
             openingLineId: drillOpen && drillLine ? drillLine.id : undefined,
             openingCatalog,
-            reviewBrief: analysisCoach
+            reviewBrief: analysisReport
               ? formatReviewBriefForCoach(analysisReport)
-              : undefined,
+              : reviewImport
+                ? `You played as ${reviewImport.playerColor === 'white' ? 'White' : 'Black'}.`
+                : undefined,
+            playerColor:
+              analysisReport?.playerColor ?? reviewImport?.playerColor,
             messages: coachChat.slice(-8).map(({ role, text }) => ({
               role,
               text,
@@ -1531,6 +1541,7 @@ export default function App() {
       turn,
       drillOpen,
       drillLine,
+      reviewImport,
     ],
   )
 
@@ -1548,7 +1559,10 @@ export default function App() {
       const color =
         override?.playerColor ??
         override?.session?.playerColor ??
+        reviewImport?.playerColor ??
         playerColor
+      setPlayerColor(color)
+      localStorage.setItem(COLOR_KEY, color)
       const reviewFen =
         override?.fen ??
         override?.session?.finalFen ??
@@ -1832,27 +1846,42 @@ export default function App() {
 
     try {
       let pgn = raw
+      let knownColor: Color | null = null
       if (!raw) {
         setImportStatus('Fetching your latest chess.com game…')
-        pgn = await loadLatestChessComPgn(username)
+        const latest = await loadLatestChessComPgn(username)
+        pgn = latest.pgn
+        knownColor = latest.playerColor
       } else if (isChessComGameUrl(raw)) {
         setImportStatus('Fetching chess.com game…')
         const res = await fetch('/api/import-chesscom', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: raw }),
+          body: JSON.stringify({
+            url: raw,
+            username: username || undefined,
+          }),
         })
-        const data = (await res.json()) as { pgn?: string; error?: string }
+        const data = (await res.json()) as {
+          pgn?: string
+          playerColor?: Color | null
+          error?: string
+        }
         if (!res.ok || !data.pgn) {
           throw new Error(data.error || `Import failed (${res.status})`)
         }
         pgn = data.pgn
+        knownColor =
+          data.playerColor === 'white' || data.playerColor === 'black'
+            ? data.playerColor
+            : null
       }
 
       setImportStatus('Parsing PGN…')
       const imported = parsePgnToImportedGame(pgn, {
         preferColor: playerColor,
-        chessComUsername: chessComUsername.trim() || null,
+        chessComUsername: username || null,
+        playerColor: knownColor ?? undefined,
       })
       if (imported.history.length === 0) {
         throw new Error('PGN has no moves')
@@ -2326,7 +2355,10 @@ export default function App() {
       />
 
       <div className="layout">
-        <section className="stage">
+        <section
+          className="stage"
+          data-board-seat={reviewImport?.playerColor ?? playerColor}
+        >
           <header className="hud">
             <div className="hud-cluster">
               <div className="hud-brand">
@@ -2551,7 +2583,7 @@ export default function App() {
               boardOrigin={roomTheme.boardOffset ?? DEFAULT_CAMERA_TARGET}
               sceneKey={`${roomId}:${boardId}:${pieceSetId}:${drillOpen ? 'drill' : 'play'}`}
               roomId={roomId}
-              seatYaw={reviewImport && playerColor === 'black' ? Math.PI : 0}
+              seatYaw={reviewImport?.playerColor === 'black' ? Math.PI : 0}
             />
             <color attach="background" args={[roomTheme.background]} />
             <Environment files={roomTheme.hdr} environmentIntensity={0.6} />

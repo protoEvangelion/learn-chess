@@ -2,6 +2,11 @@ import { Chess } from 'chess.js'
 import { randomUUID } from 'node:crypto'
 import type { Plugin } from 'vite'
 import {
+  reviewCoachVoice,
+  sideForUsername,
+  type PlayerSide,
+} from '../src/lib/playerSide.js'
+import {
   EXPLAIN_MODEL,
   streamCoachAsk,
 } from './aiCoach.js'
@@ -83,6 +88,11 @@ export type CoachChatRequest = {
   openingCatalog?: OpeningCatalogEntry[]
   /** Short game-review context when chatting from the analysis report tab. */
   reviewBrief?: string
+  /**
+   * The human's side in an imported game. When set, "you" means this color,
+   * not whoever is about to move.
+   */
+  playerColor?: PlayerSide
   /** Recent visible chat turns; AI Gateway requests are stateless. */
   messages?: Array<{ role: 'user' | 'assistant'; text: string }>
 }
@@ -322,8 +332,8 @@ async function reviewOpeningFacts(body: ReviewRequest): Promise<string> {
   const engine = !evalText || evalText === '—'
     ? 'Stockfish eval for these moves: not recorded. Do not claim the engine dislikes the opening.'
     : engineDisadvantage
-      ? `Stockfish (White's point of view) is ${evalText} after your early move, a disadvantage for you. Mention that only as a contrast with the win rate. Do not call the opening a mistake.`
-      : `Stockfish (White's point of view) is ${evalText} after your early move. Do not criticize the opening.`
+      ? `Stockfish eval is ${evalText} from White's side after your early move. You are ${body.playerColor === 'white' ? 'White' : 'Black'}, so this is a disadvantage for you. Mention that only as a contrast with the win rate. Do not call the opening a mistake.`
+      : `Stockfish eval is ${evalText} from White's side after your early move. You are ${body.playerColor === 'white' ? 'White' : 'Black'}. Do not criticize the opening.`
 
   const name = position.opening?.name?.trim()
   return [
@@ -337,10 +347,10 @@ async function reviewOpeningFacts(body: ReviewRequest): Promise<string> {
   ].join('\n')
 }
 
-function buildReviewPrompt(body: ReviewRequest, openingFacts: string): string {
+export function buildReviewPrompt(body: ReviewRequest, openingFacts: string): string {
   const you = body.playerColor === 'white' ? 'White' : 'Black'
   const plyLines = body.plies.map((p) => {
-    const who = p.by === 'player' ? 'YOU' : 'opp'
+    const who = p.by === 'player' ? `YOU (${you})` : 'OPPONENT'
     const tag = p.tag ? ` [${p.tag}]` : ''
     const best =
       p.bestSan && p.tag && p.tag !== 'best'
@@ -352,6 +362,7 @@ function buildReviewPrompt(body: ReviewRequest, openingFacts: string): string {
 
   return [
     'You are a friendly chess coach helping a beginner–club player review a finished game.',
+    reviewCoachVoice(body.playerColor),
     `You are coaching ${you} (the human). Speak as “you”. Do not advise the opponent’s plans except to explain what you faced.`,
     'The move list and FENs below are ground truth for YOU only — do not invent what happened.',
     'CRITICAL — the player cannot replay move numbers yet. Do NOT cite move numbers, SAN, or UCI',
@@ -390,7 +401,7 @@ function formatOpeningCatalog(entries: OpeningCatalogEntry[]): string {
     .join('\n')
 }
 
-function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string {
+export function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string {
   const engineBlock =
     body.engineLines && body.engineLines.length > 0
       ? [
@@ -412,13 +423,23 @@ function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string 
         ].join('\n')
       : null
 
+  const human =
+    body.playerColor === 'white' || body.playerColor === 'black'
+      ? body.playerColor
+      : null
   const review =
-    body.reviewBrief?.trim()
+    body.reviewBrief?.trim() || human
       ? [
           '--- Game review context (post-game analysis) ---',
-          body.reviewBrief.trim(),
+          human ? reviewCoachVoice(human) : null,
+          human
+            ? 'The lines above override the side-to-move rule. The human’s color does not change when the opponent is to move.'
+            : null,
+          body.reviewBrief?.trim() || null,
           '',
-        ].join('\n')
+        ]
+          .filter(Boolean)
+          .join('\n')
       : null
 
   const recentMessages = (body.messages ?? [])
@@ -459,7 +480,11 @@ function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string 
     body.bestMove
       ? `ENGINE BEST MOVE (selected/option 1 focus): ${body.bestMove}`
       : null,
-    body.evalLabel ? `Engine eval: ${body.evalLabel}` : null,
+    body.evalLabel
+      ? human
+        ? `Engine eval ${body.evalLabel} is from White's side. The human is ${human === 'white' ? 'White' : 'Black'}.`
+        : `Engine eval: ${body.evalLabel}`
+      : null,
     engineBlock,
     body.explanation
       ? [
@@ -508,6 +533,8 @@ function sendJson(
 const CHESSCOM_URL_RE =
   /(?:https?:\/\/)?(?:www\.)?chess\.com\/game\/(live|daily)\/(\d+)/i
 
+type ChessComSeat = { username?: string; color?: string }
+
 type ChessComCallbackPayload = {
   game?: Record<string, unknown> & {
     pgnHeaders?: Record<string, string>
@@ -517,8 +544,8 @@ type ChessComCallbackPayload = {
     black?: { username?: string }
   }
   players?: {
-    top?: { username?: string }
-    bottom?: { username?: string }
+    top?: ChessComSeat
+    bottom?: ChessComSeat
   }
 }
 
@@ -694,7 +721,10 @@ async function openingRepliesFor(
   return { scanned: games.length, reached, moves }
 }
 
-async function latestChessComPgn(username: string): Promise<{ pgn: string }> {
+async function latestChessComPgn(username: string): Promise<{
+  pgn: string
+  playerColor: PlayerSide | null
+}> {
   const user = username.trim().toLowerCase()
   if (!user || !/^[a-z0-9_-]{2,25}$/i.test(username.trim())) {
     throw new Error('Enter a chess.com username')
@@ -723,16 +753,36 @@ async function latestChessComPgn(username: string): Promise<{ pgn: string }> {
   for (let i = months.length - 1; i >= stop; i--) {
     try {
       const archive = (await fetchJson(months[i])) as {
-        games?: Array<{ pgn?: string; end_time?: number }>
+        games?: Array<{
+          pgn?: string
+          end_time?: number
+          white?: { username?: string }
+          black?: { username?: string }
+        }>
       }
-      let best: { pgn: string; endTime: number } | null = null
+      let best: {
+        pgn: string
+        endTime: number
+        playerColor: PlayerSide | null
+      } | null = null
       for (const game of archive.games ?? []) {
         const pgn = game.pgn?.trim()
         if (!pgn) continue
         const endTime = game.end_time ?? 0
-        if (!best || endTime >= best.endTime) best = { pgn, endTime }
+        if (!best || endTime >= best.endTime) {
+          best = {
+            pgn,
+            endTime,
+            // Account usernames, not the PGN text. This is the side they played.
+            playerColor: sideForUsername(
+              game.white?.username,
+              game.black?.username,
+              user,
+            ),
+          }
+        }
       }
-      if (best) return { pgn: best.pgn }
+      if (best) return { pgn: best.pgn, playerColor: best.playerColor }
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err))
     }
@@ -751,10 +801,36 @@ function chessComMonthFromUnix(sec: number): { yyyy: string; mm: string } {
   }
 }
 
-async function importChessComPgn(urlOrId: string): Promise<{
+function seatUsername(
+  payload: ChessComCallbackPayload,
+  color: PlayerSide,
+): string | null {
+  const seats = [payload.players?.top, payload.players?.bottom]
+  for (const seat of seats) {
+    if (seat?.color === color && seat.username?.trim()) return seat.username.trim()
+  }
+  const header =
+    color === 'white'
+      ? payload.game?.pgnHeaders?.White
+      : payload.game?.pgnHeaders?.Black
+  if (typeof header === 'string' && header.trim() && header.trim() !== '?') {
+    return header.trim()
+  }
+  const direct =
+    color === 'white'
+      ? payload.game?.white?.username
+      : payload.game?.black?.username
+  return direct?.trim() || null
+}
+
+async function importChessComPgn(
+  urlOrId: string,
+  username?: string,
+): Promise<{
   pgn: string
   white: string | null
   black: string | null
+  playerColor: PlayerSide | null
   gameUrl: string
 }> {
   const m = urlOrId.trim().match(CHESSCOM_URL_RE)
@@ -773,16 +849,9 @@ async function importChessComPgn(urlOrId: string): Promise<{
   const game = raw.game
   if (!game) throw new Error('chess.com returned no game data')
 
-  const white =
-    game.white?.username ??
-    raw.players?.bottom?.username ??
-    game.pgnHeaders?.White ??
-    null
-  const black =
-    game.black?.username ??
-    raw.players?.top?.username ??
-    game.pgnHeaders?.Black ??
-    null
+  // `players.bottom` is whoever chess.com drew at the bottom, not always White.
+  const white = seatUsername(raw, 'white')
+  const black = seatUsername(raw, 'black')
 
   let endSec =
     typeof game.end_time === 'number'
@@ -841,8 +910,9 @@ async function importChessComPgn(urlOrId: string): Promise<{
 
   return {
     pgn,
-    white: white?.trim() || null,
-    black: black?.trim() || null,
+    white,
+    black,
+    playerColor: sideForUsername(white, black, username),
     gameUrl,
   }
 }
@@ -1104,12 +1174,15 @@ export async function handleExplainApi(
           }
           try {
             const rawBody = await readBody(req)
-            const body = JSON.parse(rawBody || '{}') as { url?: string }
+            const body = JSON.parse(rawBody || '{}') as {
+              url?: string
+              username?: string
+            }
             if (!body.url?.trim()) {
               sendJson(res, 400, { error: 'url required' })
               return
             }
-            const result = await importChessComPgn(body.url)
+            const result = await importChessComPgn(body.url, body.username)
             sendJson(res, 200, result)
           } catch (err) {
             sendJson(res, 502, {

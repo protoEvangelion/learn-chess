@@ -4,6 +4,7 @@
  */
 import { parsePgnToImportedGame, positionAtPly } from '../src/lib/pgnImport'
 import { arrowsForReplies } from '../src/lib/replyArrows'
+import { reviewCoachVoice, sideForUsername } from '../src/lib/playerSide'
 
 let failed = 0
 function assert(cond: boolean, msg: string) {
@@ -40,6 +41,45 @@ const scholars = `[Event "Scholar"]
 }
 
 {
+  const g = parsePgnToImportedGame(scholars, {
+    chessComUsername: 'bob',
+    preferColor: 'white',
+  })
+  assert(g.playerColor === 'black', 'username beats prefer white')
+  assert(g.pgn.includes('[PlayerColor "black"]'), 'color saved on the pgn')
+  const again = parsePgnToImportedGame(g.pgn, { preferColor: 'white' })
+  assert(again.playerColor === 'black', 'saved color survives reload without username')
+}
+
+{
+  const titled = scholars.replace('[Black "Bob"]', '[Black "GM Bob"]')
+  const g = parsePgnToImportedGame(titled, {
+    chessComUsername: 'bob',
+    preferColor: 'white',
+  })
+  assert(g.playerColor === 'black', 'title prefix still matches bob')
+}
+
+{
+  const g = parsePgnToImportedGame(scholars, { playerColor: 'black' })
+  assert(g.playerColor === 'black', 'account color is used as-is')
+}
+
+{
+  assert(sideForUsername('Alice', 'Hikaru', 'hikaru') === 'black', 'archive side black')
+  assert(sideForUsername('Hikaru', 'Alice', 'hikaru') === 'white', 'archive side white')
+  assert(sideForUsername('Alice', 'Bob', 'hikaru') === null, 'unknown side is not white')
+  const voice = reviewCoachVoice('black')
+  assert(voice.includes('The human played Black'), 'coach voice names black')
+  assert(
+    voice.includes('Do not talk as if the human played White'),
+    'coach voice forbids white',
+  )
+  const whiteVoice = reviewCoachVoice('white')
+  assert(whiteVoice.includes('The human played White'), 'coach voice names white')
+}
+
+{
   try {
     parsePgnToImportedGame('not a pgn')
     assert(false, 'should throw on junk')
@@ -68,6 +108,59 @@ const scholars = `[Event "Scholar"]
     arrowsForReplies(['Na4'], [{ san: 'e5', count: 1 }]).length === 0,
     'illegal prefix does not throw',
   )
+}
+
+{
+  const { buildChatPrompt, buildReviewPrompt } = await import('../server/explainApi.ts')
+  const chat = buildChatPrompt({
+    gameId: 'g',
+    fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    question: 'What should I do?',
+    playerColor: 'black',
+    reviewBrief: 'You played as Black.',
+  })
+  assert(chat.includes('The human played Black'), 'chat prompt speaks as black')
+  assert(
+    chat.includes('Do not talk as if the human played White'),
+    'chat prompt forbids white',
+  )
+  const review = buildReviewPrompt(
+    {
+      gameId: 'g',
+      playerColor: 'black',
+      outcome: 'loss',
+      plies: [
+        {
+          ply: 1,
+          fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+          san: 'e4',
+          by: 'opponent',
+        },
+      ],
+    },
+    'Opening stats: unavailable.',
+  )
+  assert(review.includes('YOU (Black)') === false, 'white move is not YOU when human is black')
+  assert(review.includes('OPPONENT e4'), 'e4 is the opponent for black')
+  assert(review.includes('The human played Black'), 'review prompt names black')
+  const whiteReview = buildReviewPrompt(
+    {
+      gameId: 'g',
+      playerColor: 'white',
+      outcome: 'win',
+      plies: [
+        {
+          ply: 1,
+          fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+          san: 'e4',
+          by: 'player',
+        },
+      ],
+    },
+    'Opening stats: unavailable.',
+  )
+  assert(whiteReview.includes('YOU (White) e4'), 'white move is YOU for white')
+  assert(whiteReview.includes('The human played White'), 'review prompt names white')
 }
 
 if (failed) {

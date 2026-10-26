@@ -12,6 +12,11 @@ import {
   START_FEN,
 } from '@/lib/fenBridge'
 import type { HistoryItem } from '@/state/game'
+import {
+  readPlayerColorHeader,
+  sideForUsername,
+  type PlayerSide,
+} from '@/lib/playerSide'
 
 export type ImportedGame = {
   history: HistoryItem[]
@@ -31,7 +36,12 @@ export type ImportedGame = {
 }
 
 export type ParsePgnOptions = {
-  /** Fallback when no chess.com username match. Default white. */
+  /**
+   * Side already known from the chess.com account (archive white/black
+   * username) or a previous save. Wins over name matching.
+   */
+  playerColor?: PlayerSide
+  /** Last resort when the game does not say who the human was. */
   preferColor?: Color
   /** If set and matches White/Black header, that side becomes the player. */
   chessComUsername?: string | null
@@ -71,16 +81,47 @@ function moveTypeFromFlags(move: ChessMove): MoveTypes {
   return 'valid'
 }
 
+function headerValue(pgn: string, key: string): string | null {
+  const match = pgn.match(new RegExp(`\\[${key}\\s+"([^"]*)"\\]`, 'i'))
+  const value = match?.[1]?.trim()
+  if (!value || value === '?') return null
+  return value
+}
+
+function namedHeader(
+  fromChess: string | null | undefined,
+  raw: string | null,
+): string | null {
+  const value = fromChess?.trim()
+  if (value && value !== '?') return value
+  return raw
+}
+
+/**
+ * Who the human is in this game.
+ * Saved header and the account side come first. A username match is next.
+ * White is only the fallback when the game never says — not a guess that
+ * overrides Black.
+ */
 function resolvePlayerColor(
+  pgn: string,
   whiteName: string | null,
   blackName: string | null,
   opts?: ParsePgnOptions,
 ): Color {
-  const user = opts?.chessComUsername?.trim().toLowerCase()
-  if (user) {
-    if (whiteName?.toLowerCase() === user) return 'white'
-    if (blackName?.toLowerCase() === user) return 'black'
+  if (opts?.playerColor === 'white' || opts?.playerColor === 'black') {
+    return opts.playerColor
   }
+  const saved = readPlayerColorHeader(pgn)
+  if (saved) return saved
+  const matched =
+    sideForUsername(whiteName, blackName, opts?.chessComUsername) ??
+    sideForUsername(
+      headerValue(pgn, 'WhiteUrl'),
+      headerValue(pgn, 'BlackUrl'),
+      opts?.chessComUsername,
+    )
+  if (matched) return matched
   return opts?.preferColor ?? 'white'
 }
 
@@ -176,7 +217,7 @@ export function historyToPgn(history: HistoryItem[]): string {
   return stripPlaceholderHeaders(chess.pgn({ maxWidth: 0 }))
 }
 
-function readElo(value: string | undefined): number | null {
+function readElo(value: string | null | undefined): number | null {
   if (!value) return null
   const elo = Number(value)
   if (!Number.isFinite(elo) || elo <= 0) return null
@@ -195,6 +236,7 @@ function pgnWithNames(
   whiteName: string | null,
   blackName: string | null,
   result: string | null,
+  playerColor: Color,
 ): string {
   const body = historyToPgn(history)
   if (!body) return ''
@@ -207,6 +249,8 @@ function pgnWithNames(
   if (whiteName) chess.setHeader('White', whiteName)
   if (blackName) chess.setHeader('Black', blackName)
   if (result) chess.setHeader('Result', result)
+  // Survives the URL. A reload reads this instead of assuming White.
+  chess.setHeader('PlayerColor', playerColor)
   return stripPlaceholderHeaders(chess.pgn({ maxWidth: 0 }))
 }
 
@@ -251,12 +295,16 @@ export function parsePgnToImportedGame(
   }
 
   const header = chess.header()
-  const whiteName = header.White?.trim() || null
-  const blackName = header.Black?.trim() || null
-  const whiteElo = readElo(header.WhiteElo ?? undefined)
-  const blackElo = readElo(header.BlackElo ?? undefined)
-  const result = header.Result?.trim() || null
-  const playerColor = resolvePlayerColor(whiteName, blackName, opts)
+  const whiteName = namedHeader(header.White, headerValue(trimmed, 'White'))
+  const blackName = namedHeader(header.Black, headerValue(trimmed, 'Black'))
+  const whiteElo = readElo(
+    header.WhiteElo ?? headerValue(trimmed, 'WhiteElo') ?? undefined,
+  )
+  const blackElo = readElo(
+    header.BlackElo ?? headerValue(trimmed, 'BlackElo') ?? undefined,
+  )
+  const result = header.Result?.trim() || headerValue(trimmed, 'Result')
+  const playerColor = resolvePlayerColor(trimmed, whiteName, blackName, opts)
 
   const verbose = chess.history({ verbose: true })
   chess.reset()
@@ -335,7 +383,7 @@ export function parsePgnToImportedGame(
     whiteElo,
     blackElo,
     result,
-    pgn: pgnWithNames(history, whiteName, blackName, result) || trimmed,
+    pgn: pgnWithNames(history, whiteName, blackName, result, playerColor) || trimmed,
   }
 }
 

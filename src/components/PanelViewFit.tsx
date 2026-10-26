@@ -28,6 +28,17 @@ function boardCorners(origin: THREE.Vector3): THREE.Vector3[] {
   return pts
 }
 
+function seatOffset(offset: THREE.Vector3, seatYaw: number) {
+  if (!seatYaw) return offset
+  const c = Math.cos(seatYaw)
+  const s = Math.sin(seatYaw)
+  const x = offset.x * c - offset.z * s
+  const z = offset.x * s + offset.z * c
+  offset.x = x
+  offset.z = z
+  return offset
+}
+
 function projectBounds(
   cam: THREE.Camera,
   points: THREE.Vector3[],
@@ -108,17 +119,44 @@ export function PanelViewFit({
 
     if (!active || panelWidth <= 0) {
       cam.clearViewOffset()
-      if (baseline.current && orbit) {
-        cam.position.copy(baseline.current.position)
-        orbit.target.copy(baseline.current.target)
+      if (seatYaw && orbit?.target) {
+        // Keep the White-side snapshot and sit on Black's side. Closing the
+        // drawer must not spin an imported Black game back to White.
+        if (!baseline.current) {
+          const pref = loadDefaultCamera(roomId)
+          baseline.current = {
+            position: pref
+              ? new THREE.Vector3(...pref.position)
+              : cam.position.clone(),
+            target: pref
+              ? new THREE.Vector3(...pref.target)
+              : orbit.target.clone(),
+          }
+        }
+        const origin = new THREE.Vector3(...boardOrigin)
+        const offset = seatOffset(
+          baseline.current.position.clone().sub(baseline.current.target),
+          seatYaw,
+        )
+        orbit.target.copy(origin)
+        cam.position.copy(origin).add(offset)
+        cam.lookAt(origin)
         orbit.update()
+      } else {
+        if (baseline.current && orbit) {
+          cam.position.copy(baseline.current.position)
+          orbit.target.copy(baseline.current.target)
+          orbit.update()
+        }
+        baseline.current = null
       }
-      baseline.current = null
       cam.updateProjectionMatrix()
       invalidate()
       ;(window as unknown as { __boardFit?: unknown }).__boardFit = {
         active: false,
         ok: true,
+        seatYaw,
+        cameraZ: cam.position.z,
       }
       return
     }
@@ -163,14 +201,7 @@ export function PanelViewFit({
     if (offset.lengthSq() < 1e-8) {
       offset = base.position.clone().sub(base.target)
     }
-    if (seatYaw) {
-      const c = Math.cos(seatYaw)
-      const s = Math.sin(seatYaw)
-      const x = offset.x * c - offset.z * s
-      const z = offset.x * s + offset.z * c
-      offset.x = x
-      offset.z = z
-    }
+    seatOffset(offset, seatYaw)
 
     const minD = orbit.minDistance ?? 2
     const maxD = orbit.maxDistance ?? 80
@@ -215,6 +246,8 @@ export function PanelViewFit({
       Math.abs(final.midX - freeMidX) < 48
     ;(window as unknown as { __boardFit?: unknown }).__boardFit = {
       active: true,
+      seatYaw,
+      cameraZ: cam.position.z,
       panelWidth: pw,
       freeLeft,
       freeRight,
