@@ -93,6 +93,62 @@ async function ensureSchema() {
   await schemaReady
 }
 
+function caroFamilyDetails(id: string) {
+  const plans: Record<string, { themes: string[]; whitePlan: string; blackPlan: string }> = {
+    'caro-loose-bishop': {
+      themes: ['loose bishop', 'pin on the knight', 'material grab'],
+      whitePlan: 'Develop the bishop to c4 early, then try to open the center with d3.',
+      blackPlan: 'Take the bishop with …dxc4 and pin the knight with …Bg4.',
+    },
+    'caro-bishop-grab': {
+      themes: ['Hillbilly', 'loose piece', 'queen recapture'],
+      whitePlan: 'Play Bc4, trade on d5, and capture the d5-pawn with the bishop.',
+      blackPlan: 'Hit back with …d5 and …cxd5, then take the bishop with the queen.',
+    },
+    'caro-queen-raid': {
+      themes: ['early queen', 'central counter', 'recapture'],
+      whitePlan: 'Bring the queen out to h5 and trade on d5.',
+      blackPlan: 'Ignore the queen, play …d5, and recapture with the c-pawn.',
+    },
+    'caro-hillbilly': {
+      themes: ['Hillbilly', 'bishop retreat', 'pin on the knight'],
+      whitePlan: 'Play Bc4, trade on d5, drop the bishop to b3, and build with d4.',
+      blackPlan: 'Recapture on d5, develop the knight, and pin with …Bg4.',
+    },
+    'caro-advance-pin': {
+      themes: ['d4 attack', 'pin on the knight', 'f5 outpost'],
+      whitePlan: 'Push e5, hold d4, and try to break the pin on the f3-knight.',
+      blackPlan: 'Chip d4 with …c5, pin the knight, and plant a knight on f5.',
+    },
+    'caro-exchange': {
+      themes: ['open c-file', 'knight development', 'pin on the knight'],
+      whitePlan: 'Trade on d5, develop Nf3 and Nc3, and live with the pin.',
+      blackPlan: 'Recapture with the c-pawn, develop …Nc6, and pin the knight with …Bg4.',
+    },
+    'caro-classical': {
+      themes: ['open e-file', 'knight trade', 'central pawn duo'],
+      whitePlan: 'Play Nc3, recapture on e4, and trade knights on f6.',
+      blackPlan: 'Take on e4, play …Nf6, and recapture with the e-pawn.',
+    },
+    'caro-fantasy': {
+      themes: ['weakened diagonal', 'central strike', 'queen pressure'],
+      whitePlan: 'Play f3 and take on e5, opening the diagonal toward the king.',
+      blackPlan: 'Skip the pawn grab. Play …e5 and bring the queen to b6.',
+    },
+    'caro-modern': {
+      themes: ['knight on d2', 'Classical transposition', 'open e-file'],
+      whitePlan: 'Develop the knight to d2, recapture on e4, and trade on f6.',
+      blackPlan: 'Take on e4 and meet the Classical board with …Nf6 and …exf6.',
+    },
+  }
+  const plan = plans[id] ?? {
+    themes: ['solid center', 'development', 'king safety'],
+    whitePlan: 'Claim the center and develop before opening the position.',
+    blackPlan: 'Hold the center with …c6 and …d5, then develop the minor pieces.',
+  }
+  return { label: 'Caro-Kann', ...plan }
+}
+
 function familyDetails(line: OpeningLineInput) {
   if (PHILIDOR_IDS.has(line.id)) {
     return {
@@ -104,15 +160,8 @@ function familyDetails(line: OpeningLineInput) {
         'Black reinforces e5 with …d6, develops compactly, and tries to blunt the d-file and diagonal pressure.',
     }
   }
-  if (line.id === 'caro-advance-pin') {
-    return {
-      label: 'Caro-Kann',
-      themes: ['d4 attack', 'pin on the knight', 'f5 outpost'],
-      whitePlan:
-        'Push e5, hold d4, and try to break the pin on the f3-knight.',
-      blackPlan:
-        'Chip d4 with …c5, pin the knight, and plant a knight on f5.',
-    }
+  if (line.id.startsWith('caro-')) {
+    return caroFamilyDetails(line.id)
   }
   if (TWO_KNIGHTS_IDS.has(line.id)) {
     return {
@@ -139,7 +188,7 @@ function curateCard(line: OpeningLineInput): StoredCard {
   const tactical = /trap|mate|bait|fork|pin|skewer|sacrifice|hunt|attack/i.test(
     `${line.name} ${line.summary}`,
   )
-  const playerStep = line.id === 'caro-advance-pin' ? 1 : 0
+  const playerStep = line.id.startsWith('caro-') ? 1 : 0
   const hinted = line.moves
     .filter((_, index) => index % 2 === playerStep)
     .map((move) => move.hint?.trim())
