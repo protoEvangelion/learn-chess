@@ -76,19 +76,32 @@ publish_url() {
   local url="$1"
   printf '%s\n' "$url" >"$CFG/origin"
   chmod 600 "$CFG/origin"
-  local secret=""
-  secret=$(awk -F= '/^EXPLORER_GATEWAY_SECRET=/{print substr($0, index($0,"=")+1)}' "$CFG/explorer.env")
-  if [ -z "$secret" ]; then
-    echo "gateway secret is missing"
-    return
+  local repo="$CFG/origin-publish"
+  if [ ! -d "$repo/.git" ]; then
+    rm -rf "$repo"
+    git clone --depth 1 git@github.com:protoEvangelion/learn-chess.git "$repo" || {
+      echo "could not clone the address repo"
+      return
+    }
   fi
-  local code
-  code=$(curl -sS -o "$CFG/edge-update.json" -w '%{http_code}' \
-    -X POST 'https://learn-chess-fawn.vercel.app/api/opening-explorer' \
-    -H "Authorization: Bearer ${secret}" \
-    -H 'Content-Type: application/json' \
-    --data "{\"origin\":\"${url}\"}")
-  echo "address update ${code} host ${url#https://}"
+  (
+    cd "$repo" || exit 1
+    git fetch --depth 1 origin main
+    git reset --hard origin/main
+    printf '%s\n' "$url" >explorer-origin.url
+    git add explorer-origin.url
+    if git diff --cached --quiet; then
+      echo "address unchanged"
+      exit 0
+    fi
+    export GIT_AUTHOR_NAME='Cursor Agent'
+    export GIT_AUTHOR_EMAIL='cursoragent@cursor.com'
+    export GIT_COMMITTER_NAME='Cursor Agent'
+    export GIT_COMMITTER_EMAIL='cursoragent@cursor.com'
+    git commit -m "Publish the explorer tunnel address."
+    git push origin HEAD:main
+  )
+  echo "address pushed host ${url#https://}"
 }
 
 wait_url() {

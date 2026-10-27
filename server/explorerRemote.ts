@@ -14,6 +14,8 @@ import {
  * can publish a new address without another deploy.
  */
 const ORIGIN_CACHE_MS = 15_000
+const PUBLISHED_ORIGIN_URL =
+  'https://raw.githubusercontent.com/protoEvangelion/learn-chess/main/explorer-origin.url'
 let cachedOrigin: { value: string; at: number } | null = null
 
 export function explorerUsesRemote(): boolean {
@@ -57,11 +59,32 @@ async function readEdgeOrigin(): Promise<string | null> {
   }
 }
 
+async function readPublishedOrigin(): Promise<string | null> {
+  if (cachedOrigin && Date.now() - cachedOrigin.at < ORIGIN_CACHE_MS) return cachedOrigin.value
+  try {
+    const res = await fetch(`${PUBLISHED_ORIGIN_URL}?t=${Date.now()}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3_000),
+    })
+    if (!res.ok) return cachedOrigin?.value ?? null
+    const origin = acceptOrigin(await res.text())
+    if (!origin) return cachedOrigin?.value ?? null
+    cachedOrigin = { value: origin, at: Date.now() }
+    return origin
+  } catch {
+    return cachedOrigin?.value ?? null
+  }
+}
+
 async function resolveOrigin(): Promise<string | null> {
+  const raw = process.env.EXPLORER_ORIGIN?.trim()
+  const direct = raw ? acceptOrigin(raw) : null
+  if (direct?.startsWith('http://')) return direct
+  const published = await readPublishedOrigin()
+  if (published) return published
   const edged = await readEdgeOrigin()
   if (edged) return edged
-  const raw = process.env.EXPLORER_ORIGIN?.trim()
-  return raw ? acceptOrigin(raw) : null
+  return direct
 }
 
 async function gatewayFetch(pathAndQuery: string): Promise<unknown> {

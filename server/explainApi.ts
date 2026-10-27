@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js'
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { Plugin } from 'vite'
 import {
   reviewCoachVoice,
@@ -511,73 +511,6 @@ async function openingBriefFor(lineId?: string): Promise<string | undefined> {
     console.warn('[opening-cards] brief load failed:', err)
     return undefined
   }
-}
-
-const EXPLORER_EDGE_ID = 'ecfg_vkkzlqiudfmz1kqxd99c2yehqm0n'
-const EXPLORER_TEAM_ID = 'team_h9rtBT71Xyr0MaaBQl9YByhg'
-
-function bearerMatches(header: string | undefined, secret: string): boolean {
-  const match = header?.match(/^Bearer\s+(\S+)\s*$/)
-  if (!match || !secret) return false
-  const got = Buffer.from(match[1])
-  const expected = Buffer.from(secret)
-  if (got.length !== expected.length) return false
-  return timingSafeEqual(got, expected)
-}
-
-/** The home PC calls this after boot so the live site learns the new tunnel address. */
-async function publishExplorerOrigin(
-  req: import('http').IncomingMessage,
-  res: import('http').ServerResponse,
-) {
-  const secret = process.env.EXPLORER_GATEWAY_SECRET?.trim() ?? ''
-  if (!bearerMatches(req.headers.authorization, secret)) {
-    sendJson(res, 401, { error: 'unauthorized' })
-    return
-  }
-  let origin = ''
-  try {
-    const body = JSON.parse((await readBody(req)) || '{}') as { origin?: unknown }
-    origin = typeof body.origin === 'string' ? body.origin.trim() : ''
-  } catch {
-    sendJson(res, 400, { error: 'bad origin' })
-    return
-  }
-  let parsed: URL
-  try {
-    parsed = new URL(origin)
-  } catch {
-    sendJson(res, 400, { error: 'bad origin' })
-    return
-  }
-  if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.trycloudflare.com')) {
-    sendJson(res, 400, { error: 'bad origin' })
-    return
-  }
-  const oidc = req.headers['x-vercel-oidc-token']
-  const token = (Array.isArray(oidc) ? oidc[0] : oidc)?.trim()
-  if (!token) {
-    sendJson(res, 500, { error: 'origin publish is not available' })
-    return
-  }
-  const response = await fetch(
-    `https://api.vercel.com/v1/edge-config/${EXPLORER_EDGE_ID}/items?teamId=${EXPLORER_TEAM_ID}`,
-    {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        items: [{ operation: 'upsert', key: 'origin', value: parsed.origin }],
-      }),
-    },
-  )
-  if (!response.ok) {
-    sendJson(res, 502, { error: 'could not publish the explorer address' })
-    return
-  }
-  sendJson(res, 200, { ok: true })
 }
 
 function explorerFailureStatus(message: string): number {
@@ -1193,10 +1126,6 @@ export async function handleExplainApi(
           if (req.method === 'OPTIONS') {
             res.statusCode = 204
             res.end()
-            return
-          }
-          if (req.method === 'POST') {
-            await publishExplorerOrigin(req, res)
             return
           }
           if (req.method !== 'GET') {
