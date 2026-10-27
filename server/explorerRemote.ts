@@ -9,19 +9,63 @@ import {
 
 /**
  * Vercel and the local site call the home gateway. The gateway process
- * must leave EXPLORER_ORIGIN unset so it reads the month files itself.
+ * must leave EXPLORER_ORIGIN and EDGE_CONFIG unset so it reads the month files itself.
+ * The live site reads the current tunnel address from EDGE_CONFIG so a reboot
+ * can publish a new address without another deploy.
  */
-export function explorerOrigin(): string | null {
+const ORIGIN_CACHE_MS = 15_000
+let cachedOrigin: { value: string; at: number } | null = null
+
+export function explorerUsesRemote(): boolean {
+  return Boolean(process.env.EDGE_CONFIG?.trim() || process.env.EXPLORER_ORIGIN?.trim())
+}
+
+function acceptOrigin(raw: string): string | null {
+  try {
+    const url = new URL(raw.trim())
+    const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost'
+    const tunnel = url.protocol === 'https:' && url.hostname.endsWith('.trycloudflare.com')
+    if (tunnel || (url.protocol === 'http:' && local)) return url.origin
+  } catch {
+    return null
+  }
+  return null
+}
+
+async function readEdgeOrigin(): Promise<string | null> {
+  const edge = process.env.EDGE_CONFIG?.trim()
+  if (!edge) return null
+  if (cachedOrigin && Date.now() - cachedOrigin.at < ORIGIN_CACHE_MS) return cachedOrigin.value
+  let connection: URL
+  try {
+    connection = new URL(edge)
+  } catch {
+    return cachedOrigin?.value ?? null
+  }
+  const item = new URL(connection.href)
+  item.pathname = `${connection.pathname.replace(/\/$/, '')}/item/origin`
+  try {
+    const res = await fetch(item, { cache: 'no-store', signal: AbortSignal.timeout(3_000) })
+    if (!res.ok) return cachedOrigin?.value ?? null
+    const value = await res.json()
+    const origin = typeof value === 'string' ? acceptOrigin(value) : null
+    if (!origin) return cachedOrigin?.value ?? null
+    cachedOrigin = { value: origin, at: Date.now() }
+    return origin
+  } catch {
+    return cachedOrigin?.value ?? null
+  }
+}
+
+async function resolveOrigin(): Promise<string | null> {
+  const edged = await readEdgeOrigin()
+  if (edged) return edged
   const raw = process.env.EXPLORER_ORIGIN?.trim()
-  if (!raw) return null
-  const url = new URL(raw)
-  const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost'
-  if (url.protocol === 'https:' || (url.protocol === 'http:' && local)) return url.origin
-  throw new Error('EXPLORER_ORIGIN must be https, or http on this computer')
+  return raw ? acceptOrigin(raw) : null
 }
 
 async function gatewayFetch(pathAndQuery: string): Promise<unknown> {
-  const origin = explorerOrigin()
+  const origin = await resolveOrigin()
   const secret = process.env.EXPLORER_GATEWAY_SECRET?.trim()
   if (!origin || !secret) {
     throw new Error('The opening explorer gateway is not configured.')

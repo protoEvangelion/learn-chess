@@ -12,6 +12,7 @@ import { readExplorerQuery } from './lichessExplorerProxy.js'
  */
 
 delete process.env.EXPLORER_ORIGIN
+delete process.env.EDGE_CONFIG
 
 const PORT = 3921
 const HOST = '127.0.0.1'
