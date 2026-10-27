@@ -3907,6 +3907,17 @@ body.is-review-coach-resizing canvas {
   background: color-mix(in srgb, #422006 28%, var(--sw-bg0));
 }
 
+.drill-coach-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin: 0.45rem 0 0;
+  font-size: 0.84rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, #fff 72%, var(--sw-muted));
+}
+
 .drill-coach.is-wrong .drill-coach-bubble {
   border-color: color-mix(in srgb, #f87171 55%, var(--sw-border));
   background: color-mix(in srgb, #450a0a 35%, var(--sw-bg0));

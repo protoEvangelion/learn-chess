@@ -1,11 +1,11 @@
-import { ITALIAN_LINES } from '../src/lib/drills/italian.ts'
+import { DRILL_LINES } from '../src/lib/drills/italian.ts'
 
 const baseUrl = process.env.OPENING_CARD_BASE_URL?.replace(/\/$/, '')
 if (!baseUrl) {
   throw new Error('Set OPENING_CARD_BASE_URL (for example, https://example.com)')
 }
 
-for (const line of ITALIAN_LINES) {
+for (const line of DRILL_LINES) {
   const response = await fetch(`${baseUrl}/api/opening-card`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -34,4 +34,4 @@ for (const line of ITALIAN_LINES) {
   console.log(`${card.cached ? 'verified' : 'seeded'} ${card.lineId}`)
 }
 
-console.log(`Seeded ${ITALIAN_LINES.length} opening cards in ${baseUrl}`)
+console.log(`Seeded ${DRILL_LINES.length} opening cards in ${baseUrl}`)

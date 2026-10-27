@@ -1,5 +1,6 @@
 import type { DrillFamilyId, DrillLine } from '@/lib/drills/types'
 import { DRILL_FAMILIES } from '@/lib/drills/types'
+import { CARO_KANN_LINES } from '@/lib/drills/caroKann'
 
 function line(
   id: string,
@@ -851,13 +852,16 @@ export const ITALIAN_LINES: DrillLine[] = [
   ),
 ]
 
-/** Lines grouped by Black’s defensive family (picker order). */
+/** Italian pack plus any other drill that uses the same line shape. */
+export const DRILL_LINES: DrillLine[] = [...ITALIAN_LINES, ...CARO_KANN_LINES]
+
+/** Lines grouped by family (picker order). */
 export function italianLinesByFamily(): Array<{
   family: (typeof DRILL_FAMILIES)[number]
   lines: DrillLine[]
 }> {
   return DRILL_FAMILIES.map((family) => ({
     family,
-    lines: ITALIAN_LINES.filter((l) => l.family === family.id),
+    lines: DRILL_LINES.filter((l) => l.family === family.id),
   })).filter((g) => g.lines.length > 0)
 }

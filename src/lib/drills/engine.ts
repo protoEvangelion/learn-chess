@@ -4,11 +4,11 @@ import type { Color, Move } from '@logic/pieces'
 import { getTile, movesForPiece } from '@logic/pieces'
 import { boardToFen, positionToSquare, squareToPosition } from '@/lib/fenBridge'
 import type { HistoryItem } from '@/state/game'
-import type { DrillLine } from '@/lib/drills/types'
+import type { DrillLine, DrillSide } from '@/lib/drills/types'
 
-/** White plies are even indices 0,2,4… in the moves array. */
-export function isPlayerPly(plyIndex: number) {
-  return plyIndex % 2 === 0
+/** White plies are even indices. A Black drill flips that. */
+export function isPlayerPly(plyIndex: number, side: DrillSide = 'white') {
+  return side === 'black' ? plyIndex % 2 === 1 : plyIndex % 2 === 0
 }
 
 export function expectedSan(line: DrillLine, plyIndex: number) {

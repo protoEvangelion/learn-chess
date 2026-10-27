@@ -104,6 +104,16 @@ function familyDetails(line: OpeningLineInput) {
         'Black reinforces e5 with …d6, develops compactly, and tries to blunt the d-file and diagonal pressure.',
     }
   }
+  if (line.id === 'caro-advance-pin') {
+    return {
+      label: 'Caro-Kann',
+      themes: ['d4 attack', 'pin on the knight', 'f5 outpost'],
+      whitePlan:
+        'Push e5, hold d4, and try to break the pin on the f3-knight.',
+      blackPlan:
+        'Chip d4 with …c5, pin the knight, and plant a knight on f5.',
+    }
+  }
   if (TWO_KNIGHTS_IDS.has(line.id)) {
     return {
       label: 'Two Knights',
@@ -129,8 +139,9 @@ function curateCard(line: OpeningLineInput): StoredCard {
   const tactical = /trap|mate|bait|fork|pin|skewer|sacrifice|hunt|attack/i.test(
     `${line.name} ${line.summary}`,
   )
+  const playerStep = line.id === 'caro-advance-pin' ? 1 : 0
   const hinted = line.moves
-    .filter((_, index) => index % 2 === 0)
+    .filter((_, index) => index % 2 === playerStep)
     .map((move) => move.hint?.trim())
     .filter((hint): hint is string => Boolean(hint))
   const talkingPoints = [...new Set(hinted)].slice(0, 4)

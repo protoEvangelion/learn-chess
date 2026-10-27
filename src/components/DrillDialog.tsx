@@ -29,6 +29,10 @@ type Props = {
   line: DrillLine | null
   plyIndex: number
   hint: string
+  /** Explorer win rate for the move the hint is about. */
+  winRate?: string
+  /** Engine best move, in SAN, for that same position. */
+  engineBest?: string
   wrongFlash?: boolean
   mistakeMessage?: string | null
   onTryAgain?: () => void
@@ -63,6 +67,8 @@ export const DrillDialog: FC<Props> = ({
   line,
   plyIndex,
   hint,
+  winRate,
+  engineBest,
   wrongFlash = false,
   mistakeMessage = null,
   onTryAgain,
@@ -129,7 +135,9 @@ export const DrillDialog: FC<Props> = ({
         <header className="drill-dialog-header">
           <div className="drill-dialog-title">
             <p className="drill-eyebrow">Opening drill</p>
-            <h2>Italian Opening</h2>
+            <h2>
+              {line?.opening === 'caro-kann' ? 'Caro-Kann' : 'Italian Opening'}
+            </h2>
           </div>
           <PixelButton ghost onClick={onClose}>
             Close
@@ -290,6 +298,18 @@ export const DrillDialog: FC<Props> = ({
                     : wrongFlash
                       ? 'Not that one — check the hint and try again.'
                       : hint}
+                {status !== 'complete' &&
+                !mistakeMessage &&
+                !wrongFlash &&
+                hintRevealed &&
+                (winRate || engineBest) ? (
+                  <p className="drill-coach-meta">
+                    {winRate ? <span>Win rate: {winRate}</span> : null}
+                    {engineBest ? (
+                      <span>Engine best: {engineBest}</span>
+                    ) : null}
+                  </p>
+                ) : null}
                 {mistakeMessage && onTryAgain ? (
                   <div className="drill-try-again">
                     <PixelButton onClick={onTryAgain}>Try again</PixelButton>

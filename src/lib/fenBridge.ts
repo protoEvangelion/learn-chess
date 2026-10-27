@@ -262,7 +262,7 @@ export function isAnalysisPanel(panel: PanelId | null): boolean {
 }
 
 /** Opening drill pack id in the URL (e.g. italian). */
-export type OpeningId = 'italian'
+export type OpeningId = 'italian' | 'caro-kann'
 
 export function readPanelFromUrl(
   search = window.location.search,
@@ -288,7 +288,7 @@ export function readOpeningFromUrl(
   search = window.location.search,
 ): OpeningId | null {
   const o = new URLSearchParams(search).get('opening')?.trim().toLowerCase()
-  if (o === 'italian') return o
+  if (o === 'italian' || o === 'caro-kann') return o
   return null
 }
 

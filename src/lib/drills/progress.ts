@@ -1,5 +1,5 @@
 import type { DrillProgress } from '@/lib/drills/types'
-import { ITALIAN_LINES } from '@/lib/drills/italian'
+import { DRILL_LINES } from '@/lib/drills/italian'
 
 const KEY = 'chess-3d:italian-drill-progress'
 
@@ -40,11 +40,11 @@ export function recordLineClear(
 }
 
 export function drillStats(progress: DrillProgress) {
-  const total = ITALIAN_LINES.length
+  const total = DRILL_LINES.length
   const discovered = progress.discovered.filter((id) =>
-    ITALIAN_LINES.some((l) => l.id === id),
+    DRILL_LINES.some((l) => l.id === id),
   ).length
-  const perfected = ITALIAN_LINES.filter(
+  const perfected = DRILL_LINES.filter(
     (l) => (progress.perfected[l.id] ?? 0) >= 3,
   ).length
   return { total, discovered, perfected }

@@ -114,7 +114,7 @@ import {
   applyPanelLayoutCss,
   loadPanelWidth,
 } from '@/lib/panelWidth'
-import { ITALIAN_LINES } from '@/lib/drills/italian'
+import { DRILL_LINES } from '@/lib/drills/italian'
 import type { DrillLine, DrillProgress } from '@/lib/drills/types'
 import {
   expectedSan,
@@ -722,7 +722,11 @@ export default function App() {
       const lineRef = readLineFromUrl() ?? state?.line ?? null
       const opening = readOpeningFromUrl() ?? state?.opening ?? null
       const panelNow = readPanelFromUrl() ?? state?.panel ?? null
-      if (panelNow === 'drill' && lineRef && (!opening || opening === 'italian')) {
+      if (
+        panelNow === 'drill' &&
+        lineRef &&
+        (!opening || opening === 'italian' || opening === 'caro-kann')
+      ) {
         startDrillLineRef.current(lineRef)
       }
     }
@@ -740,7 +744,7 @@ export default function App() {
     setPanel(next)
     // Re-open drill with the remembered line in the URL (and picker).
     if (next === 'drill' && drillLine) {
-      replaceDrillInUrl('italian', drillLine.id)
+      replaceDrillInUrl(drillLine.opening ?? 'italian', drillLine.id)
       return
     }
     replacePanelInUrl(next)
@@ -776,7 +780,7 @@ export default function App() {
       !drillLine ||
       drillStatus !== 'playing' ||
       !drillHintRevealed ||
-      !isPlayerPly(drillPlyIndex)
+      !isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')
     ) {
       return null
     }
@@ -1046,7 +1050,7 @@ export default function App() {
     if (history.length !== drillPlyIndex + 1) return
 
     // Player just moved — Chessreps-style: land wrong moves, then coach + try again.
-    if (isPlayerPly(drillPlyIndex)) {
+    if (isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) {
       const expected = expectedSan(drillLine, drillPlyIndex)
       const last = history[history.length - 1]
       if (
@@ -1108,7 +1112,7 @@ export default function App() {
     if (!drillLine || drillStatus !== 'playing') return
     if (drillMistake) return
     if (movingTo || pendingEngineMove) return
-    if (isPlayerPly(drillPlyIndex)) return
+    if (isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) return
     if (history.length !== drillPlyIndex) return
     const san = expectedSan(drillLine, drillPlyIndex)
     if (!san) return
@@ -1130,7 +1134,7 @@ export default function App() {
     (_move: Move) => {
       if (!drillLine || drillStatus !== 'playing') return true
       if (drillMistake) return false
-      if (!isPlayerPly(drillPlyIndex)) return false
+      if (!isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) return false
       // Allow any legal move — wrong book moves land, then coach asks to try again.
       return true
     },
@@ -1167,8 +1171,8 @@ export default function App() {
 
   function startDrillLine(lineId: string) {
     const line =
-      ITALIAN_LINES.find((l) => l.id === lineId) ??
-      ITALIAN_LINES.find((l) => l.name === lineId) ??
+      DRILL_LINES.find((l) => l.id === lineId) ??
+      DRILL_LINES.find((l) => l.name === lineId) ??
       null
     if (!line) return
     if (!drillLiveSnapshotRef.current) {
@@ -1196,7 +1200,7 @@ export default function App() {
     setPendingEngineMove(null)
     resetHistory()
     resetTurn()
-    setPlayerColor('white')
+    setPlayerColor(line.side ?? 'white')
     setDrillLine(line)
     setDrillPlyIndex(0)
     setDrillStatus('playing')
@@ -1206,7 +1210,7 @@ export default function App() {
     setDrillMistake(null)
     setDrillReview(null)
     setPanel('drill')
-    replaceDrillInUrl('italian', line.id)
+    replaceDrillInUrl(line.opening ?? 'italian', line.id)
 
     const req = ++openingCardReqRef.current
     // Keep the hand-authored summary visible; upgrade blurb when Turso/cache returns.
@@ -1235,7 +1239,7 @@ export default function App() {
     const opening = readOpeningFromUrl()
     const lineRef = readLineFromUrl()
     if (!lineRef) return
-    if (opening && opening !== 'italian') return
+    if (opening && opening !== 'italian' && opening !== 'caro-kann') return
     startDrillLineRef.current(lineRef)
   }, [])
 
@@ -1424,7 +1428,7 @@ export default function App() {
         }
 
         const openingCatalog = analysisCoach
-          ? ITALIAN_LINES.map((line) => ({
+          ? DRILL_LINES.map((line) => ({
               id: line.id,
               name: line.name,
               eco: line.eco,
@@ -2295,6 +2299,14 @@ export default function App() {
             ? hintForPly(drillLine, Math.min(drillPlyIndex, drillLine.moves.length - 1))
             : 'Pick a line to start practicing the Italian Opening.'
         }
+        winRate={
+          drillLine?.moves[Math.min(drillPlyIndex, drillLine.moves.length - 1)]
+            ?.winRate
+        }
+        engineBest={
+          drillLine?.moves[Math.min(drillPlyIndex, drillLine.moves.length - 1)]
+            ?.engineBest
+        }
         wrongFlash={drillWrongFlash || !!drillMistake}
         mistakeMessage={
           drillMistake
@@ -2583,7 +2595,12 @@ export default function App() {
               boardOrigin={roomTheme.boardOffset ?? DEFAULT_CAMERA_TARGET}
               sceneKey={`${roomId}:${boardId}:${pieceSetId}:${drillOpen ? 'drill' : 'play'}`}
               roomId={roomId}
-              seatYaw={reviewImport?.playerColor === 'black' ? Math.PI : 0}
+              seatYaw={
+                reviewImport?.playerColor === 'black' ||
+                (drillOpen && drillLine?.side === 'black')
+                  ? Math.PI
+                  : 0
+              }
             />
             <color attach="background" args={[roomTheme.background]} />
             <Environment files={roomTheme.hdr} environmentIntensity={0.6} />
