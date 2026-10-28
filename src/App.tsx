@@ -115,7 +115,8 @@ import {
   loadPanelWidth,
 } from '@/lib/panelWidth'
 import { DRILL_LINES } from '@/lib/drills/italian'
-import type { DrillLine, DrillProgress } from '@/lib/drills/types'
+import type { DrillLine, DrillOpeningId, DrillProgress } from '@/lib/drills/types'
+import { drillOpeningId } from '@/lib/drills/types'
 import {
   expectedSan,
   hintForPly,
@@ -549,6 +550,13 @@ export default function App() {
   const fpsParentRef = useRef<HTMLDivElement>(null)
 
   const [drillLine, setDrillLine] = useState<DrillLine | null>(null)
+  const [drillOpening, setDrillOpening] = useState<DrillOpeningId>(() => {
+    const fromUrl = readOpeningFromUrl()
+    if (fromUrl) return fromUrl
+    const lineId = readLineFromUrl()
+    const saved = lineId ? DRILL_LINES.find((l) => l.id === lineId) : undefined
+    return saved ? drillOpeningId(saved) : 'italian'
+  })
   const [drillPlyIndex, setDrillPlyIndex] = useState(0)
   const [drillStatus, setDrillStatus] = useState<
     'idle' | 'playing' | 'complete'
@@ -722,12 +730,16 @@ export default function App() {
       const lineRef = readLineFromUrl() ?? state?.line ?? null
       const opening = readOpeningFromUrl() ?? state?.opening ?? null
       const panelNow = readPanelFromUrl() ?? state?.panel ?? null
-      if (
-        panelNow === 'drill' &&
-        lineRef &&
-        (!opening || opening === 'italian' || opening === 'caro-kann')
-      ) {
-        startDrillLineRef.current(lineRef)
+      if (panelNow === 'drill') {
+        if (opening === 'italian' || opening === 'caro-kann') {
+          setDrillOpening(opening)
+        }
+        if (
+          lineRef &&
+          (!opening || opening === 'italian' || opening === 'caro-kann')
+        ) {
+          startDrillLineRef.current(lineRef)
+        }
       }
     }
     window.addEventListener('popstate', onPopState)
@@ -744,7 +756,9 @@ export default function App() {
     setPanel(next)
     // Re-open drill with the remembered line in the URL (and picker).
     if (next === 'drill' && drillLine) {
-      replaceDrillInUrl(drillLine.opening ?? 'italian', drillLine.id)
+      const opening = drillOpeningId(drillLine)
+      setDrillOpening(opening)
+      replaceDrillInUrl(opening, drillLine.id)
       return
     }
     replacePanelInUrl(next)
@@ -1201,6 +1215,7 @@ export default function App() {
     resetHistory()
     resetTurn()
     setPlayerColor(line.side ?? 'white')
+    setDrillOpening(drillOpeningId(line))
     setDrillLine(line)
     setDrillPlyIndex(0)
     setDrillStatus('playing')
@@ -1210,7 +1225,7 @@ export default function App() {
     setDrillMistake(null)
     setDrillReview(null)
     setPanel('drill')
-    replaceDrillInUrl(line.opening ?? 'italian', line.id)
+    replaceDrillInUrl(drillOpeningId(line), line.id)
 
     const req = ++openingCardReqRef.current
     // Keep the hand-authored summary visible; upgrade blurb when Turso/cache returns.
@@ -1237,11 +1252,33 @@ export default function App() {
     drillBootstrapped.current = true
     if (readPanelFromUrl() !== 'drill') return
     const opening = readOpeningFromUrl()
+    if (opening) setDrillOpening(opening)
     const lineRef = readLineFromUrl()
     if (!lineRef) return
     if (opening && opening !== 'italian' && opening !== 'caro-kann') return
     startDrillLineRef.current(lineRef)
   }, [])
+
+  function selectDrillOpening(next: DrillOpeningId) {
+    setDrillOpening(next)
+    const current = drillLine
+    const fits = current != null && drillOpeningId(current) === next
+    if (!fits) {
+      setDrillLine(null)
+      setDrillStatus('idle')
+      setDrillPlyIndex(0)
+      setDrillHintRevealed(false)
+      setDrillWrongFlash(false)
+      setDrillMistake(null)
+      setDrillMistakes(false)
+      setDrillReview(null)
+      setPendingEngineMove(null)
+      setOpeningCard(null)
+      setOpeningCardStatus('idle')
+      clearCoachThread()
+    }
+    replaceDrillInUrl(next, fits && current ? current.id : null)
+  }
 
   function restartDrill() {
     if (drillLine) startDrillLine(drillLine.id)
@@ -2297,7 +2334,9 @@ export default function App() {
         hint={
           drillLine
             ? hintForPly(drillLine, Math.min(drillPlyIndex, drillLine.moves.length - 1))
-            : 'Pick a line to start practicing the Italian Opening.'
+            : `Pick a line to start practicing the ${
+                drillOpening === 'caro-kann' ? 'Caro-Kann' : 'Italian Opening'
+              }.`
         }
         winRate={
           drillLine?.moves[Math.min(drillPlyIndex, drillLine.moves.length - 1)]
@@ -2315,6 +2354,8 @@ export default function App() {
         }
         onTryAgain={drillMistake ? retryDrillMistake : undefined}
         progress={drillProgress}
+        openingId={drillOpening}
+        onSelectOpening={selectDrillOpening}
         onSelectLine={startDrillLine}
         onRestart={restartDrill}
         onShowHint={() => setDrillHintRevealed(true)}

@@ -17,10 +17,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { italianLinesByFamily } from '@/lib/drills/italian'
+import { drillOpenings, italianLinesByFamily } from '@/lib/drills/italian'
 import { drillLineSourceUrl } from '@/lib/drills/engine'
-import type { DrillLine, DrillProgress } from '@/lib/drills/types'
-import { DRILL_FAMILIES } from '@/lib/drills/types'
+import type { DrillLine, DrillOpeningId, DrillProgress } from '@/lib/drills/types'
+import {
+  DRILL_FAMILIES,
+  DRILL_OPENING_TITLES,
+  drillOpeningId,
+} from '@/lib/drills/types'
 import { drillStats } from '@/lib/drills/progress'
 
 type Props = {
@@ -37,6 +41,9 @@ type Props = {
   mistakeMessage?: string | null
   onTryAgain?: () => void
   progress: DrillProgress
+  /** Opening pack shown in the heading and used to filter the line list. */
+  openingId: DrillOpeningId
+  onSelectOpening: (openingId: DrillOpeningId) => void
   onSelectLine: (lineId: string) => void
   onRestart: () => void
   onShowHint: () => void
@@ -73,6 +80,8 @@ export const DrillDialog: FC<Props> = ({
   mistakeMessage = null,
   onTryAgain,
   progress,
+  openingId,
+  onSelectOpening,
   onSelectLine,
   onRestart,
   onShowHint,
@@ -95,18 +104,30 @@ export const DrillDialog: FC<Props> = ({
   onSendCoachChat,
 }) => {
   const stats = drillStats(progress)
-  const lineGroups = italianLinesByFamily()
-  const flatLines = lineGroups.flatMap((g) => g.lines)
-  const lineIndex = line ? flatLines.findIndex((l) => l.id === line.id) : -1
-  const familyMeta = line
-    ? DRILL_FAMILIES.find((f) => f.id === line.family)
+  const openings = drillOpenings()
+  const openingTitle = DRILL_OPENING_TITLES[openingId]
+  const allGroups = italianLinesByFamily()
+  const allLines = allGroups.flatMap((g) => g.lines)
+  const lineGroups = allGroups
+    .map((group) => ({
+      ...group,
+      lines: group.lines.filter((l) => drillOpeningId(l) === openingId),
+    }))
+    .filter((group) => group.lines.length > 0)
+  const lineMatches = line ? drillOpeningId(line) === openingId : false
+  const shownLine = lineMatches ? line : null
+  const lineIndex = shownLine
+    ? allLines.findIndex((l) => l.id === shownLine.id)
+    : -1
+  const familyMeta = shownLine
+    ? DRILL_FAMILIES.find((f) => f.id === shownLine.family)
     : null
 
-  const lineHref = line ? drillLineSourceUrl(line) : null
+  const lineHref = shownLine ? drillLineSourceUrl(shownLine) : null
 
-  const showCoach = Boolean(onSendCoachChat)
+  const showCoach = Boolean(onSendCoachChat) && Boolean(shownLine)
   const showHintBubble =
-    Boolean(line) &&
+    Boolean(shownLine) &&
     (status === 'complete' ||
       Boolean(mistakeMessage) ||
       wrongFlash ||
@@ -135,9 +156,7 @@ export const DrillDialog: FC<Props> = ({
         <header className="drill-dialog-header">
           <div className="drill-dialog-title">
             <p className="drill-eyebrow">Opening drill</p>
-            <h2>
-              {line?.opening === 'caro-kann' ? 'Caro-Kann' : 'Italian Opening'}
-            </h2>
+            <h2>{openingTitle}</h2>
           </div>
           <PixelButton ghost onClick={onClose}>
             Close
@@ -156,7 +175,38 @@ export const DrillDialog: FC<Props> = ({
 
           <div className="drill-line-meta">
             <Select
-              value={line?.id}
+              value={openingId}
+              onValueChange={(id) => {
+                const next = openings.find((opening) => opening.id === id)
+                if (next) onSelectOpening(next.id)
+              }}
+            >
+              <SelectTrigger
+                className="drill-line-select w-full"
+                size="default"
+                aria-label="Opening"
+              >
+                <SelectValue placeholder="Pick an opening" />
+              </SelectTrigger>
+              <SelectContent
+                position="popper"
+                align="start"
+                className="drill-line-select-content"
+              >
+                {openings.map((opening) => (
+                  <SelectItem
+                    key={opening.id}
+                    value={opening.id}
+                    textValue={opening.title}
+                  >
+                    {opening.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={shownLine?.id}
               onValueChange={(id) => {
                 if (id) onSelectLine(id)
               }}
@@ -167,12 +217,12 @@ export const DrillDialog: FC<Props> = ({
                 aria-label="Opening line"
               >
                 <SelectValue placeholder="Pick a line to practice">
-                  {line ? (
+                  {shownLine ? (
                     <span className="drill-line-select-row">
                       <span className="drill-line-family-chip">
                         {familyMeta?.label ?? 'Line'}
                       </span>
-                      <span>{line.name}</span>
+                      <span>{shownLine.name}</span>
                     </span>
                   ) : null}
                 </SelectValue>
@@ -192,7 +242,7 @@ export const DrillDialog: FC<Props> = ({
                     </SelectLabel>
                     {lines.map((l) => {
                       const globalIndex =
-                        flatLines.findIndex((x) => x.id === l.id) + 1
+                        allLines.findIndex((x) => x.id === l.id) + 1
                       const done = progress.discovered.includes(l.id)
                       const perfect = (progress.perfected[l.id] ?? 0) >= 3
                       const flag = perfect ? '★★★' : done ? '★' : ''
@@ -228,7 +278,7 @@ export const DrillDialog: FC<Props> = ({
                 variant={hintRevealed ? 'secondary' : 'default'}
                 className="drill-action-btn"
                 onClick={onShowHint}
-                disabled={!line || status === 'complete' || hintRevealed}
+                disabled={!shownLine || status === 'complete' || hintRevealed}
                 aria-pressed={hintRevealed}
               >
                 <Lightbulb data-icon="inline-start" />
@@ -240,7 +290,7 @@ export const DrillDialog: FC<Props> = ({
                 variant="outline"
                 className="drill-action-btn"
                 onClick={onRestart}
-                disabled={!line}
+                disabled={!shownLine}
               >
                 <RotateCcw data-icon="inline-start" />
                 Restart
@@ -261,15 +311,15 @@ export const DrillDialog: FC<Props> = ({
               </Button>
             </div>
 
-            {line ? (
+            {shownLine ? (
               <p className="drill-line-summary">
                 {lineIndex >= 0 ? (
                   <span className="drill-line-eco">
                     #{lineIndex + 1} · {familyMeta?.label ?? 'Line'} ·{' '}
-                    {line.eco ?? 'C50'} —{' '}
+                    {shownLine.eco ?? 'C50'} —{' '}
                   </span>
                 ) : null}
-                {line.summary}
+                {shownLine.summary}
               </p>
             ) : null}
           </div>
@@ -319,7 +369,7 @@ export const DrillDialog: FC<Props> = ({
             </div>
           ) : null}
 
-          {line && status === 'complete' && onScrubPly && (
+          {shownLine && status === 'complete' && onScrubPly ? (
             <div
               className="drill-scrub"
               role="group"
@@ -345,9 +395,9 @@ export const DrillDialog: FC<Props> = ({
                 ›
               </PixelButton>
             </div>
-          )}
+          ) : null}
 
-          {showCoach && line && (
+          {showCoach && shownLine ? (
             <div className="drill-coach-embed">
               <CoachPane
                 explanation={coachExplanation}
@@ -362,7 +412,7 @@ export const DrillDialog: FC<Props> = ({
                 emptyHint=""
               />
             </div>
-          )}
+          ) : null}
         </div>
       </aside>
     </div>

@@ -1,5 +1,9 @@
-import type { DrillFamilyId, DrillLine } from '@/lib/drills/types'
-import { DRILL_FAMILIES } from '@/lib/drills/types'
+import type { DrillFamilyId, DrillLine, DrillOpeningId } from '@/lib/drills/types'
+import {
+  DRILL_FAMILIES,
+  DRILL_OPENING_TITLES,
+  drillOpeningId,
+} from '@/lib/drills/types'
 import { CARO_KANN_LINES } from '@/lib/drills/caroKann'
 
 function line(
@@ -854,6 +858,16 @@ export const ITALIAN_LINES: DrillLine[] = [
 
 /** Italian pack plus any other drill that uses the same line shape. */
 export const DRILL_LINES: DrillLine[] = [...ITALIAN_LINES, ...CARO_KANN_LINES]
+
+/** Openings that actually have lines, in pack order. Italian is first. */
+export function drillOpenings(): Array<{ id: DrillOpeningId; title: string }> {
+  const ids: DrillOpeningId[] = []
+  for (const line of DRILL_LINES) {
+    const id = drillOpeningId(line)
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return ids.map((id) => ({ id, title: DRILL_OPENING_TITLES[id] }))
+}
 
 /** Lines grouped by family (picker order). */
 export function italianLinesByFamily(): Array<{

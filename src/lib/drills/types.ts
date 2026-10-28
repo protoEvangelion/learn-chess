@@ -19,6 +19,17 @@ export type DrillSide = 'white' | 'black'
 
 export type DrillOpeningId = 'italian' | 'caro-kann'
 
+/** Heading text for each opening pack. Order in the picker comes from the lines. */
+export const DRILL_OPENING_TITLES: Record<DrillOpeningId, string> = {
+  italian: 'Italian Opening',
+  'caro-kann': 'Caro-Kann',
+}
+
+/** Italian lines omit `opening` and stay in that pack. */
+export function drillOpeningId(line: { opening?: DrillOpeningId }): DrillOpeningId {
+  return line.opening ?? 'italian'
+}
+
 export const DRILL_FAMILIES: Array<{
   id: DrillFamilyId
   label: string
