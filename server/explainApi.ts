@@ -520,6 +520,42 @@ function explorerFailureStatus(message: string): number {
   return 500
 }
 
+/**
+ * Lichess stores a Stockfish result for common positions. We turn their
+ * first move (a square code like e2e4) into normal notation (e4).
+ * A 404 means that position was never stored.
+ */
+async function cloudBestMove(fen: string): Promise<{ san: string; uci: string } | null> {
+  let chess: Chess
+  try {
+    chess = new Chess(fen)
+  } catch {
+    throw new Error('bad fen')
+  }
+  const endpoint = new URL('https://lichess.org/api/cloud-eval')
+  endpoint.searchParams.set('fen', fen)
+  endpoint.searchParams.set('multiPv', '1')
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'chess-3d/drill (cloud eval)',
+    },
+    signal: AbortSignal.timeout(8000),
+  })
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(`cloud eval ${response.status}`)
+  const body = (await response.json()) as { pvs?: Array<{ moves?: string }> }
+  const uci = body.pvs?.[0]?.moves?.split(/\s+/)[0] ?? ''
+  if (uci.length < 4) return null
+  const played = chess.move({
+    from: uci.slice(0, 2),
+    to: uci.slice(2, 4),
+    promotion: uci.length > 4 ? uci[4] : undefined,
+  })
+  if (!played) return null
+  return { san: played.san, uci }
+}
+
 function sendJson(
   res: import('http').ServerResponse,
   status: number,
@@ -1092,6 +1128,36 @@ export async function handleExplainApi(
             sendJson(res, 500, { error: message })
           } finally {
             req.off('close', onClose)
+          }
+          return
+        }
+
+        if (url === '/api/cloud-eval') {
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204
+            res.end()
+            return
+          }
+          if (req.method !== 'GET') {
+            res.statusCode = 405
+            res.end('Method not allowed')
+            return
+          }
+          const fen = new URL(req.url ?? '', 'http://localhost').searchParams.get('fen')?.trim() ?? ''
+          if (!fen) {
+            sendJson(res, 400, { error: 'fen required' })
+            return
+          }
+          try {
+            const best = await cloudBestMove(fen)
+            if (!best) {
+              sendJson(res, 404, { error: 'not in cloud' })
+              return
+            }
+            sendJson(res, 200, best)
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'cloud eval failed'
+            sendJson(res, message === 'bad fen' ? 400 : 502, { error: message })
           }
           return
         }

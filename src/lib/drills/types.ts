@@ -1,11 +1,37 @@
+export type DrillMoveAlert = {
+  title: string
+  description: string
+  /** Cult Halo rim palette. Default destructive for STOP callouts. */
+  rimVariant?: 'default' | 'success' | 'destructive'
+  /**
+   * SAN sequence from the current board that shows the danger / idea
+   * (e.g. the mate if you take the hanging piece). Halo offers Preview.
+   */
+  preview?: string[]
+}
+
 export type DrillMove = {
   san: string
   /** Coach tip shown when this ply is the one to play. */
   hint: string
-  /** Black's win share for this move in the filtered explorer, when we have one. */
-  winRate?: string
-  /** Engine's best move in the position before this ply, in SAN. */
-  engineBest?: string
+  /** Optional Halo callout when this ply is the one to play. */
+  alert?: DrillMoveAlert
+  /**
+   * Show the line's `summary` as a Halo "Core idea" on this ply only —
+   * the step where the idea becomes clear.
+   */
+  revealIdea?: boolean
+  /**
+   * Optional board preview from this ply (also via `alert.preview`).
+   * Only show a Preview control when this resolves to a non-empty list.
+   */
+  preview?: string[]
+}
+
+/** Preview SANs for a ply, if any (alert or move-level). */
+export function drillPlyPreview(move: DrillMove | undefined): string[] | null {
+  const sans = move?.preview ?? move?.alert?.preview
+  return sans && sans.length > 0 ? sans : null
 }
 
 /** Black’s reply system after the Italian Bc4, Philidor sidelines, or the Caro-Kann. */
@@ -28,6 +54,31 @@ export const DRILL_OPENING_TITLES: Record<DrillOpeningId, string> = {
 /** Italian lines omit `opening` and stay in that pack. */
 export function drillOpeningId(line: { opening?: DrillOpeningId }): DrillOpeningId {
   return line.opening ?? 'italian'
+}
+
+const OPENING_PREF_KEY = 'chess-3d:drill-opening'
+
+export function isDrillOpeningId(value: string): value is DrillOpeningId {
+  return value === 'italian' || value === 'caro-kann'
+}
+
+/** Last opening the user picked in the drill panel (falls back to Italian). */
+export function loadDrillOpening(): DrillOpeningId {
+  try {
+    const raw = localStorage.getItem(OPENING_PREF_KEY)?.trim() ?? ''
+    if (isDrillOpeningId(raw)) return raw
+  } catch {
+    /* private mode */
+  }
+  return 'italian'
+}
+
+export function saveDrillOpening(opening: DrillOpeningId) {
+  try {
+    localStorage.setItem(OPENING_PREF_KEY, opening)
+  } catch {
+    /* private mode */
+  }
 }
 
 export const DRILL_FAMILIES: Array<{

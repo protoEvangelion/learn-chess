@@ -533,6 +533,22 @@ body,
   line-height: 0;
 }
 
+.hud-seat-knight {
+  display: block;
+  transform-origin: center;
+  flex-shrink: 0;
+}
+
+.hud-seat-knight.is-spinning {
+  animation: hud-seat-spin 0.55s ease-in-out;
+}
+
+@keyframes hud-seat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .gbg-option-num {
   display: inline-flex;
   align-items: center;
@@ -569,41 +585,7 @@ body,
   min-width: 150px;
   max-width: 210px;
   height: auto;
-  min-height: 2.5rem;
   pointer-events: none;
-}
-
-.hud-eval-bar {
-  position: relative;
-  height: 20px;
-  border-radius: 5px;
-  overflow: hidden;
-  background: #1a1030;
-  border: 1px solid var(--sw-border);
-}
-
-.hud-eval-bar-white {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: linear-gradient(90deg, #f5f3ff, var(--sw-teal));
-  transition: width 0.25s ease;
-}
-
-.hud-eval-bar-label {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: ui-monospace, monospace;
-  font-size: 0.68rem;
-  font-weight: 600;
-  line-height: 1;
-  color: #0b0614;
-  text-shadow: 0 0 3px rgba(255, 255, 255, 0.7);
-  z-index: 1;
 }
 
 .hud-material {
@@ -1215,6 +1197,21 @@ body.is-panel-resizing canvas {
 
 .explorer-table-scroll tbody tr.is-current:hover {
   background-color: color-mix(in srgb, var(--sw-teal) 44%, var(--sw-bg0));
+}
+
+/* Stockfish’s top move for the current position */
+.explorer-table-scroll tbody tr.is-recommended {
+  background-color: color-mix(in srgb, #4ade80 28%, var(--sw-bg0));
+  box-shadow: inset 3px 0 0 #4ade80;
+}
+
+.explorer-table-scroll tbody tr.is-recommended:hover {
+  background-color: color-mix(in srgb, #4ade80 38%, var(--sw-bg0));
+}
+
+.explorer-table-scroll tbody tr.is-recommended.is-current {
+  background-color: color-mix(in srgb, #4ade80 34%, var(--sw-bg0));
+  box-shadow: inset 3px 0 0 #4ade80;
 }
 
 .explorer-tip {
@@ -2144,12 +2141,25 @@ body.is-review-coach-resizing canvas {
   background: color-mix(in srgb, var(--sw-teal) 16%, transparent);
 }
 
+.analysis-move-table tbody tr.is-engine {
+  background: color-mix(in srgb, #4ade80 26%, transparent);
+  box-shadow: inset 3px 0 0 #4ade80;
+}
+
+.analysis-move-table tbody tr.is-engine:hover {
+  background: color-mix(in srgb, #4ade80 36%, transparent);
+}
+
 .analysis-move-table-tag {
   margin-left: 0.35rem;
   font-size: 0.68rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--sw-teal);
+}
+
+.analysis-move-table tbody tr.is-engine .analysis-move-table-tag {
+  color: #4ade80;
 }
 
 .analysis-move-table-tag.is-played {
@@ -3777,6 +3787,11 @@ body.is-review-coach-resizing canvas {
   gap: 0.45rem;
 }
 
+.drill-ply-alert {
+  flex-shrink: 0;
+  margin: 0.15rem 0 0.35rem;
+}
+
 .drill-line-select {
   width: 100%;
   min-height: 2.5rem;
@@ -3860,6 +3875,16 @@ body.is-review-coach-resizing canvas {
   letter-spacing: 0.01em;
   color: var(--sw-text);
   text-wrap: pretty;
+}
+
+.drill-step-stats {
+  margin: 0.35rem 0 0;
+  font-size: 0.84rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1.45;
+  color: var(--sw-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .drill-status {

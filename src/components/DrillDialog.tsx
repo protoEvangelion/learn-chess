@@ -1,7 +1,9 @@
 import { type FC } from 'react'
-import { ExternalLink, Lightbulb, RotateCcw } from 'lucide-react'
+import { AnimatePresence } from 'motion/react'
+import { ChevronRight, ExternalLink, Eye, Lightbulb, RotateCcw, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PixelButton } from '@/components/ui/PixelButton'
+import { HaloPolishedNotification } from '@/components/ui/halo-notification'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
 import { ConfettiBurst } from '@/components/ConfettiBurst'
 import {
@@ -18,14 +20,16 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { drillOpenings, italianLinesByFamily } from '@/lib/drills/italian'
-import { drillLineSourceUrl } from '@/lib/drills/engine'
+import { drillLineSourceUrl, noteForPly } from '@/lib/drills/engine'
 import type { DrillLine, DrillOpeningId, DrillProgress } from '@/lib/drills/types'
 import {
   DRILL_FAMILIES,
   DRILL_OPENING_TITLES,
   drillOpeningId,
+  drillPlyPreview,
 } from '@/lib/drills/types'
 import { drillStats } from '@/lib/drills/progress'
+import { formatStepStats, useDrillStepStats } from '@/lib/drills/useStepStats'
 
 type Props = {
   open: boolean
@@ -33,10 +37,10 @@ type Props = {
   line: DrillLine | null
   plyIndex: number
   hint: string
-  /** Explorer win rate for the move the hint is about. */
-  winRate?: string
-  /** Engine best move, in SAN, for that same position. */
-  engineBest?: string
+  /** Position on the board. Stats are for the book move about to be played. */
+  fen: string
+  /** False while the board is between plies, so we keep the previous numbers. */
+  stepAligned: boolean
   wrongFlash?: boolean
   mistakeMessage?: string | null
   onTryAgain?: () => void
@@ -52,6 +56,8 @@ type Props = {
   /** Clean clear (no wrong moves) — triggers confetti. */
   celebrate?: boolean
   onScrubPly?: (index: number) => void
+  /** Current scrub cursor (may differ from plyIndex while a wrong move is on the board). */
+  scrubPly?: number
   scrubMax?: number
   panelWidth: number
   onPanelWidthChange: (width: number) => void
@@ -66,6 +72,12 @@ type Props = {
   coachChatStatus?: 'idle' | 'loading' | 'error'
   coachChatError?: string | null
   onSendCoachChat?: (question: string) => void
+  /** Idea/danger preview is playing on the board. */
+  previewActive?: boolean
+  /** Preview still animating moves. */
+  previewBusy?: boolean
+  onStartPreview?: () => void
+  onExitPreview?: () => void
 }
 
 export const DrillDialog: FC<Props> = ({
@@ -74,8 +86,8 @@ export const DrillDialog: FC<Props> = ({
   line,
   plyIndex,
   hint,
-  winRate,
-  engineBest,
+  fen,
+  stepAligned,
   wrongFlash = false,
   mistakeMessage = null,
   onTryAgain,
@@ -89,6 +101,7 @@ export const DrillDialog: FC<Props> = ({
   status,
   celebrate = false,
   onScrubPly,
+  scrubPly,
   scrubMax = 0,
   panelWidth,
   onPanelWidthChange,
@@ -102,12 +115,15 @@ export const DrillDialog: FC<Props> = ({
   coachChatStatus = 'idle',
   coachChatError = null,
   onSendCoachChat,
+  previewActive = false,
+  previewBusy = false,
+  onStartPreview,
+  onExitPreview,
 }) => {
   const stats = drillStats(progress)
   const openings = drillOpenings()
   const openingTitle = DRILL_OPENING_TITLES[openingId]
   const allGroups = italianLinesByFamily()
-  const allLines = allGroups.flatMap((g) => g.lines)
   const lineGroups = allGroups
     .map((group) => ({
       ...group,
@@ -116,14 +132,50 @@ export const DrillDialog: FC<Props> = ({
     .filter((group) => group.lines.length > 0)
   const lineMatches = line ? drillOpeningId(line) === openingId : false
   const shownLine = lineMatches ? line : null
-  const lineIndex = shownLine
-    ? allLines.findIndex((l) => l.id === shownLine.id)
-    : -1
+  const openingLines = lineGroups.flatMap((group) => group.lines)
+  const lineNumber = shownLine
+    ? openingLines.findIndex((l) => l.id === shownLine.id) + 1
+    : 0
+  const nextLine =
+    openingLines.length === 0
+      ? null
+      : !shownLine
+        ? openingLines[0]
+        : openingLines[lineNumber % openingLines.length] ?? null
+  const positionNote = shownLine ? noteForPly(shownLine, plyIndex) : ''
+  const currentPly =
+    shownLine && status === 'playing' ? shownLine.moves[plyIndex] : undefined
+  const plyAlert = currentPly?.alert
+  const ideaHalo =
+    currentPly?.revealIdea && shownLine?.summary.trim()
+      ? {
+          title: 'Core idea',
+          description: shownLine.summary.trim(),
+          rimVariant: 'default' as const,
+        }
+      : null
+  // Exact-step callouts only (STOP / core idea) — never every ply.
+  const halo = plyAlert ?? ideaHalo
+  const previewSans = drillPlyPreview(currentPly)
+  const canPreview = Boolean(previewSans && onStartPreview && onExitPreview)
+  const haloKey = halo
+    ? `${shownLine?.id ?? ''}:ply-${plyIndex}:${halo.title}${previewActive ? ':preview' : ''}`
+    : null
   const familyMeta = shownLine
     ? DRILL_FAMILIES.find((f) => f.id === shownLine.family)
     : null
 
   const lineHref = shownLine ? drillLineSourceUrl(shownLine) : null
+  const stepSan =
+    shownLine && plyIndex < shownLine.moves.length
+      ? shownLine.moves[plyIndex].san
+      : null
+  const stepStats = useDrillStepStats({
+    fen,
+    san: stepSan,
+    enabled: open && Boolean(shownLine) && stepAligned,
+  })
+  const stepStatsText = formatStepStats(stepStats)
 
   const showCoach = Boolean(onSendCoachChat) && Boolean(shownLine)
   const showHintBubble =
@@ -241,8 +293,8 @@ export const DrillDialog: FC<Props> = ({
                       </span>
                     </SelectLabel>
                     {lines.map((l) => {
-                      const globalIndex =
-                        allLines.findIndex((x) => x.id === l.id) + 1
+                      const lineNo =
+                        openingLines.findIndex((x) => x.id === l.id) + 1
                       const done = progress.discovered.includes(l.id)
                       const perfect = (progress.perfected[l.id] ?? 0) >= 3
                       const flag = perfect ? '★★★' : done ? '★' : ''
@@ -250,7 +302,7 @@ export const DrillDialog: FC<Props> = ({
                         <SelectItem key={l.id} value={l.id} textValue={l.name}>
                           <span className="drill-line-select-row">
                             <span className="text-muted-foreground">
-                              #{globalIndex}
+                              #{lineNo}
                             </span>
                             <span>{l.name}</span>
                             {flag ? (
@@ -300,6 +352,20 @@ export const DrillDialog: FC<Props> = ({
                 size="sm"
                 variant="outline"
                 className="drill-action-btn"
+                onClick={() => {
+                  if (nextLine) onSelectLine(nextLine.id)
+                }}
+                disabled={!nextLine}
+                title={nextLine ? nextLine.name : undefined}
+              >
+                Next line
+                <ChevronRight data-icon="inline-end" />
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="drill-action-btn"
                 disabled={!lineHref}
                 onClick={() => {
                   if (!lineHref) return
@@ -313,16 +379,67 @@ export const DrillDialog: FC<Props> = ({
 
             {shownLine ? (
               <p className="drill-line-summary">
-                {lineIndex >= 0 ? (
+                {lineNumber > 0 ? (
                   <span className="drill-line-eco">
-                    #{lineIndex + 1} · {familyMeta?.label ?? 'Line'} ·{' '}
-                    {shownLine.eco ?? 'C50'} —{' '}
+                    #{lineNumber} · {openingTitle} —{' '}
                   </span>
                 ) : null}
-                {shownLine.summary}
+                {positionNote}
+              </p>
+            ) : null}
+            {shownLine && stepStatsText ? (
+              <p
+                className="drill-step-stats"
+                aria-live="polite"
+                title="Played is this move's share of games in the opener's current filters. White / Draw / Black is how those games ended. Computer is the stored engine move. The green squares stay the book move."
+              >
+                {stepStatsText}
               </p>
             ) : null}
           </div>
+
+          <AnimatePresence mode="wait">
+            {halo && haloKey ? (
+              <HaloPolishedNotification
+                key={haloKey}
+                className="drill-ply-alert"
+                title={previewActive ? `${halo.title} · preview` : halo.title}
+                description={
+                  previewActive
+                    ? previewBusy
+                      ? 'Watch the board — then undo to keep drilling the safe move.'
+                      : 'That’s the danger. Undo to return and play the book move.'
+                    : halo.description
+                }
+                politeness={plyAlert ? 'alert' : 'status'}
+                rimVariant={halo.rimVariant ?? (plyAlert ? 'destructive' : 'default')}
+                slideFrom="top"
+                action={
+                  canPreview ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={previewActive ? 'secondary' : 'outline'}
+                      disabled={!previewActive && previewBusy}
+                      onClick={previewActive ? onExitPreview : onStartPreview}
+                    >
+                      {previewActive ? (
+                        <>
+                          <Undo2 data-icon="inline-start" />
+                          Back to drill
+                        </>
+                      ) : (
+                        <>
+                          <Eye data-icon="inline-start" />
+                          Preview
+                        </>
+                      )}
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : null}
+          </AnimatePresence>
 
           {showHintBubble ? (
             <div
@@ -348,18 +465,6 @@ export const DrillDialog: FC<Props> = ({
                     : wrongFlash
                       ? 'Not that one — check the hint and try again.'
                       : hint}
-                {status !== 'complete' &&
-                !mistakeMessage &&
-                !wrongFlash &&
-                hintRevealed &&
-                (winRate || engineBest) ? (
-                  <p className="drill-coach-meta">
-                    {winRate ? <span>Win rate: {winRate}</span> : null}
-                    {engineBest ? (
-                      <span>Engine best: {engineBest}</span>
-                    ) : null}
-                  </p>
-                ) : null}
                 {mistakeMessage && onTryAgain ? (
                   <div className="drill-try-again">
                     <PixelButton onClick={onTryAgain}>Try again</PixelButton>
@@ -369,7 +474,9 @@ export const DrillDialog: FC<Props> = ({
             </div>
           ) : null}
 
-          {shownLine && status === 'complete' && onScrubPly ? (
+          {shownLine &&
+          (status === 'playing' || status === 'complete') &&
+          onScrubPly ? (
             <div
               className="drill-scrub"
               role="group"
@@ -377,19 +484,19 @@ export const DrillDialog: FC<Props> = ({
             >
               <PixelButton
                 ghost
-                disabled={plyIndex <= 0}
-                onClick={() => onScrubPly(plyIndex - 1)}
+                disabled={(scrubPly ?? plyIndex) <= 0 || previewActive}
+                onClick={() => onScrubPly((scrubPly ?? plyIndex) - 1)}
                 aria-label="Previous ply"
               >
                 ‹
               </PixelButton>
               <span className="drill-scrub-label">
-                {plyIndex}/{scrubMax}
+                {scrubPly ?? plyIndex}/{scrubMax}
               </span>
               <PixelButton
                 ghost
-                disabled={plyIndex >= scrubMax}
-                onClick={() => onScrubPly(plyIndex + 1)}
+                disabled={(scrubPly ?? plyIndex) >= scrubMax || previewActive}
+                onClick={() => onScrubPly((scrubPly ?? plyIndex) + 1)}
                 aria-label="Next ply"
               >
                 ›

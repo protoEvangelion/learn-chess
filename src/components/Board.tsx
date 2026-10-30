@@ -422,8 +422,9 @@ export const BoardComponent: FC<{
 
   endDragRef.current = endDrag
 
+  // Still apply scripted moves while readOnly (e.g. drill danger preview).
   useEffect(() => {
-    if (readOnly || !pendingEngineMove || movingTo) return
+    if (!pendingEngineMove || movingTo) return
     const target = getTile(board, pendingEngineMove.newPosition)
     if (!target) {
       onEngineMoveConsumed?.()
@@ -431,14 +432,7 @@ export const BoardComponent: FC<{
     }
     setMovingTo({ move: pendingEngineMove, tile: target })
     onEngineMoveConsumed?.()
-  }, [
-    readOnly,
-    pendingEngineMove,
-    movingTo,
-    board,
-    onEngineMoveConsumed,
-    setMovingTo,
-  ])
+  }, [pendingEngineMove, movingTo, board, onEngineMoveConsumed, setMovingTo])
 
   // Fire queued premove as soon as it's our turn and the board is idle.
   useEffect(() => {

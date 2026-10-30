@@ -208,3 +208,33 @@ export function CoachBotIcon() {
     </svg>
   )
 }
+
+/** Knight glyph for the seat-flip control — same stroke as the orbit SVGs. */
+export function SeatKnightIcon({
+  color,
+  spinning = false,
+}: {
+  color: 'white' | 'black'
+  spinning?: boolean
+}) {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill={color === 'black' ? 'currentColor' : 'none'}
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={['hud-seat-knight', spinning ? 'is-spinning' : '']
+        .filter(Boolean)
+        .join(' ')}
+      aria-hidden="true"
+    >
+      <path d="M7 20h10" />
+      <path d="M9 20v-6l-2.5-2.5.8-4L11 6l1-3h2.5L16 5.5 19 7v2.5L16.5 12V20" />
+      <circle cx="11.25" cy="8.25" r="0.35" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}

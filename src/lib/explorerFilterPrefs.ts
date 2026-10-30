@@ -11,6 +11,9 @@ import {
 
 const KEY = 'chess-3d:explorerFilters'
 
+/** Fired in this tab when the opener saves a filter. `storage` only fires in other tabs. */
+export const EXPLORER_FILTERS_EVENT = 'chess-3d:explorer-filters'
+
 type Stored = {
   ratings?: unknown
   speeds?: unknown
@@ -37,6 +40,20 @@ function read(): Stored {
 function write(patch: Stored) {
   const next = { ...read(), ...patch }
   localStorage.setItem(KEY, JSON.stringify(next))
+  window.dispatchEvent(new Event(EXPLORER_FILTERS_EVENT))
+}
+
+/** Re-read filters when the opener saves them, in this tab or another. */
+export function subscribeExplorerFilters(onChange: () => void): () => void {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === KEY) onChange()
+  }
+  window.addEventListener('storage', onStorage)
+  window.addEventListener(EXPLORER_FILTERS_EVENT, onChange)
+  return () => {
+    window.removeEventListener('storage', onStorage)
+    window.removeEventListener(EXPLORER_FILTERS_EVENT, onChange)
+  }
 }
 
 export function loadExplorerRatings(): RatingBandId[] {

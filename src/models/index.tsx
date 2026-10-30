@@ -73,18 +73,12 @@ export type ModelProps = {
 }
 
 const SELECT_LIFT = 0.35
-const LIFT = 0.55
 
 function easeInOutCubic(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 }
 
 type MoveAnim = {
-  start: number
-  duration: number
-  fromX: number
-  fromY: number
-  fromZ: number
   toX: number
   toZ: number
   done: boolean
@@ -188,15 +182,8 @@ export const MeshWrapper: FC<ModelProps> = ({
       moveAnim.current = null
     } else if (!moveAnim.current) {
       settled.current = false
-      const travel = Math.hypot(target.x, target.y)
-      const lifted = mesh.position.y > 0.02 * tile
+      // Snap onto the destination — no post-drop slide.
       moveAnim.current = {
-        start: performance.now(),
-        // Drag drop: snap down fast; click-move: keep a short hop travel.
-        duration: lifted ? 45 + travel * 17 : 110 + travel * 42,
-        fromX: mesh.position.x,
-        fromY: mesh.position.y,
-        fromZ: mesh.position.z,
         toX: dist(target.x),
         toZ: dist(target.y),
         done: false,
@@ -205,20 +192,9 @@ export const MeshWrapper: FC<ModelProps> = ({
 
     const anim = moveAnim.current
     if (anim && !anim.done) {
-      const t = Math.min(1, (performance.now() - anim.start) / anim.duration)
-      const e = easeInOutCubic(t)
-      mesh.position.x = anim.fromX + (anim.toX - anim.fromX) * e
-      mesh.position.z = anim.fromZ + (anim.toZ - anim.fromZ) * e
-      // Already lifted from a drag → ease straight down; otherwise hop.
-      const hop =
-        anim.fromY > 0.02 * tile ? 0 : Math.sin(Math.PI * e) * LIFT * tile
-      mesh.position.y = anim.fromY + (0 - anim.fromY) * e + hop
-
-      if (t >= 1) {
-        anim.done = true
-        mesh.position.set(anim.toX, 0, anim.toZ)
-        finishRef.current()
-      }
+      anim.done = true
+      mesh.position.set(anim.toX, 0, anim.toZ)
+      finishRef.current()
       return
     }
 

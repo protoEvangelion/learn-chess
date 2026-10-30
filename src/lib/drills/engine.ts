@@ -20,6 +20,23 @@ export function hintForPly(line: DrillLine, plyIndex: number) {
 }
 
 /**
+ * Sentence for the position on the board. The first step is the line's
+ * idea. After that, on our turn, it is what they just played and the move
+ * this line wants from us.
+ */
+export function noteForPly(line: DrillLine, plyIndex: number) {
+  const side = line.side ?? 'white'
+  const idx = Math.max(0, Math.min(plyIndex, line.moves.length - 1))
+  const firstPlayerPly = side === 'black' ? 1 : 0
+  if (idx <= firstPlayerPly && line.summary.trim()) return line.summary.trim()
+  const current = line.moves[idx]
+  if (!current) return ''
+  if (!isPlayerPly(idx, side) || idx === 0) return current.hint
+  const prev = line.moves[idx - 1]
+  return prev ? `${prev.hint} ${current.hint}` : current.hint
+}
+
+/**
  * Study this drill line on Lichess analysis with the moves loaded.
  * (Opening search `?q=` does not resolve move paths — it only text-searches names.)
  * From analysis, “Opening explorer” shows game stats for the position.

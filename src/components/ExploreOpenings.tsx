@@ -207,6 +207,18 @@ function sanKey(san: string) {
   return san.replace(/[+#]$/, '')
 }
 
+/** Next-move row whose UCI matches Stockfish’s top choice from the current position. */
+function isRecommendedRow(
+  row: ExploreRow,
+  recommendedUci: string | null | undefined,
+  playedLen: number,
+) {
+  if (!recommendedUci || row.kind === 'status') return false
+  if (row.path.length !== playedLen + 1) return false
+  const parts = row.play.split(',')
+  return parts[parts.length - 1] === recommendedUci
+}
+
 /** Walk the played line, opening each move until its replies are loaded. */
 function followPlayedLine(
   rows: readonly ExploreRow[],
@@ -391,6 +403,7 @@ function MoveTable({
   speeds,
   months,
   playedSans,
+  recommendedUci,
   onPlaySan,
 }: {
   rows: ExploreRow[]
@@ -398,6 +411,7 @@ function MoveTable({
   speeds: ExplorerSpeed[]
   months: ExplorerMonth[]
   playedSans: string[]
+  recommendedUci?: string | null
   onPlaySan?: (sans: string[], play?: string) => void
 }) {
   const [data, setData] = useState(rows)
@@ -767,6 +781,8 @@ function MoveTable({
                   row.getCanExpand() && 'is-expandable',
                   row.original.path.length > 0 && 'cursor-pointer',
                   row.id === activeId && 'is-current',
+                  isRecommendedRow(row.original, recommendedUci, playedSans.length) &&
+                    'is-recommended',
                 )}
                 data-san={row.original.san || undefined}
                 data-row-id={row.id}
@@ -807,7 +823,9 @@ function MoveTable({
 export const ExploreOpenings: FC<{
   onPlaySan?: (sans: string[], play?: string) => void
   playedSans?: string[]
-}> = ({ onPlaySan, playedSans = [] }) => {
+  /** Stockfish best UCI for the current board position. */
+  recommendedUci?: string | null
+}> = ({ onPlaySan, playedSans = [], recommendedUci = null }) => {
   const [ratings, setRatings] = useState<RatingBandId[]>(() => loadExplorerRatings())
   const [speeds, setSpeeds] = useState<ExplorerSpeed[]>(() => loadExplorerSpeeds())
   const [availableMonths, setAvailableMonths] = useState<ExplorerMonth[]>([])
@@ -968,6 +986,7 @@ export const ExploreOpenings: FC<{
           speeds={selectedSpeeds}
           months={selectedMonths}
           playedSans={playedSans}
+          recommendedUci={recommendedUci}
           onPlaySan={onPlaySan}
         />
       ) : null}

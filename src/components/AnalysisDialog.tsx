@@ -85,6 +85,8 @@ type Props = {
   onPreviewMove?: (move: { fen: string; san: string } | null) => void
   onPlaySan?: (sans: string[], play?: string) => void
   playedSans?: string[]
+  /** Stockfish best UCI for the live board — greens that row in Explore. */
+  recommendedUci?: string | null
   linePly?: number
   lineLength?: number
   onLineStep?: (index: number) => void
@@ -505,7 +507,12 @@ function MoveChoices({
             {rows.map((row) => (
               <tr
                 key={row.san}
-                className={row.san === ply.san ? 'is-played' : undefined}
+                className={[
+                  row.engine ? 'is-engine' : '',
+                  row.san === ply.san ? 'is-played' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined}
                 onMouseEnter={() =>
                   previewRef.current?.({ fen: ply.fen, san: row.san })
                 }
@@ -626,6 +633,7 @@ export const AnalysisDialog: FC<Props> = ({
   onPreviewMove,
   onPlaySan,
   playedSans = [],
+  recommendedUci = null,
   linePly = 0,
   lineLength = 0,
   onLineStep,
@@ -859,7 +867,11 @@ export const AnalysisDialog: FC<Props> = ({
 
         <div className="analysis-dialog-body">
           {tab === 'explore' && open ? (
-            <ExploreOpenings onPlaySan={onPlaySan} playedSans={playedSans} />
+            <ExploreOpenings
+              onPlaySan={onPlaySan}
+              playedSans={playedSans}
+              recommendedUci={recommendedUci}
+            />
           ) : null}
 
           {analyzing && tab === 'games' && (

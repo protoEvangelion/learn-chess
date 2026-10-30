@@ -13,14 +13,21 @@ function line(
   eco: string | undefined,
   family: DrillFamilyId,
   pairs: Array<[string, string]>,
+  /** SAN of the ply where the core idea becomes clear (Halo once). */
+  ideaSan?: string,
 ): DrillLine {
+  let ideaMarked = false
   return {
     id,
     name,
     summary,
     eco,
     family,
-    moves: pairs.map(([san, hint]) => ({ san, hint })),
+    moves: pairs.map(([san, hint]) => {
+      const revealIdea = Boolean(ideaSan && !ideaMarked && san === ideaSan)
+      if (revealIdea) ideaMarked = true
+      return revealIdea ? { san, hint, revealIdea: true } : { san, hint }
+    }),
   }
 }
 
@@ -61,6 +68,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Kxe7', 'Recapture — collect the hanging rook.'],
       ['Qxa1', 'Material and development. Drill complete.'],
     ],
+    'Ba3',
   ),
 
   line(
@@ -104,6 +112,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Ne7', 'Interpose — lift the rook.'],
       ['Re1', 'Pin and pressure. Line done.'],
     ],
+    'Qb3',
   ),
 
   line(
@@ -143,6 +152,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['dxe5', 'Recapture — take on a5.'],
       ['Qxa5', 'Bishop collected. Line done.'],
     ],
+    'Rc1',
   ),
 
   line(
@@ -180,6 +190,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Qe7', 'Block — take the knight.'],
       ['Qxb4', 'Extra piece. Done.'],
     ],
+    'Qe1+',
   ),
 
   line(
@@ -205,6 +216,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['d6', 'Solid — castle and enjoy the lead.'],
       ['O-O', 'King home. Drill complete.'],
     ],
+    'd4',
   ),
 
   line(
@@ -236,6 +248,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['f6', 'They break the pin — rip open with exf6.'],
       ['exf6', 'Structure shattered. Good enough for the drill.'],
     ],
+    'e5',
   ),
 
   line(
@@ -283,6 +296,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Nxe4', 'Recapture — back-rank mate.'],
       ['Re8#', 'Mate. Done.'],
     ],
+    'Qxg7',
   ),
 
   line(
@@ -334,6 +348,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Nxh6', 'Take bishop — clean the e4 knight.'],
       ['Rxe4', 'Calm end. Done.'],
     ],
+    'Re7',
   ),
 
   line(
@@ -369,6 +384,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Bxg5', 'Take.'],
       ['Nxg5', 'Knight in. Line pause point — initiative secured.'],
     ],
+    'Re1',
   ),
 
   line(
@@ -414,6 +430,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['cxb5', 'They grab — crash on e7.'],
       ['Rxe7', 'Collapse. Done.'],
     ],
+    'Nxf7',
   ),
 
   line(
@@ -465,6 +482,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Qxe7', 'Forced — mate.'],
       ['Qh8#', 'Suffocation mate. Done.'],
     ],
+    'Qh5',
   ),
 
   line(
@@ -510,6 +528,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Bxb5', 'Trade — queen recaptures.'],
       ['Qxb5', 'Extra exchange pressure. Done.'],
     ],
+    'Qe2',
   ),
 
   line(
@@ -551,6 +570,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Kg8', 'Back — rook lift.'],
       ['Rh4', 'Threaten mate. Pattern locked.'],
     ],
+    'Nxh7',
   ),
 
   line(
@@ -586,6 +606,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Nd6', 'Kick — queen slides.'],
       ['Qb3', 'Safe square. Done.'],
     ],
+    'Qxc4',
   ),
 
   line(
@@ -611,6 +632,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['O-O', 'Castle — take the knight.'],
       ['Qxe4', 'Extra piece. Done.'],
     ],
+    'Qd5',
   ),
 
   line(
@@ -630,6 +652,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['d6', 'Passive hold — clamp with d5.'],
       ['d5', 'Space and kick. Done.'],
     ],
+    'd5',
   ),
 
   line(
@@ -665,6 +688,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['bxc6', 'Structure — take on e7.'],
       ['Rxe7', 'Exchange up. Done.'],
     ],
+    'Rxe4+',
   ),
 
   line(
@@ -702,6 +726,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Rde8', 'Challenge — align the queen.'],
       ['Qe2', 'Battery. Done.'],
     ],
+    'Nxe6',
   ),
 
   line(
@@ -737,6 +762,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Bxd8', 'Recapture — rook to c4.'],
       ['Rc4', 'Sit on the weak pawns. Done.'],
     ],
+    'Rc4',
   ),
 
   line(
@@ -772,6 +798,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Qd5', 'Centralize — clamp with c3.'],
       ['c3', 'Solid. Done.'],
     ],
+    'Bf4',
   ),
 
   line(
@@ -797,6 +824,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['a6', 'Slow — castle long.'],
       ['O-O-O', 'Opposite castles. Done.'],
     ],
+    'O-O-O',
   ),
 
   line(
@@ -826,6 +854,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Be7', 'Break — castle long.'],
       ['O-O-O', 'Ready to attack. Done.'],
     ],
+    'O-O-O',
   ),
 
   line(
@@ -853,6 +882,7 @@ export const ITALIAN_LINES: DrillLine[] = [
       ['Be7', 'Break — castle long.'],
       ['O-O-O', 'Attack ready. Done.'],
     ],
+    'O-O-O',
   ),
 ]
 

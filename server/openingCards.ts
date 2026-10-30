@@ -95,50 +95,75 @@ async function ensureSchema() {
 
 function caroFamilyDetails(id: string) {
   const plans: Record<string, { themes: string[]; whitePlan: string; blackPlan: string }> = {
-    'caro-loose-bishop': {
-      themes: ['loose bishop', 'pin on the knight', 'material grab'],
-      whitePlan: 'Develop the bishop to c4 early, then try to open the center with d3.',
-      blackPlan: 'Take the bishop with …dxc4 and pin the knight with …Bg4.',
+    'caro-trap-panov-rook': {
+      themes: ['Accelerated Panov', 'rook on c1', 'queen trap'],
+      whitePlan: 'Trade on d5, check with Bb5, and grab the d5-pawn with the queen.',
+      blackPlan: 'Jump to c5 and d3, then sack into Rxc1 so White’s queenside cannot move.',
     },
-    'caro-bishop-grab': {
-      themes: ['Hillbilly', 'loose piece', 'queen recapture'],
-      whitePlan: 'Play Bc4, trade on d5, and capture the d5-pawn with the bishop.',
-      blackPlan: 'Hit back with …d5 and …cxd5, then take the bishop with the queen.',
+    'caro-trap-na4': {
+      themes: ['Two Knights', 'knight on the rim', 'pawn trap'],
+      whitePlan: 'Skip d4, prop e4 with f3, and park the knight on a4.',
+      blackPlan: 'Kick with …d4, play …e6, then …b5 and threaten to take the rim knight.',
     },
-    'caro-queen-raid': {
-      themes: ['early queen', 'central counter', 'recapture'],
-      whitePlan: 'Bring the queen out to h5 and trade on d5.',
-      blackPlan: 'Ignore the queen, play …d5, and recapture with the c-pawn.',
+    'caro-trap-nd6': {
+      themes: ['smothered mate', 'Qe2 pin', 'White trap'],
+      whitePlan: 'After …Bf5, put the queen on e2 and mate with Nd6 if Black plays …Nd7.',
+      blackPlan: 'Do not play …Nd7 while the e-pawn is pinned. Develop another way.',
     },
-    'caro-hillbilly': {
-      themes: ['Hillbilly', 'bishop retreat', 'pin on the knight'],
-      whitePlan: 'Play Bc4, trade on d5, drop the bishop to b3, and build with d4.',
-      blackPlan: 'Recapture on d5, develop the knight, and pin with …Bg4.',
+    'caro-trap-h-rook': {
+      themes: ['h-pawn storm', 'rook sack', 'promotion'],
+      whitePlan: 'Retreat the knight to g3 and try to hold the kingside.',
+      blackPlan: 'Push …h5-h4, sack on h2, check with …Qa5+, and promote the h-pawn.',
     },
-    'caro-advance-pin': {
-      themes: ['d4 attack', 'pin on the knight', 'f5 outpost'],
-      whitePlan: 'Push e5, hold d4, and try to break the pin on the f3-knight.',
-      blackPlan: 'Chip d4 with …c5, pin the knight, and plant a knight on f5.',
+    'caro-trap-reti': {
+      themes: ['Reti mate', 'queen sack', 'White trap'],
+      whitePlan: 'Play Qd3, castle long, and meet …Nxe4 with Qd8+ and a bishop mate.',
+      blackPlan: 'Do not take the e4-knight after White castles long. Keep developing.',
+    },
+    'caro-botvinnik-carls': {
+      themes: ['Advance', 'd4 attack', 'Botvinnik-Carls'],
+      whitePlan: 'Push e5 and hold the d4-pawn.',
+      blackPlan: 'Always chip d4 with …c5.',
     },
     'caro-exchange': {
-      themes: ['open c-file', 'knight development', 'pin on the knight'],
-      whitePlan: 'Trade on d5, develop Nf3 and Nc3, and live with the pin.',
-      blackPlan: 'Recapture with the c-pawn, develop …Nc6, and pin the knight with …Bg4.',
+      themes: ['Exchange', 'Rubinstein', 'open c-file'],
+      whitePlan: 'Trade on d5, develop the bishop to d3, support with c3, and put the dark bishop on f4.',
+      blackPlan: 'Recapture with the c-pawn and develop both knights, …Nc6 and …Nf6.',
+    },
+    'caro-panov': {
+      themes: ['Panov', 'isolated pawn', 'castling'],
+      whitePlan: 'Trade on d5, play c4, trade again, and castle after pinning both knights.',
+      blackPlan: 'Develop …Nc6, …Nf6, and …Bd6, then castle against the isolated d-pawn.',
     },
     'caro-classical': {
-      themes: ['open e-file', 'knight trade', 'central pawn duo'],
-      whitePlan: 'Play Nc3, recapture on e4, and trade knights on f6.',
-      blackPlan: 'Take on e4, play …Nf6, and recapture with the e-pawn.',
+      themes: ['Classical', 'Seirawan', 'bishop trade'],
+      whitePlan: 'Chase the light bishop with h4 and h5, trade it on d3, and castle queenside.',
+      blackPlan: 'Tuck the bishop to h7, trade it off, and finish with …Bd6.',
     },
-    'caro-fantasy': {
-      themes: ['weakened diagonal', 'central strike', 'queen pressure'],
-      whitePlan: 'Play f3 and take on e5, opening the diagonal toward the king.',
-      blackPlan: 'Skip the pawn grab. Play …e5 and bring the queen to b6.',
+    'caro-karpov': {
+      themes: ['Karpov', 'knight on g5', 'queen on e4'],
+      whitePlan: 'Jump to g5, develop, then drop the knight back to e4 and recapture on e4 with the queen.',
+      blackPlan: 'Meet Ng5 with …Ngf6, develop …Bd6, kick the knight with …h6, and trade it off.',
+    },
+    'caro-tartakower': {
+      themes: ['Tartakower', 'Perlis', 'kingside castle'],
+      whitePlan: 'Trade knights on f6, develop the bishop to d3, and bring the queen to c2.',
+      blackPlan: 'Recapture with the e-pawn, castle, put the bishop on d6, and play …h6.',
+    },
+    'caro-maroczy': {
+      themes: ['Maróczy', 'gambit', 'open center'],
+      whitePlan: 'Play f3, recapture on e4 with the f-pawn, and develop the bishop to c4.',
+      blackPlan: 'Strike with …e5 and accept the gambit by taking on d4.',
+    },
+    'caro-two-knights': {
+      themes: ['Two Knights', 'Mindeno', 'bishop retreat'],
+      whitePlan: 'Develop both knights, then ask the bishop a question with h3.',
+      blackPlan: 'Pin the knight with …Bg4 and keep the pin by stepping to h5.',
     },
     'caro-modern': {
-      themes: ['knight on d2', 'Classical transposition', 'open e-file'],
-      whitePlan: 'Develop the knight to d2, recapture on e4, and trade on f6.',
-      blackPlan: 'Take on e4 and meet the Classical board with …Nf6 and …exf6.',
+      themes: ['Modern', 'knight on d2', 'open e-file'],
+      whitePlan: 'Develop the knight to d2, then recapture on e4 with that knight.',
+      blackPlan: 'Take on e4. The Classical and the Karpov both start from the recapture.',
     },
   }
   const plan = plans[id] ?? {

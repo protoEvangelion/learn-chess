@@ -25,6 +25,7 @@ import { PanelViewFit } from '@/components/PanelViewFit'
 import {
   CoachBotIcon,
   GradientButtonGroup,
+  SeatKnightIcon,
 } from '@/components/ui/gradient-button-group'
 import { HudEval } from '@/components/HudEval'
 import { BrandMark } from '@/components/BrandMark'
@@ -35,6 +36,8 @@ import { Hammer, Joystick } from 'lucide-react'
 import type { FrequencyArrow } from '@/lib/replyArrows'
 import { Border } from '@models/Border'
 import { BoardSurface, preloadBoard } from '@models/BoardSurface'
+import { EvalPillar } from '@models/EvalPillar'
+import { advantageFromBest } from '@/lib/advantage'
 import { RoomScene, preloadRoom } from '@models/RoomScene'
 import { preloadPieceSet } from '@models/PieceModel'
 import { useGameState, type HistoryItem } from '@/state/game'
@@ -116,7 +119,12 @@ import {
 } from '@/lib/panelWidth'
 import { DRILL_LINES } from '@/lib/drills/italian'
 import type { DrillLine, DrillOpeningId, DrillProgress } from '@/lib/drills/types'
-import { drillOpeningId } from '@/lib/drills/types'
+import {
+  drillOpeningId,
+  drillPlyPreview,
+  loadDrillOpening,
+  saveDrillOpening,
+} from '@/lib/drills/types'
 import {
   expectedSan,
   hintForPly,
@@ -554,8 +562,9 @@ export default function App() {
     const fromUrl = readOpeningFromUrl()
     if (fromUrl) return fromUrl
     const lineId = readLineFromUrl()
-    const saved = lineId ? DRILL_LINES.find((l) => l.id === lineId) : undefined
-    return saved ? drillOpeningId(saved) : 'italian'
+    const fromLine = lineId ? DRILL_LINES.find((l) => l.id === lineId) : undefined
+    if (fromLine) return drillOpeningId(fromLine)
+    return loadDrillOpening()
   })
   const [drillPlyIndex, setDrillPlyIndex] = useState(0)
   const [drillStatus, setDrillStatus] = useState<
@@ -585,6 +594,18 @@ export default function App() {
     finalBoard: Board
     turn: Color
   } | null>(null)
+  /** Temporary danger/idea line on the board; restore snapshot to keep drilling. */
+  const [drillPreview, setDrillPreview] = useState<{
+    resumeBoard: Board
+    resumeTurn: Color
+    resumeHistory: HistoryItem[]
+    sans: string[]
+  } | null>(null)
+  /** Undone drill plies for forward scrub while still playing. */
+  const drillFutureRef = useRef<
+    { item: HistoryItem; boardAfter: Board; turnAfter: Color }[]
+  >([])
+  const [drillFutureCount, setDrillFutureCount] = useState(0)
   const [openingCard, setOpeningCard] = useState<OpeningCard | null>(null)
   const [openingCardStatus, setOpeningCardStatus] = useState<
     'idle' | 'loading' | 'ready' | 'error'
@@ -629,6 +650,17 @@ export default function App() {
   const clampedOptionIndex =
     lines.length === 0 ? 0 : Math.min(moveOptionIndex, lines.length - 1)
   const best = lines[clampedOptionIndex] ?? null
+  const advantage = useMemo(() => advantageFromBest(best), [best])
+  const preferredSeat: Color =
+    reviewImport?.playerColor ??
+    (drillOpen && drillLine?.side ? drillLine.side : playerColor)
+  const [viewSeat, setViewSeat] = useState<Color>(preferredSeat)
+  const [seatSpinning, setSeatSpinning] = useState(false)
+  useEffect(() => {
+    setViewSeat(preferredSeat)
+  }, [preferredSeat])
+  const seatYaw = viewSeat === 'black' ? Math.PI : 0
+  const seatKnightColor: Color = turn === 'white' ? 'black' : 'white'
   const analysisReadyForFen =
     analysisStatus === 'idle' &&
     !!analysis &&
@@ -793,7 +825,6 @@ export default function App() {
     if (
       !drillLine ||
       drillStatus !== 'playing' ||
-      !drillHintRevealed ||
       !isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')
     ) {
       return null
@@ -801,15 +832,7 @@ export default function App() {
     const san = expectedSan(drillLine, drillPlyIndex)
     if (!san) return null
     return squaresForSan(board, history, turn, san)
-  }, [
-    board,
-    drillHintRevealed,
-    drillLine,
-    drillPlyIndex,
-    drillStatus,
-    history,
-    turn,
-  ])
+  }, [board, drillLine, drillPlyIndex, drillStatus, history, turn])
 
   const reviewArrow = useMemo(() => {
     if (!reviewImport || !analysisReport || scrubIndex <= 0) return null
@@ -1049,6 +1072,9 @@ export default function App() {
     setDrillMistake(null)
     setDrillMistakes(false)
     setDrillReview(null)
+    setDrillPreview(null)
+    drillFutureRef.current = []
+    setDrillFutureCount(0)
     clearCoachThread()
     drillChatGameIdRef.current = null
     if (drillWrongTimerRef.current != null) {
@@ -1060,7 +1086,7 @@ export default function App() {
   // After each completed ply in a drill, advance index / finish line
   useEffect(() => {
     if (!drillLine || drillStatus !== 'playing' || movingTo) return
-    if (drillMistake) return
+    if (drillMistake || drillPreview) return
     if (history.length !== drillPlyIndex + 1) return
 
     // Player just moved — Chessreps-style: land wrong moves, then coach + try again.
@@ -1072,6 +1098,8 @@ export default function App() {
         last &&
         !historyItemMatchesSan(last, history.slice(0, -1), expected)
       ) {
+        drillFutureRef.current = []
+        setDrillFutureCount(0)
         setDrillMistakes(true)
         setDrillMistake({
           from: last.from,
@@ -1080,6 +1108,12 @@ export default function App() {
         })
         return
       }
+    }
+
+    // New play (not scrub-forward) clears the redo buffer.
+    if (drillFutureRef.current.length > 0) {
+      drillFutureRef.current = []
+      setDrillFutureCount(0)
     }
 
     const next = drillPlyIndex + 1
@@ -1116,6 +1150,7 @@ export default function App() {
     drillPlyIndex,
     drillMistake,
     drillMistakes,
+    drillPreview,
     drillProgress,
     history,
     movingTo,
@@ -1124,7 +1159,9 @@ export default function App() {
   // Auto-play Black replies from the drill line
   useEffect(() => {
     if (!drillLine || drillStatus !== 'playing') return
-    if (drillMistake) return
+    if (drillMistake || drillPreview) return
+    // Scrubbing through undone plies — don't re-fire book moves.
+    if (drillFutureCount > 0) return
     if (movingTo || pendingEngineMove) return
     if (isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) return
     if (history.length !== drillPlyIndex) return
@@ -1137,6 +1174,8 @@ export default function App() {
     drillLine,
     drillPlyIndex,
     drillMistake,
+    drillPreview,
+    drillFutureCount,
     drillStatus,
     history,
     movingTo,
@@ -1144,16 +1183,66 @@ export default function App() {
     turn,
   ])
 
+  // Auto-play danger/idea preview SANs on the board (1s between plies)
+  useEffect(() => {
+    if (!drillPreview) return
+    if (movingTo || pendingEngineMove) return
+    const applied = history.length - drillPreview.resumeHistory.length
+    if (applied < 0 || applied >= drillPreview.sans.length) return
+    const san = drillPreview.sans[applied]
+    const delayMs = applied === 0 ? 0 : 1000
+    const timer = window.setTimeout(() => {
+      const move = sanToBoardMove(board, history, turn, san)
+      if (move) setPendingEngineMove(move)
+    }, delayMs)
+    return () => window.clearTimeout(timer)
+  }, [board, drillPreview, history, movingTo, pendingEngineMove, turn])
+
   const validateDrillMove = useCallback(
     (_move: Move) => {
       if (!drillLine || drillStatus !== 'playing') return true
-      if (drillMistake) return false
+      if (drillMistake || drillPreview) return false
       if (!isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) return false
       // Allow any legal move — wrong book moves land, then coach asks to try again.
       return true
     },
-    [drillLine, drillMistake, drillPlyIndex, drillStatus],
+    [drillLine, drillMistake, drillPreview, drillPlyIndex, drillStatus],
   )
+
+  function startDrillPreview() {
+    if (drillPreview || drillMistake || drillStatus !== 'playing') return
+    if (!drillLine) return
+    const sans = drillPlyPreview(drillLine.moves[drillPlyIndex])
+    if (!sans) return
+    setSelected(null)
+    setMoves([])
+    setPendingEngineMove(null)
+    setGameOver(null)
+    setEndgameDismissed(true)
+    setDrillPreview({
+      resumeBoard: copyBoard(board),
+      resumeTurn: turn,
+      resumeHistory: [...history],
+      sans,
+    })
+  }
+
+  function exitDrillPreview() {
+    if (!drillPreview) return
+    skipEngineOnce.current = true
+    setPendingEngineMove(null)
+    setSelected(null)
+    setMoves([])
+    setGameOver(null)
+    setEndgameDismissed(true)
+    setBoard(copyBoard(drillPreview.resumeBoard))
+    useGameState.setState({
+      history: drillPreview.resumeHistory,
+      turn: drillPreview.resumeTurn,
+      movingTo: null,
+    })
+    setDrillPreview(null)
+  }
 
   function retryDrillMistake() {
     if (!drillMistake || history.length === 0) return
@@ -1215,7 +1304,9 @@ export default function App() {
     resetHistory()
     resetTurn()
     setPlayerColor(line.side ?? 'white')
-    setDrillOpening(drillOpeningId(line))
+    const opening = drillOpeningId(line)
+    setDrillOpening(opening)
+    saveDrillOpening(opening)
     setDrillLine(line)
     setDrillPlyIndex(0)
     setDrillStatus('playing')
@@ -1224,6 +1315,9 @@ export default function App() {
     setDrillWrongFlash(false)
     setDrillMistake(null)
     setDrillReview(null)
+    setDrillPreview(null)
+    drillFutureRef.current = []
+    setDrillFutureCount(0)
     setPanel('drill')
     replaceDrillInUrl(drillOpeningId(line), line.id)
 
@@ -1261,6 +1355,7 @@ export default function App() {
 
   function selectDrillOpening(next: DrillOpeningId) {
     setDrillOpening(next)
+    saveDrillOpening(next)
     const current = drillLine
     const fits = current != null && drillOpeningId(current) === next
     if (!fits) {
@@ -1272,6 +1367,9 @@ export default function App() {
       setDrillMistake(null)
       setDrillMistakes(false)
       setDrillReview(null)
+      setDrillPreview(null)
+      drillFutureRef.current = []
+      setDrillFutureCount(0)
       setPendingEngineMove(null)
       setOpeningCard(null)
       setOpeningCardStatus('idle')
@@ -1285,15 +1383,89 @@ export default function App() {
   }
 
   function scrubDrillTo(index: number) {
-    if (!drillReview || drillStatus !== 'complete') return
-    const next = Math.max(0, Math.min(index, drillReview.history.length))
-    const pos = positionAtPly(drillReview, next)
-    setDrillPlyIndex(next)
-    setBoard(pos.board)
-    useGameState.setState({ turn: pos.turn, movingTo: null })
+    if (movingTo || !drillLine) return
+
+    if (drillStatus === 'complete') {
+      if (!drillReview) return
+      const next = Math.max(0, Math.min(index, drillReview.history.length))
+      const pos = positionAtPly(drillReview, next)
+      setDrillPlyIndex(next)
+      setBoard(pos.board)
+      useGameState.setState({ turn: pos.turn, movingTo: null })
+      setSelected(null)
+      setMoves([])
+      setPendingEngineMove(null)
+      return
+    }
+
+    if (drillStatus !== 'playing') return
+
+    let hist = history
+    let boardNow = board
+    let turnNow = turn
+    if (drillPreview) {
+      hist = drillPreview.resumeHistory
+      boardNow = drillPreview.resumeBoard
+      turnNow = drillPreview.resumeTurn
+      setDrillPreview(null)
+    }
+
+    const future = drillFutureRef.current
+    const total = hist.length + future.length
+    const next = Math.max(0, Math.min(index, total))
+
+    skipEngineOnce.current = true
+    setPendingEngineMove(null)
     setSelected(null)
     setMoves([])
-    setPendingEngineMove(null)
+    setDrillMistake(null)
+    setDrillWrongFlash(false)
+    setDrillHintRevealed(false)
+    setGameOver(null)
+
+    if (next === hist.length) {
+      setBoard(copyBoard(boardNow))
+      useGameState.setState({ history: hist, turn: turnNow, movingTo: null })
+      setDrillPlyIndex(next)
+      setDrillFutureCount(future.length)
+      return
+    }
+
+    if (next < hist.length) {
+      const kept = hist.slice(0, next)
+      const removed = hist.slice(next)
+      for (let i = removed.length - 1; i >= 0; i -= 1) {
+        const item = removed[i]
+        future.unshift({
+          item,
+          boardAfter:
+            i === removed.length - 1
+              ? copyBoard(boardNow)
+              : copyBoard(removed[i + 1].board),
+          turnAfter:
+            i === removed.length - 1 ? turnNow : removed[i + 1].piece.color,
+        })
+        boardNow = item.board
+        turnNow = item.piece.color
+      }
+      setBoard(copyBoard(boardNow))
+      useGameState.setState({ history: kept, turn: turnNow, movingTo: null })
+    } else {
+      const kept = hist.slice()
+      while (kept.length < next && future.length > 0) {
+        const step = future.shift()
+        if (!step) break
+        kept.push(step.item)
+        boardNow = step.boardAfter
+        turnNow = step.turnAfter
+      }
+      setBoard(copyBoard(boardNow))
+      useGameState.setState({ history: kept, turn: turnNow, movingTo: null })
+    }
+
+    drillFutureRef.current = future
+    setDrillFutureCount(future.length)
+    setDrillPlyIndex(next)
   }
   const askCoach = useCallback(async () => {
     if (coachStatus === 'loading') return
@@ -2318,6 +2490,7 @@ export default function App() {
         onPreviewMove={previewReviewMove}
         onPlaySan={playExploreLine}
         playedSans={playedSans}
+        recommendedUci={best?.uci ?? null}
         linePly={history.length}
         lineLength={history.length + exploreFutureCount}
         onLineStep={stepLiveLine}
@@ -2338,14 +2511,8 @@ export default function App() {
                 drillOpening === 'caro-kann' ? 'Caro-Kann' : 'Italian Opening'
               }.`
         }
-        winRate={
-          drillLine?.moves[Math.min(drillPlyIndex, drillLine.moves.length - 1)]
-            ?.winRate
-        }
-        engineBest={
-          drillLine?.moves[Math.min(drillPlyIndex, drillLine.moves.length - 1)]
-            ?.engineBest
-        }
+        fen={fen}
+        stepAligned={drillStatus !== 'playing' || history.length === drillPlyIndex}
         wrongFlash={drillWrongFlash || !!drillMistake}
         mistakeMessage={
           drillMistake
@@ -2363,7 +2530,14 @@ export default function App() {
         status={drillStatus}
         celebrate={drillStatus === 'complete' && !drillMistakes}
         onScrubPly={scrubDrillTo}
-        scrubMax={drillReview?.history.length ?? 0}
+        scrubPly={
+          drillStatus === 'complete' ? drillPlyIndex : history.length
+        }
+        scrubMax={
+          drillStatus === 'complete'
+            ? (drillReview?.history.length ?? 0)
+            : history.length + drillFutureCount
+        }
         panelWidth={panelWidth}
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
@@ -2376,6 +2550,16 @@ export default function App() {
         coachChatStatus={coachChatStatus}
         coachChatError={coachChatError}
         onSendCoachChat={sendCoachChat}
+        previewActive={Boolean(drillPreview)}
+        previewBusy={
+          Boolean(
+            drillPreview &&
+              history.length - drillPreview.resumeHistory.length <
+                drillPreview.sans.length,
+          ) || Boolean(drillPreview && (movingTo || pendingEngineMove))
+        }
+        onStartPreview={startDrillPreview}
+        onExitPreview={exitDrillPreview}
       />
 
       <GamePanel
@@ -2410,7 +2594,7 @@ export default function App() {
       <div className="layout">
         <section
           className="stage"
-          data-board-seat={reviewImport?.playerColor ?? playerColor}
+          data-board-seat={viewSeat}
         >
           <header className="hud">
             <div className="hud-cluster">
@@ -2424,11 +2608,7 @@ export default function App() {
                 hidden={!showFps}
                 aria-hidden={!showFps}
               />
-              <HudEval
-                fen={fen}
-                best={best}
-                analysisStatus={analysisStatus}
-              />
+              <HudEval fen={fen} />
             </div>
             <div className="hud-orbit">
               <GradientButtonGroup
@@ -2501,6 +2681,25 @@ export default function App() {
                       </svg>
                     ),
                     onClick: () => setOrbitDragMode('pan'),
+                  },
+                  {
+                    id: 'seat',
+                    label:
+                      viewSeat === 'white'
+                        ? 'View from Black'
+                        : 'View from White',
+                    icon: (
+                      <SeatKnightIcon
+                        color={seatKnightColor}
+                        spinning={seatSpinning}
+                      />
+                    ),
+                    onClick: () => {
+                      setSeatSpinning(true)
+                      setViewSeat((s) => (s === 'white' ? 'black' : 'white'))
+                      setPanelFitEpoch((n) => n + 1)
+                      window.setTimeout(() => setSeatSpinning(false), 560)
+                    },
                   },
                 ]}
               />
@@ -2636,12 +2835,7 @@ export default function App() {
               boardOrigin={roomTheme.boardOffset ?? DEFAULT_CAMERA_TARGET}
               sceneKey={`${roomId}:${boardId}:${pieceSetId}:${drillOpen ? 'drill' : 'play'}`}
               roomId={roomId}
-              seatYaw={
-                reviewImport?.playerColor === 'black' ||
-                (drillOpen && drillLine?.side === 'black')
-                  ? Math.PI
-                  : 0
-              }
+              seatYaw={seatYaw}
             />
             <color attach="background" args={[roomTheme.background]} />
             <Environment files={roomTheme.hdr} environmentIntensity={0.6} />
@@ -2656,6 +2850,17 @@ export default function App() {
                   labelOutline={boardTheme.frame?.labelOutline}
                 />
               )}
+              <EvalPillar
+                whitePercent={advantage?.whitePercent ?? 50}
+                label={
+                  advantage
+                    ? advantage.detail
+                    : analysisStatus === 'loading'
+                      ? '…'
+                      : '—'
+                }
+                seatYaw={seatYaw}
+              />
               <BoardComponent
                 selected={selected}
                 setSelected={setSelected}
@@ -2681,7 +2886,8 @@ export default function App() {
                 readOnly={
                   !!reviewImport ||
                   drillStatus === 'complete' ||
-                  !!drillMistake
+                  !!drillMistake ||
+                  !!drillPreview
                 }
                 playBothSides={analysisOpen && !drillOpen}
                 validateMove={

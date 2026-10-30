@@ -53,7 +53,7 @@ export function advantageFromBest(best: BestMoveResult | null): AdvantageView | 
 
   return {
     label: 'Black',
-    detail: `+${abs}`,
+    detail: `-${abs}`,
     whitePercent,
   }
 }
