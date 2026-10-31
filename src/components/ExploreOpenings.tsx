@@ -826,11 +826,11 @@ function MoveTable({
                     key={header.id}
                     className={cn(
                       'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] px-1.5 text-xs',
-                      header.column.id === 'move' && 'w-[31%]',
+                      header.column.id === 'move' && 'w-[27%]',
                       header.column.id === 'share' && 'w-[19%] px-0.5',
                       header.column.id === 'winRate' && 'w-[19%] px-0.5',
                       header.column.id === 'engine' && 'w-[18%] px-0.5',
-                      header.column.id === 'result' && 'w-[13%]',
+                      header.column.id === 'result' && 'w-[17%]',
                     )}
                   >
                     {header.isPlaceholder
