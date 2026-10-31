@@ -8,8 +8,10 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::thread;
@@ -950,12 +952,13 @@ fn query_position(
         }
         first = false;
         listed.push_str(&format!(
-            "{{\"uci\":\"{}\",\"san\":\"{}\",\"white\":{},\"draws\":{},\"black\":{}}}",
+            "{{\"uci\":\"{}\",\"san\":\"{}\",\"white\":{},\"draws\":{},\"black\":{}{}}}",
             json_escape(&uci),
             json_escape(&san),
             counts[0],
             counts[1],
-            counts[2]
+            counts[2],
+            engine_suffix(&pos, packed),
         ));
     }
     body.push_str(&white.to_string());
@@ -1057,6 +1060,108 @@ fn json_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+const EVAL_REC: u64 = 18;
+const EVAL_HEADER: u64 = 16;
+
+struct EvalFile {
+    file: File,
+    count: u64,
+}
+
+fn eval_index_path() -> PathBuf {
+    std::env::var_os("EXPLORER_EVAL_INDEX")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/home/daisy/lichess-eval/eval-index.bin"))
+}
+
+fn eval_slot() -> &'static Mutex<Option<EvalFile>> {
+    static SLOT: Mutex<Option<EvalFile>> = Mutex::new(None);
+    &SLOT
+}
+
+/// Side file of Lichess scores, keyed by the same fingerprint as the month files.
+/// A missing file means the column stays empty. The month files are not written.
+fn lookup_eval(hash: &[u8; 12]) -> Option<(i16, i16, u16)> {
+    let mut slot = eval_slot().lock().unwrap_or_else(|err| err.into_inner());
+    if slot.is_none() {
+        *slot = EvalFile::open(&eval_index_path());
+    }
+    slot.as_ref()?.find(hash)
+}
+
+impl EvalFile {
+    fn open(path: &Path) -> Option<Self> {
+        let file = File::open(path).ok()?;
+        let mut header = [0u8; EVAL_HEADER as usize];
+        file.read_exact_at(&mut header, 0).ok()?;
+        if &header[..4] != b"LCE1" {
+            return None;
+        }
+        let count = u64::from_le_bytes(header[4..12].try_into().ok()?);
+        let rec = u16::from_le_bytes(header[12..14].try_into().ok()?);
+        if u64::from(rec) != EVAL_REC || count == 0 {
+            return None;
+        }
+        Some(Self { file, count })
+    }
+
+    fn find(&self, want: &[u8; 12]) -> Option<(i16, i16, u16)> {
+        let mut lo = 0u64;
+        let mut hi = self.count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let mut buf = [0u8; EVAL_REC as usize];
+            let offset = EVAL_HEADER + mid * EVAL_REC;
+            self.file.read_exact_at(&mut buf, offset).ok()?;
+            match buf[..12].cmp(want) {
+                Ordering::Equal => {
+                    let depth = u16::from_le_bytes(buf[12..14].try_into().ok()?);
+                    let cp = i16::from_le_bytes(buf[14..16].try_into().ok()?);
+                    let mate = i16::from_le_bytes(buf[16..18].try_into().ok()?);
+                    return Some((cp, mate, depth));
+                }
+                Ordering::Less => lo = mid + 1,
+                Ordering::Greater => hi = mid,
+            }
+        }
+        None
+    }
+}
+
+/// White's edge after this move, from the saved score of the resulting board.
+fn engine_suffix(pos: &Chess, packed: u16) -> String {
+    let Some((cp, mate, depth)) = engine_white(pos, packed) else {
+        return String::new();
+    };
+    if mate != 0 {
+        format!(",\"engineMate\":{mate},\"engineDepth\":{depth}")
+    } else {
+        format!(",\"engineCp\":{cp},\"engineDepth\":{depth}")
+    }
+}
+
+fn engine_white(pos: &Chess, packed: u16) -> Option<(i16, i16, u16)> {
+    let (uci, _) = move_names(pos, packed)?;
+    let parsed: UciMove = uci.parse().ok()?;
+    let mv = parsed.to_move(pos).ok()?;
+    let mut child = pos.clone();
+    child.play_unchecked(mv);
+    let (cp, mate, depth) = lookup_eval(&board_hash(&child))?;
+    let (cp, mate) = if child.turn().is_white() {
+        (cp, mate)
+    } else {
+        (
+            i16::try_from(i32::from(cp).saturating_neg()).unwrap_or(if cp < 0 {
+                i16::MAX
+            } else {
+                i16::MIN
+            }),
+            i16::try_from(i32::from(mate).saturating_neg()).unwrap_or(0),
+        )
+    };
+    Some((cp, mate, depth))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,5 +1194,43 @@ mod tests {
         let merged = merge_blobs(&blob, &blob);
         let rows = decode(&merged);
         assert_eq!(rows, vec![(4, 2 * 9 + 4, [4, 2, 0])]);
+    }
+
+    #[test]
+    fn known_board_fingerprint() {
+        let pos = position_after(
+            "7r/1p3k2/p1bPR3/5p2/2B2P1p/8/PP4P1/3K4 b - -",
+            "",
+        )
+        .expect("fen");
+        let hash = board_hash(&pos);
+        let mut hex = String::new();
+        for byte in hash {
+            hex.push_str(&format!("{byte:02x}"));
+        }
+        assert_eq!(hex, "499cdf13bb1d9c0cc9833235");
+    }
+
+    #[test]
+    fn eval_index_finds_the_middle_board() {
+        let pos = Chess::default();
+        let hash = board_hash(&pos);
+        let path = std::env::temp_dir().join(format!("eval-index-test-{}", std::process::id()));
+        let mut bytes = vec![0u8; EVAL_HEADER as usize];
+        bytes[..4].copy_from_slice(b"LCE1");
+        bytes[4..12].copy_from_slice(&1u64.to_le_bytes());
+        bytes[12..14].copy_from_slice(&18u16.to_le_bytes());
+        let mut rec = [0u8; 18];
+        rec[..12].copy_from_slice(&hash);
+        rec[12..14].copy_from_slice(&75u16.to_le_bytes());
+        rec[14..16].copy_from_slice(&19i16.to_le_bytes());
+        bytes.extend_from_slice(&rec);
+        std::fs::write(&path, &bytes).unwrap();
+        let file = EvalFile::open(&path).expect("index");
+        assert_eq!(file.find(&hash), Some((19, 0, 75)));
+        let mut missing = hash;
+        missing[0] ^= 0xff;
+        assert_eq!(file.find(&missing), None);
+        std::fs::remove_file(&path).ok();
     }
 }

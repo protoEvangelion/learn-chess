@@ -74,19 +74,62 @@ function explorerHasMonth(): Promise<boolean> {
   return monthColumn
 }
 
+function signed(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.trunc(value)
+}
+
+function deeperEngine(
+  prev: { engineDepth: number | null },
+  nextDepth: number | null,
+): boolean {
+  if (nextDepth === null) return false
+  if (prev.engineDepth === null) return true
+  return nextDepth > prev.engineDepth
+}
+
 function mergeMoveRows(
   rows: readonly Record<string, unknown>[],
-): { uci: unknown; san: unknown; white: unknown; draws: unknown; black: unknown }[] {
-  const byKey = new Map<string, { uci: string; san: string; white: number; draws: number; black: number }>()
+): {
+  uci: string
+  san: string
+  white: number
+  draws: number
+  black: number
+  engineCp: number | null
+  engineDepth: number | null
+  engineMate: number | null
+}[] {
+  const byKey = new Map<
+    string,
+    {
+      uci: string
+      san: string
+      white: number
+      draws: number
+      black: number
+      engineCp: number | null
+      engineDepth: number | null
+      engineMate: number | null
+    }
+  >()
   for (const row of rows) {
     const uci = String(row.uci ?? '')
     const san = String(row.san ?? '')
     const key = `${uci}\0${san}`
+    const engineCp = signed(row.engineCp)
+    const engineDepth = signed(row.engineDepth)
+    const engineMate = signed(row.engineMate)
     const prev = byKey.get(key)
     if (prev) {
       prev.white += num(row.white)
       prev.draws += num(row.draws)
       prev.black += num(row.black)
+      if (deeperEngine(prev, engineDepth)) {
+        prev.engineCp = engineCp
+        prev.engineDepth = engineDepth
+        prev.engineMate = engineMate
+      }
       continue
     }
     byKey.set(key, {
@@ -95,6 +138,9 @@ function mergeMoveRows(
       white: num(row.white),
       draws: num(row.draws),
       black: num(row.black),
+      engineCp,
+      engineDepth,
+      engineMate,
     })
   }
   return [...byKey.values()]
@@ -158,7 +204,16 @@ export async function queryExplorerPosition(
     selectedMonths.length > 0
       ? sqliteSources.filter((source) => selectedMonths.includes(source.month))
       : sqliteSources
-  let moveRows: { uci: unknown; san: unknown; white: unknown; draws: unknown; black: unknown }[]
+  let moveRows: {
+    uci: string
+    san: string
+    white: number
+    draws: number
+    black: number
+    engineCp: number | null
+    engineDepth: number | null
+    engineMate: number | null
+  }[]
   let totals: { white: unknown; draws: unknown; black: unknown } | undefined
   let bookLines: BookLine[]
   try {
@@ -231,6 +286,9 @@ export async function queryExplorerPosition(
           white: move.white,
           draws: move.draws,
           black: move.black,
+          engineCp: move.engineCp,
+          engineDepth: move.engineDepth,
+          engineMate: move.engineMate,
         })),
       ])
     }
@@ -258,6 +316,9 @@ export async function queryExplorerPosition(
         white,
         draws,
         black,
+        engineCp: row.engineCp,
+        engineDepth: row.engineDepth,
+        engineMate: row.engineMate,
         opening: exactOpening(names, [...uciPath, uci]),
       }
     })

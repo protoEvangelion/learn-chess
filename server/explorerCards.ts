@@ -12,6 +12,12 @@ export type CardMove = {
   white: number
   draws: number
   black: number
+  /** White's edge after the move, in centipawns. Absent when the side file has no score. */
+  engineCp?: number
+  /** Search depth of that saved score. */
+  engineDepth?: number
+  /** Mate distance for White. Positive means White mates. */
+  engineMate?: number
 }
 
 export type CardPosition = {

@@ -76,6 +76,9 @@ type ExploreRow = {
   draws: number
   black: number
   averageRating: number
+  engineCp: number | null
+  engineDepth: number | null
+  engineMate: number | null
   games: number
   /** Games in the position before this move. Share is games / parentGames. */
   parentGames: number
@@ -95,6 +98,9 @@ type OpeningGroup = {
   draws: number
   black: number
   averageRating: number
+  engineCp: number | null
+  engineDepth: number | null
+  engineMate: number | null
   opening: ExplorerOpening | null
 }
 
@@ -109,6 +115,30 @@ type Snapshot = {
 const columnHelper = createColumnHelper<typeof features, ExploreRow>()
 const ROW_WINDOW_OVERSCAN = 2
 const ROW_HEIGHT_FALLBACK = 36
+
+function engineSortValue(row: ExploreRow): number {
+  if (row.kind === 'status') return Number.NEGATIVE_INFINITY
+  if (row.engineMate !== null && row.engineMate !== 0) {
+    return row.engineMate > 0 ? 100_000 + row.engineMate : -100_000 + row.engineMate
+  }
+  if (row.engineCp === null) return Number.NEGATIVE_INFINITY
+  return row.engineCp
+}
+
+/** White's edge after the move. `+0.23` is a quarter pawn. */
+function engineLabel(row: ExploreRow): string | null {
+  if (row.kind === 'status') return null
+  if (row.engineMate !== null && row.engineMate !== 0) {
+    const marks = Math.abs(row.engineMate)
+    return row.engineMate > 0 ? `+M${marks}` : `-M${marks}`
+  }
+  if (row.engineCp === null) return null
+  const pawns = Math.abs(row.engineCp) / 100
+  const text = pawns.toFixed(2)
+  if (row.engineCp > 0) return `+${text}`
+  if (row.engineCp < 0) return `-${text}`
+  return '0.00'
+}
 
 function percentLabel(white: number, draws: number, black: number) {
   const total = white + draws + black
@@ -159,6 +189,9 @@ function statusRow(parentId: string, message: string): ExploreRow {
     draws: 0,
     black: 0,
     averageRating: 0,
+    engineCp: null,
+    engineDepth: null,
+    engineMate: null,
     games: 0,
     parentGames: 0,
     winRate: -1,
@@ -181,6 +214,9 @@ function groupToRow(group: OpeningGroup, index: number, parentGames: number): Ex
     draws: group.draws,
     black: group.black,
     averageRating: group.averageRating,
+    engineCp: group.engineCp,
+    engineDepth: group.engineDepth,
+    engineMate: group.engineMate,
     games: stats.games,
     parentGames,
     winRate: stats.winRate,
@@ -283,6 +319,9 @@ async function loadGroups(
         draws: move.draws,
         black: move.black,
         averageRating: move.averageRating,
+        engineCp: move.engineCp,
+        engineDepth: move.engineDepth,
+        engineMate: move.engineMate,
         opening: move.opening,
       })),
     'white',
@@ -326,6 +365,9 @@ async function loadChildRows(
         draws: move.draws,
         black: move.black,
         averageRating: move.averageRating,
+        engineCp: move.engineCp,
+        engineDepth: move.engineDepth,
+        engineMate: move.engineMate,
         games: stats.games,
         parentGames: row.games,
         winRate: stats.winRate,
@@ -651,6 +693,39 @@ function MoveTable({
             return (
               <span className="tabular-nums font-semibold">
                 {(item.winRate * 100).toFixed(1)}%
+              </span>
+            )
+          },
+          sortFn: 'basic',
+          sortDescFirst: true,
+        }),
+        columnHelper.accessor(engineSortValue, {
+          id: 'engine',
+          header: ({ header }) => (
+            <SortHeader
+              label="Engine"
+              sorted={header.column.getIsSorted()}
+              onToggle={header.column.getToggleSortingHandler()}
+            />
+          ),
+          cell: ({ row }) => {
+            const label = engineLabel(row.original)
+            if (!label) return null
+            const depth = row.original.engineDepth
+            const tip = depth !== null && depth > 0 ? `Depth ${depth}` : 'Saved engine score'
+            return (
+              <span
+                className="cursor-help tabular-nums"
+                tabIndex={0}
+                onMouseEnter={(event) => showTip(event, tip)}
+                onFocus={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  showTip({ clientX: rect.left, clientY: rect.top }, tip)
+                }}
+                onMouseLeave={hideTip}
+                onBlur={hideTip}
+              >
+                {label}
               </span>
             )
           },

@@ -124,6 +124,12 @@ export type ExplorerMove = {
   white: number
   draws: number
   black: number
+  /** White's edge after the move, in centipawns. Null when no saved score exists. */
+  engineCp: number | null
+  /** Depth of that saved score. */
+  engineDepth: number | null
+  /** Mate distance for White. Positive means White mates. */
+  engineMate: number | null
   /** Named opening reached by playing this move, when Lichess has one. */
   opening: ExplorerOpening | null
 }
@@ -249,6 +255,11 @@ function readCount(value: unknown): number {
   return Math.floor(value)
 }
 
+function readSigned(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.trunc(value)
+}
+
 function parseOpening(value: unknown): ExplorerOpening | null {
   if (!value || typeof value !== 'object') return null
   const opening = value as Record<string, unknown>
@@ -271,6 +282,9 @@ function parseMove(value: unknown): ExplorerMove | null {
     white: readCount(move.white),
     draws: readCount(move.draws),
     black: readCount(move.black),
+    engineCp: readSigned(move.engineCp),
+    engineDepth: readSigned(move.engineDepth),
+    engineMate: readSigned(move.engineMate),
     opening: parseOpening(move.opening),
   }
 }
