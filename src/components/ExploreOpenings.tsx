@@ -826,11 +826,11 @@ function MoveTable({
                     key={header.id}
                     className={cn(
                       'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] px-1.5 text-xs',
-                      header.column.id === 'move' && 'w-[38%]',
-                      header.column.id === 'share' && 'w-[12%]',
-                      header.column.id === 'winRate' && 'w-[15%]',
+                      header.column.id === 'move' && 'w-[31%]',
+                      header.column.id === 'share' && 'w-[19%] px-0.5',
+                      header.column.id === 'winRate' && 'w-[19%] px-0.5',
                       header.column.id === 'engine' && 'w-[18%] px-0.5',
-                      header.column.id === 'result' && 'w-[17%]',
+                      header.column.id === 'result' && 'w-[13%]',
                     )}
                   >
                     {header.isPlaceholder
@@ -877,7 +877,7 @@ function MoveTable({
                     key={cell.id}
                     className={cn(
                       'h-9 overflow-hidden py-0 text-xs',
-                      cell.column.id === 'engine' ? 'px-0.5' : 'px-1.5',
+                      cell.column.id === 'move' || cell.column.id === 'result' ? 'px-1.5' : 'px-0.5',
                     )}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
