@@ -8,6 +8,10 @@
     {
       "source": "/api/explorer-months",
       "destination": "/api/opening-explorer?view=months"
+    },
+    {
+      "source": "/api/cloud-eval",
+      "destination": "/api/opening-explorer?view=cloud-eval"
     }
   ],
   "crons": [

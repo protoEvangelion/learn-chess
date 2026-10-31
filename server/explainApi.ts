@@ -1132,7 +1132,11 @@ export async function handleExplainApi(
           return
         }
 
-        if (url === '/api/cloud-eval') {
+        const cloudEval =
+          url === '/api/cloud-eval' ||
+          (url === '/api/opening-explorer' &&
+            new URL(req.url ?? '', 'http://localhost').searchParams.get('view') === 'cloud-eval')
+        if (cloudEval) {
           if (req.method === 'OPTIONS') {
             res.statusCode = 204
             res.end()
