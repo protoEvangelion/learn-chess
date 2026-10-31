@@ -826,11 +826,11 @@ function MoveTable({
                     key={header.id}
                     className={cn(
                       'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] px-1.5 text-xs',
-                      header.column.id === 'move'
-                        ? 'w-[52%]'
-                        : header.column.id === 'result'
-                          ? 'w-[22%]'
-                          : 'w-[13%]',
+                      header.column.id === 'move' && 'w-[38%]',
+                      header.column.id === 'share' && 'w-[12%]',
+                      header.column.id === 'winRate' && 'w-[15%]',
+                      header.column.id === 'engine' && 'w-[18%] px-0.5',
+                      header.column.id === 'result' && 'w-[17%]',
                     )}
                   >
                     {header.isPlaceholder
@@ -844,7 +844,7 @@ function MoveTable({
           <TableBody>
             {padTop > 0 ? (
               <tr aria-hidden="true">
-                <td colSpan={4} style={{ height: padTop, padding: 0, border: 0 }} />
+                <td colSpan={5} style={{ height: padTop, padding: 0, border: 0 }} />
               </tr>
             ) : null}
             {visibleRows.map((row, index) => (
@@ -875,7 +875,10 @@ function MoveTable({
                 {row.getAllCells().map((cell) => (
                   <TableCell
                     key={cell.id}
-                    className="h-9 overflow-hidden px-1.5 py-0 text-xs"
+                    className={cn(
+                      'h-9 overflow-hidden py-0 text-xs',
+                      cell.column.id === 'engine' ? 'px-0.5' : 'px-1.5',
+                    )}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
@@ -884,7 +887,7 @@ function MoveTable({
             ))}
             {padBottom > 0 ? (
               <tr aria-hidden="true">
-                <td colSpan={4} style={{ height: padBottom, padding: 0, border: 0 }} />
+                <td colSpan={5} style={{ height: padBottom, padding: 0, border: 0 }} />
               </tr>
             ) : null}
           </TableBody>
