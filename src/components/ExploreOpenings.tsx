@@ -125,6 +125,18 @@ function engineSortValue(row: ExploreRow): number {
   return row.engineCp
 }
 
+function shareLabel(row: ExploreRow): string | null {
+  if (row.kind === 'status' || row.parentGames <= 0 || row.games <= 0) return null
+  const share = row.games / row.parentGames
+  const shown = (share * 100).toFixed(1)
+  return share > 0 && shown === '0.0' ? '<0.1%' : `${shown}%`
+}
+
+function winLabel(row: ExploreRow): string | null {
+  if (row.kind === 'status' || row.winRate < 0) return null
+  return `${(row.winRate * 100).toFixed(1)}%`
+}
+
 /** White's edge after the move. `+0.23` is a quarter pawn. */
 function engineLabel(row: ExploreRow): string | null {
   if (row.kind === 'status') return null
@@ -138,6 +150,16 @@ function engineLabel(row: ExploreRow): string | null {
   if (row.engineCp > 0) return `+${text}`
   if (row.engineCp < 0) return `-${text}`
   return '0.00'
+}
+
+/** Widest text in a column, so a virtualized table still reserves that width. */
+function widestText(rows: { original: ExploreRow }[], label: (row: ExploreRow) => string | null) {
+  let widest = ''
+  for (const row of rows) {
+    const text = label(row.original)
+    if (text && text.length > widest.length) widest = text
+  }
+  return widest
 }
 
 function percentLabel(white: number, draws: number, black: number) {
@@ -650,10 +672,8 @@ function MoveTable({
           ),
           cell: ({ row }) => {
             const item = row.original
-            if (item.kind === 'status' || item.parentGames <= 0 || item.games <= 0) return null
-            const share = item.games / item.parentGames
-            const shown = (share * 100).toFixed(1)
-            const label = share > 0 && shown === '0.0' ? '<0.1%' : `${shown}%`
+            const label = shareLabel(item)
+            if (!label) return null
             const rating =
               item.averageRating > 0
                 ? ` · avg ${item.averageRating.toLocaleString('en-US')}`
@@ -688,13 +708,9 @@ function MoveTable({
             />
           ),
           cell: ({ row }) => {
-            const item = row.original
-            if (item.kind === 'status' || item.winRate < 0) return null
-            return (
-              <span className="tabular-nums font-semibold">
-                {(item.winRate * 100).toFixed(1)}%
-              </span>
-            )
+            const label = winLabel(row.original)
+            if (!label) return null
+            return <span className="tabular-nums font-semibold">{label}</span>
           },
           sortFn: 'basic',
           sortDescFirst: true,
@@ -770,6 +786,9 @@ function MoveTable({
 
   const modelRows = table.getRowModel().rows
   rowCountRef.current = modelRows.length
+  const widestShare = useMemo(() => widestText(modelRows, shareLabel), [modelRows])
+  const widestWin = useMemo(() => widestText(modelRows, winLabel), [modelRows])
+  const widestEngine = useMemo(() => widestText(modelRows, engineLabel), [modelRows])
 
   useEffect(() => {
     syncWindow()
@@ -816,7 +835,7 @@ function MoveTable({
       <div ref={scrollerRef} className="explorer-table-scroll" onScroll={syncWindow}>
         <Table
           containerClassName="static overflow-visible"
-          className="table-fixed border-separate border-spacing-0"
+          className="table-auto border-separate border-spacing-0"
         >
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -825,14 +844,26 @@ function MoveTable({
                   <TableHead
                     key={header.id}
                     className={cn(
-                      'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] px-1.5 text-xs',
-                      header.column.id === 'move' && 'w-[27%]',
-                      header.column.id === 'share' && 'w-[19%] px-0.5',
-                      header.column.id === 'winRate' && 'w-[19%] px-0.5',
-                      header.column.id === 'engine' && 'w-[18%] px-0.5',
-                      header.column.id === 'result' && 'w-[17%]',
+                      'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] text-xs',
+                      header.column.id === 'move' && 'w-full max-w-0 px-1.5',
+                      header.column.id !== 'move' && 'w-px px-1',
                     )}
                   >
+                    {header.column.id === 'share' ? (
+                      <span className="invisible inline-block h-0 w-max whitespace-nowrap tabular-nums leading-none" aria-hidden>
+                        {widestShare}
+                      </span>
+                    ) : null}
+                    {header.column.id === 'winRate' ? (
+                      <span className="invisible inline-block h-0 w-max whitespace-nowrap tabular-nums font-semibold leading-none" aria-hidden>
+                        {widestWin}
+                      </span>
+                    ) : null}
+                    {header.column.id === 'engine' ? (
+                      <span className="invisible inline-block h-0 w-max whitespace-nowrap tabular-nums leading-none" aria-hidden>
+                        {widestEngine}
+                      </span>
+                    ) : null}
                     {header.isPlaceholder
                       ? null
                       : flexRender(header.column.columnDef.header, header.getContext())}
@@ -876,8 +907,8 @@ function MoveTable({
                   <TableCell
                     key={cell.id}
                     className={cn(
-                      'h-9 overflow-hidden py-0 text-xs',
-                      cell.column.id === 'move' || cell.column.id === 'result' ? 'px-1.5' : 'px-0.5',
+                      'h-9 overflow-hidden py-0 text-xs whitespace-nowrap',
+                      cell.column.id === 'move' ? 'w-full max-w-0 px-1.5' : 'w-px px-1',
                     )}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
