@@ -1146,20 +1146,9 @@ fn engine_white(pos: &Chess, packed: u16) -> Option<(i16, i16, u16)> {
     let mv = parsed.to_move(pos).ok()?;
     let mut child = pos.clone();
     child.play_unchecked(mv);
-    let (cp, mate, depth) = lookup_eval(&board_hash(&child))?;
-    let (cp, mate) = if child.turn().is_white() {
-        (cp, mate)
-    } else {
-        (
-            i16::try_from(i32::from(cp).saturating_neg()).unwrap_or(if cp < 0 {
-                i16::MAX
-            } else {
-                i16::MIN
-            }),
-            i16::try_from(i32::from(mate).saturating_neg()).unwrap_or(0),
-        )
-    };
-    Some((cp, mate, depth))
+    // The dump already stores White's point of view. A plus stays good for White
+    // when it is Black's turn after the move.
+    lookup_eval(&board_hash(&child))
 }
 
 #[cfg(test)]
