@@ -162,6 +162,12 @@ function widestText(rows: { original: ExploreRow }[], label: (row: ExploreRow) =
   return widest
 }
 
+/** Width of the widest number, plus the heading and a little padding. */
+function trackWidth(sample: string, header: string) {
+  const chars = Math.max(sample.length, header.length + 1)
+  return `calc(${chars}ch + 0.85rem)`
+}
+
 function percentLabel(white: number, draws: number, black: number) {
   const total = white + draws + black
   const pct = (value: number) =>
@@ -835,7 +841,7 @@ function MoveTable({
       <div ref={scrollerRef} className="explorer-table-scroll" onScroll={syncWindow}>
         <Table
           containerClassName="static overflow-visible"
-          className="table-auto border-separate border-spacing-0"
+          className="table-fixed border-separate border-spacing-0"
         >
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -844,26 +850,21 @@ function MoveTable({
                   <TableHead
                     key={header.id}
                     className={cn(
-                      'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] text-xs',
-                      header.column.id === 'move' && 'w-full max-w-0 px-1.5',
-                      header.column.id !== 'move' && 'w-px px-1',
+                      'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] px-1 text-xs',
+                      header.column.id === 'move' && 'px-1.5',
                     )}
+                    style={
+                      header.column.id === 'share'
+                        ? { width: trackWidth(widestShare, '%') }
+                        : header.column.id === 'winRate'
+                          ? { width: trackWidth(widestWin, 'Win') }
+                          : header.column.id === 'engine'
+                            ? { width: trackWidth(widestEngine, 'Engine') }
+                            : header.column.id === 'result'
+                              ? { width: '2.75rem' }
+                              : undefined
+                    }
                   >
-                    {header.column.id === 'share' ? (
-                      <span className="invisible inline-block h-0 w-max whitespace-nowrap tabular-nums leading-none" aria-hidden>
-                        {widestShare}
-                      </span>
-                    ) : null}
-                    {header.column.id === 'winRate' ? (
-                      <span className="invisible inline-block h-0 w-max whitespace-nowrap tabular-nums font-semibold leading-none" aria-hidden>
-                        {widestWin}
-                      </span>
-                    ) : null}
-                    {header.column.id === 'engine' ? (
-                      <span className="invisible inline-block h-0 w-max whitespace-nowrap tabular-nums leading-none" aria-hidden>
-                        {widestEngine}
-                      </span>
-                    ) : null}
                     {header.isPlaceholder
                       ? null
                       : flexRender(header.column.columnDef.header, header.getContext())}
@@ -907,8 +908,8 @@ function MoveTable({
                   <TableCell
                     key={cell.id}
                     className={cn(
-                      'h-9 overflow-hidden py-0 text-xs whitespace-nowrap',
-                      cell.column.id === 'move' ? 'w-full max-w-0 px-1.5' : 'w-px px-1',
+                      'h-9 overflow-hidden whitespace-nowrap py-0 text-xs',
+                      cell.column.id === 'move' ? 'px-1.5' : 'px-1',
                     )}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
