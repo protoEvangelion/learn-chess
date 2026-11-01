@@ -24,6 +24,9 @@ type Props = {
   emptyHint?: string
   /** Input only, until the user has started a thread. */
   compact?: boolean
+  /** Shared with the other panel so an unsent question survives the switch. */
+  draft?: string
+  onDraftChange?: (value: string) => void
 }
 
 /** Chat-first coach UI — optional explain card + thread. */
@@ -40,8 +43,15 @@ export const CoachPane: FC<Props> = ({
   drillMode = false,
   emptyHint,
   compact = false,
+  draft: draftProp,
+  onDraftChange,
 }) => {
-  const [draft, setDraft] = useState('')
+  const [localDraft, setLocalDraft] = useState('')
+  const draft = onDraftChange ? (draftProp ?? '') : localDraft
+  function setDraft(value: string) {
+    if (onDraftChange) onDraftChange(value)
+    else setLocalDraft(value)
+  }
   const threadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

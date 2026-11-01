@@ -1162,6 +1162,14 @@ body.is-panel-resizing canvas {
   overflow: hidden;
 }
 
+.explore-with-coach {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .explorer-table-scroll {
   flex: 1 1 auto;
   min-height: 0;

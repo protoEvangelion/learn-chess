@@ -72,6 +72,8 @@ type Props = {
   coachChatStatus?: 'idle' | 'loading' | 'error'
   coachChatError?: string | null
   onSendCoachChat?: (question: string) => void
+  coachDraft?: string
+  onCoachDraftChange?: (value: string) => void
   /** Idea/danger preview is playing on the board. */
   previewActive?: boolean
   /** Preview still animating moves. */
@@ -115,6 +117,8 @@ export const DrillDialog: FC<Props> = ({
   coachChatStatus = 'idle',
   coachChatError = null,
   onSendCoachChat,
+  coachDraft,
+  onCoachDraftChange,
   previewActive = false,
   previewBusy = false,
   onStartPreview,
@@ -503,24 +507,26 @@ export const DrillDialog: FC<Props> = ({
               </PixelButton>
             </div>
           ) : null}
-
-          {showCoach && shownLine ? (
-            <div className="drill-coach-embed">
-              <CoachPane
-                explanation={coachExplanation}
-                coachStatus={coachStatus}
-                coachError={coachError}
-                chatMessages={coachChat}
-                chatStatus={coachChatStatus}
-                chatError={coachChatError}
-                onSendChat={onSendCoachChat!}
-                isPlayerTurn
-                drillMode
-                emptyHint=""
-              />
-            </div>
-          ) : null}
         </div>
+
+        {showCoach && shownLine ? (
+          <div className="drill-coach-embed">
+            <CoachPane
+              explanation={coachExplanation}
+              coachStatus={coachStatus}
+              coachError={coachError}
+              chatMessages={coachChat}
+              chatStatus={coachChatStatus}
+              chatError={coachChatError}
+              onSendChat={onSendCoachChat!}
+              isPlayerTurn
+              drillMode
+              emptyHint=""
+              draft={coachDraft}
+              onDraftChange={onCoachDraftChange}
+            />
+          </div>
+        ) : null}
       </aside>
     </div>
   )

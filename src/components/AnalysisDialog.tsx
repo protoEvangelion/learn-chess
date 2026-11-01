@@ -67,6 +67,9 @@ type Props = {
   coachChatStatus?: 'idle' | 'loading' | 'error'
   coachChatError?: string | null
   onSendCoachChat?: (question: string) => void
+  /** Unsent coach question, shared with Drill. */
+  coachDraft?: string
+  onCoachDraftChange?: (value: string) => void
   chessComUsername: string
   onChessComUsernameChange: (username: string) => void
   importDraft: string
@@ -616,6 +619,8 @@ export const AnalysisDialog: FC<Props> = ({
   coachChatStatus = 'idle',
   coachChatError = null,
   onSendCoachChat,
+  coachDraft,
+  onCoachDraftChange,
   chessComUsername,
   onChessComUsernameChange,
   importDraft,
@@ -867,11 +872,31 @@ export const AnalysisDialog: FC<Props> = ({
 
         <div className="analysis-dialog-body">
           {tab === 'explore' && open ? (
-            <ExploreOpenings
-              onPlaySan={onPlaySan}
-              playedSans={playedSans}
-              recommendedUci={recommendedUci}
-            />
+            <div className="explore-with-coach">
+              <ExploreOpenings
+                onPlaySan={onPlaySan}
+                playedSans={playedSans}
+                recommendedUci={recommendedUci}
+              />
+              {onSendCoachChat ? (
+                <div className="drill-coach-embed">
+                  <CoachPane
+                    explanation={coachExplanation}
+                    coachStatus={coachStatus}
+                    coachError={coachError}
+                    chatMessages={coachChat}
+                    chatStatus={coachChatStatus}
+                    chatError={coachChatError}
+                    onSendChat={onSendCoachChat}
+                    isPlayerTurn
+                    drillMode
+                    emptyHint=""
+                    draft={coachDraft}
+                    onDraftChange={onCoachDraftChange}
+                  />
+                </div>
+              ) : null}
+            </div>
           ) : null}
 
           {analyzing && tab === 'games' && (
@@ -1052,6 +1077,8 @@ export const AnalysisDialog: FC<Props> = ({
                       isPlayerTurn
                       reviewMode
                       emptyHint=""
+                      draft={coachDraft}
+                      onDraftChange={onCoachDraftChange}
                     />
                   </div>
                 </>
@@ -1069,6 +1096,8 @@ export const AnalysisDialog: FC<Props> = ({
                     isPlayerTurn
                     reviewMode
                     compact
+                    draft={coachDraft}
+                    onDraftChange={onCoachDraftChange}
                   />
                 </div>
               )}

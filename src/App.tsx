@@ -16,14 +16,12 @@ import { detectGameOver, getTile, movesForPiece } from '@logic/pieces'
 import { BoardComponent, type GameOver } from '@/components/Board'
 import { GamePanel } from '@/components/GamePanel'
 import { NewGameDialog } from '@/components/NewGameDialog'
-import { CoachPanel } from '@/components/CoachPanel'
 import type { CoachChatMessage } from '@/components/CoachPane'
 import { AnalysisDialog } from '@/components/AnalysisDialog'
 import { DrillDialog } from '@/components/DrillDialog'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
 import { PanelViewFit } from '@/components/PanelViewFit'
 import {
-  CoachBotIcon,
   GradientButtonGroup,
   SeatKnightIcon,
 } from '@/components/ui/gradient-button-group'
@@ -433,6 +431,7 @@ export default function App() {
   )
   const [coachError, setCoachError] = useState<string | null>(null)
   const [coachChat, setCoachChat] = useState<CoachChatMessage[]>([])
+  const [coachDraft, setCoachDraft] = useState('')
   const [coachChatStatus, setCoachChatStatus] = useState<
     'idle' | 'loading' | 'error'
   >('idle')
@@ -480,9 +479,8 @@ export default function App() {
   const analysisOpen = isAnalysisPanel(panel)
   const analysisTab = panel === 'my-games' ? 'games' : 'explore'
   const drillOpen = panel === 'drill'
-  const coachOpen = panel === 'coach'
   const rightPanelOpen =
-    settingsOpen || gameOpen || analysisOpen || drillOpen || coachOpen
+    settingsOpen || gameOpen || analysisOpen || drillOpen
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const [panelFitEpoch, setPanelFitEpoch] = useState(0)
 
@@ -794,8 +792,8 @@ export default function App() {
       return
     }
     replacePanelInUrl(next)
-    // Game panel coach needs gameId in the URL for session resume.
-    if ((next === 'game' || next === 'coach') && gameId) {
+    // Game panel needs gameId in the URL for session resume.
+    if (next === 'game' && gameId) {
       replaceGameInUrl(sharePgn, gameId, urlHistoryIndexRef.current)
     }
   }, [drillLine, sharePgn, gameId])
@@ -817,9 +815,7 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [fen, showBestMove, bestMoveDelaySec, analysisReadyForFen, turn, playerColor])
 
-  const showBestArrow =
-    (showBestMove && bestMoveDelayElapsed) ||
-    (coachOpen && !!best)
+  const showBestArrow = showBestMove && bestMoveDelayElapsed
 
   const drillHintSquares = useMemo(() => {
     if (
@@ -943,8 +939,11 @@ export default function App() {
       movingTo ||
       pendingEngineMove
     ) {
-      // Analysis is for looking at a line yourself. Stockfish must not answer.
-      if (analysisOpen && pendingEngineMove) setPendingEngineMove(null)
+      // Studying a line: drop a queued free-play reply. A drill book reply
+      // stays queued so Explorer keeps the same position as the drill.
+      if (analysisOpen && pendingEngineMove && !drillActive && !drillOpen) {
+        setPendingEngineMove(null)
+      }
       return
     }
     if (turn === playerColor) return
@@ -1045,10 +1044,18 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [heldEngineMove, showBestMove, showBestArrow, analysisStatus])
 
-  // Leave drill session cleanly when closing the panel — restore live game,
-  // but keep the selected line so the picker still shows it on reopen.
+  // Leaving Drill restores the game you paused, and keeps the selected line
+  // in the picker. Explorer is the exception: an in-progress drill stays on
+  // the board so both panels show the same position. The coach thread is
+  // shared with Explorer, so a panel switch does not clear it.
   useEffect(() => {
     if (drillOpen) return
+    if (
+      (panel === 'explore' || panel === 'analysis') &&
+      drillLiveSnapshotRef.current
+    ) {
+      return
+    }
     const snap = drillLiveSnapshotRef.current
     drillLiveSnapshotRef.current = null
     if (snap) {
@@ -1075,13 +1082,11 @@ export default function App() {
     setDrillPreview(null)
     drillFutureRef.current = []
     setDrillFutureCount(0)
-    clearCoachThread()
-    drillChatGameIdRef.current = null
     if (drillWrongTimerRef.current != null) {
       window.clearTimeout(drillWrongTimerRef.current)
       drillWrongTimerRef.current = null
     }
-  }, [drillOpen])
+  }, [drillOpen, panel])
 
   // After each completed ply in a drill, advance index / finish line
   useEffect(() => {
@@ -1599,9 +1604,11 @@ export default function App() {
       const q = question.trim()
       if (!q || coachChatStatus === 'loading') return
       const analysisCoach = analysisOpen && !!analysisReport
+      const exploreStudy = panel === 'explore' || panel === 'analysis'
       if (
         !coachReviewMode &&
         !drillOpen &&
+        !exploreStudy &&
         !analysisCoach &&
         !reviewImport &&
         turn !== playerColor
@@ -1624,7 +1631,9 @@ export default function App() {
 
       try {
         let id: string
-        if (drillOpen) {
+        const drillSession =
+          !!drillLine && (drillStatus === 'playing' || drillStatus === 'complete')
+        if (drillOpen || drillSession) {
           // Drill chats are ephemeral — never reuse free-play gameId or write to URL.
           id = drillChatGameIdRef.current ?? (await mintGameId(controller.signal))
           drillChatGameIdRef.current = id
@@ -1665,7 +1674,13 @@ export default function App() {
               to: l.to,
               evalLabel: l.evalLabel,
             })),
-            openingLineId: drillOpen && drillLine ? drillLine.id : undefined,
+            openingLineId:
+              drillLine &&
+              (drillOpen ||
+                drillStatus === 'playing' ||
+                drillStatus === 'complete')
+                ? drillLine.id
+                : undefined,
             openingCatalog,
             reviewBrief: analysisReport
               ? formatReviewBriefForCoach(analysisReport)
@@ -1754,6 +1769,8 @@ export default function App() {
       turn,
       drillOpen,
       drillLine,
+      drillStatus,
+      panel,
       reviewImport,
     ],
   )
@@ -2470,6 +2487,8 @@ export default function App() {
         coachChatStatus={coachChatStatus}
         coachChatError={coachChatError}
         onSendCoachChat={sendCoachChat}
+        coachDraft={coachDraft}
+        onCoachDraftChange={setCoachDraft}
         chessComUsername={chessComUsername}
         onChessComUsernameChange={(username) => {
           setChessComUsername(username)
@@ -2550,6 +2569,8 @@ export default function App() {
         coachChatStatus={coachChatStatus}
         coachChatError={coachChatError}
         onSendCoachChat={sendCoachChat}
+        coachDraft={coachDraft}
+        onCoachDraftChange={setCoachDraft}
         previewActive={Boolean(drillPreview)}
         previewBusy={
           Boolean(
@@ -2574,27 +2595,11 @@ export default function App() {
         onPanelResizeEnd={onPanelResizeEnd}
       />
 
-      <CoachPanel
-        open={coachOpen}
-        onClose={() => openPanel(null)}
-        explanation={coachExplanation}
-        coachStatus={coachStatus}
-        coachError={coachError}
-        chatMessages={coachChat}
-        chatStatus={coachChatStatus}
-        chatError={coachChatError}
-        onSendChat={sendCoachChat}
-        isPlayerTurn={turn === playerColor}
-        reviewMode={coachReviewMode}
-        panelWidth={panelWidth}
-        onPanelWidthChange={onPanelWidthChange}
-        onPanelResizeEnd={onPanelResizeEnd}
-      />
-
       <div className="layout">
-        <section
+          <section
           className="stage"
           data-board-seat={viewSeat}
+          data-fen={fen}
         >
           <header className="hud">
             <div className="hud-cluster">
@@ -2712,18 +2717,6 @@ export default function App() {
                   isAnalysisPanel(panel) ? 'analysis' : (panel ?? undefined)
                 }
                 items={[
-                  {
-                    id: 'coach',
-                    label: 'Coach',
-                    icon: <CoachBotIcon />,
-                    onClick: () => {
-                      if (coachStatus === 'error') {
-                        setCoachStatus('idle')
-                        setCoachError(null)
-                      }
-                      openPanel(panel === 'coach' ? null : 'coach')
-                    },
-                  },
                   {
                     id: 'analysis',
                     label: 'Analysis',

@@ -270,6 +270,8 @@ export function readPanelFromUrl(
   const p = new URLSearchParams(search).get('panel')
   // Legacy import panel folded into analysis.
   if (p === 'import') return 'analysis'
+  // The coach chat lives in Explore and Drill. Old coach links open Explore.
+  if (p === 'coach') return 'explore'
   if (
     p === 'settings' ||
     p === 'game' ||
