@@ -859,7 +859,10 @@ function MoveTable({
                         : header.column.id === 'winRate'
                           ? { width: trackWidth(widestWin) }
                           : header.column.id === 'engine'
-                            ? { width: `max(2.9rem, ${trackWidth(widestEngine)})` }
+                            ? {
+                                width: `max(3.75rem, ${trackWidth(widestEngine)})`,
+                                minWidth: '3.75rem',
+                              }
                             : header.column.id === 'result'
                               ? { width: '2.8rem' }
                               : undefined
