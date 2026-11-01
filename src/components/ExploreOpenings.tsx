@@ -162,10 +162,10 @@ function widestText(rows: { original: ExploreRow }[], label: (row: ExploreRow) =
   return widest
 }
 
-/** Width of the widest number, plus the heading and a little padding. */
-function trackWidth(sample: string, header: string) {
-  const chars = Math.max(sample.length, header.length + 1)
-  return `calc(${chars}ch + 0.85rem)`
+/** Width of the widest number in that column, plus the cell padding. */
+function trackWidth(sample: string) {
+  const chars = Math.max(sample.length, 4)
+  return `calc(${chars}ch + 0.45rem)`
 }
 
 function percentLabel(white: number, draws: number, black: number) {
@@ -458,7 +458,7 @@ function SortHeader({
   return (
     <button
       type="button"
-      className="inline-flex items-center gap-1 text-xs font-medium"
+      className="inline-flex max-w-full items-center gap-0.5 overflow-hidden text-xs font-medium"
       onClick={onToggle}
     >
       {label}
@@ -855,13 +855,13 @@ function MoveTable({
                     )}
                     style={
                       header.column.id === 'share'
-                        ? { width: trackWidth(widestShare, '%') }
+                        ? { width: trackWidth(widestShare) }
                         : header.column.id === 'winRate'
-                          ? { width: trackWidth(widestWin, 'Win') }
+                          ? { width: trackWidth(widestWin) }
                           : header.column.id === 'engine'
-                            ? { width: trackWidth(widestEngine, 'Engine') }
+                            ? { width: trackWidth(widestEngine) }
                             : header.column.id === 'result'
-                              ? { width: '2.75rem' }
+                              ? { width: '2.25rem' }
                               : undefined
                     }
                   >
