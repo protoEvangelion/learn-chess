@@ -859,9 +859,9 @@ function MoveTable({
                         : header.column.id === 'winRate'
                           ? { width: trackWidth(widestWin) }
                           : header.column.id === 'engine'
-                            ? { width: trackWidth(widestEngine) }
+                            ? { width: `max(2.9rem, ${trackWidth(widestEngine)})` }
                             : header.column.id === 'result'
-                              ? { width: '2.25rem' }
+                              ? { width: '2.8rem' }
                               : undefined
                     }
                   >
