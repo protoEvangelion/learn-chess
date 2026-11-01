@@ -1,8 +1,6 @@
 import { useState, type FC } from 'react'
 import { CalendarIcon } from 'lucide-react'
-import type { DateRange } from 'react-day-picker'
 import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { explorerMonthLabel, type ExplorerMonth } from '@/lib/lichessExplorer'
 
@@ -49,18 +47,35 @@ function formatDay(date: Date): string {
   }).format(date)
 }
 
+function dayValue(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function parseDay(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return null
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function clampDay(date: Date, min: Date, max: Date): Date {
+  if (date < min) return min
+  if (date > max) return max
+  return date
+}
+
 /**
- * Day range over the months the database actually has. shadcn Calendar is the
- * range control. Cult UI has no date-range component.
+ * From and To are separate fields. A range calendar made the second click
+ * restart the selection, so each end can be changed on its own.
  */
 export const ExplorerDateRange: FC<Props> = ({ months, from, to, onChange }) => {
   const [open, setOpen] = useState(false)
-  const [draft, setDraft] = useState<DateRange | undefined>(undefined)
   const earliest = months[0]
   const latest = months[months.length - 1]
   const fullFrom = earliest ? monthStart(earliest) : null
   const fullTo = latest ? monthEnd(latest) : null
-  const selected = draft ?? (from && to ? { from, to } : undefined)
   const label =
     from && to
       ? `${formatDay(from)} – ${formatDay(to)}`
@@ -68,15 +83,22 @@ export const ExplorerDateRange: FC<Props> = ({ months, from, to, onChange }) => 
         ? `${explorerMonthLabel(months[0])} – ${explorerMonthLabel(months[months.length - 1])}`
         : 'All months'
 
+  const commitFrom = (picked: Date) => {
+    if (!fullFrom || !fullTo || !to) return
+    const start = clampDay(picked, fullFrom, fullTo)
+    const end = start > to ? start : to
+    onChange(start, end)
+  }
+
+  const commitTo = (picked: Date) => {
+    if (!fullFrom || !fullTo || !from) return
+    const end = clampDay(picked, fullFrom, fullTo)
+    const start = end < from ? end : from
+    onChange(start, end)
+  }
+
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        if (next && from && to) setDraft({ from, to })
-        if (!next) setDraft(undefined)
-      }}
-    >
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -90,23 +112,58 @@ export const ExplorerDateRange: FC<Props> = ({ months, from, to, onChange }) => 
           {label}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto p-0">
-        {fullFrom && fullTo ? (
-          <Calendar
-            mode="range"
-            selected={selected}
-            defaultMonth={fullFrom}
-            startMonth={fullFrom}
-            endMonth={fullTo}
-            numberOfMonths={Math.min(2, months.length)}
-            disabled={[{ before: fullFrom }, { after: fullTo }]}
-            onSelect={(next) => {
-              setDraft(next)
-              if (next?.from && next.to) onChange(next.from, next.to)
-            }}
-          />
+      <PopoverContent align="start" className="w-56 gap-3 p-3">
+        {fullFrom && fullTo && from && to ? (
+          <>
+            <DateField
+              label="From"
+              value={dayValue(from)}
+              min={dayValue(fullFrom)}
+              max={dayValue(fullTo)}
+              onChange={commitFrom}
+            />
+            <DateField
+              label="To"
+              value={dayValue(to)}
+              min={dayValue(fullFrom)}
+              max={dayValue(fullTo)}
+              onChange={commitTo}
+            />
+          </>
         ) : null}
       </PopoverContent>
     </Popover>
+  )
+}
+
+function DateField({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string
+  value: string
+  min: string
+  max: string
+  onChange: (date: Date) => void
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      {label}
+      <input
+        type="date"
+        value={value}
+        min={min}
+        max={max}
+        aria-label={label}
+        className="h-8 rounded-md border border-white/15 bg-black/40 px-2 text-xs font-normal normal-case tracking-normal text-foreground [color-scheme:dark]"
+        onChange={(event) => {
+          const picked = parseDay(event.target.value)
+          if (picked) onChange(picked)
+        }}
+      />
+    </label>
   )
 }
