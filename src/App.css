@@ -2178,6 +2178,7 @@ body.is-review-coach-resizing canvas {
 
 .analysis-move-table tbody tr.is-engine .analysis-move-table-tag {
   color: #4ade80;
+  cursor: help;
 }
 
 .analysis-move-table-tag.is-played {

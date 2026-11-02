@@ -42,7 +42,12 @@ import {
   fetchLichessExplorer,
   whiteWinRate,
 } from '@/lib/lichessExplorer'
-import { bestExplorerEngineMove } from '@/lib/explorerEngineMove'
+import {
+  advisedEngineMove,
+  bestExplorerEngineMove,
+  engineAdviceLabel,
+  type EngineAdviceSource,
+} from '@/lib/explorerEngineMove'
 import { loadExplorerRatings, loadExplorerSpeeds } from '@/lib/explorerFilterPrefs'
 import {
   evalGraphHalfRange,
@@ -415,6 +420,8 @@ type ChoiceRow = {
   pct: number | null
   games: number | null
   engine: boolean
+  /** Set on the green ENGINE row. Hover says which engine picked it. */
+  engineSource?: EngineAdviceSource
 }
 
 function MoveChoices({
@@ -453,15 +460,16 @@ function MoveChoices({
           position.moves,
           ply.color === 'black' ? 'black' : 'white',
         )
-        const engineSan = explorerBest?.san ?? ply.bestSan
-        if (engineSan) {
-          const match = position.moves.find((move) => move.san === engineSan)
+        const advised = advisedEngineMove(explorerBest, ply.bestSan)
+        if (advised) {
+          const match = position.moves.find((move) => move.san === advised.san)
           const games = match ? explorerGames(match) : 0
           next.push({
-            san: engineSan,
+            san: advised.san,
             pct: match && games > 0 ? Math.round(rate(match) * 100) : null,
             games: match && games > 0 ? games : null,
             engine: true,
+            engineSource: advised.source,
           })
         }
         for (const move of ranked) {
@@ -482,9 +490,16 @@ function MoveChoices({
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setStatus('error')
-        if (ply.bestSan) {
+        const advised = advisedEngineMove(null, ply.bestSan)
+        if (advised) {
           setRows([
-            { san: ply.bestSan, pct: null, games: null, engine: true },
+            {
+              san: advised.san,
+              pct: null,
+              games: null,
+              engine: true,
+              engineSource: advised.source,
+            },
           ])
         }
       })
@@ -531,7 +546,16 @@ function MoveChoices({
                 <td>
                   {row.san}
                   {row.engine ? (
-                    <span className="analysis-move-table-tag">engine</span>
+                    <span
+                      className="analysis-move-table-tag"
+                      title={
+                        row.engineSource
+                          ? engineAdviceLabel(row.engineSource)
+                          : undefined
+                      }
+                    >
+                      engine
+                    </span>
                   ) : null}
                   {row.san === ply.san ? (
                     <span className="analysis-move-table-tag is-played">played</span>

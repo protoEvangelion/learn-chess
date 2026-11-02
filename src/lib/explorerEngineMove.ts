@@ -15,6 +15,26 @@ export function whiteEngineScore(move: Pick<ExplorerMove, 'engineCp' | 'engineMa
   return null
 }
 
+export type EngineAdviceSource = 'explorer' | 'browser'
+
+/**
+ * Explorer's saved best move when one exists. The browser engine is only
+ * the fallback for a position the explorer has not scored.
+ */
+export function advisedEngineMove(
+  explorerBest: { san: string } | null,
+  browserSan: string | null | undefined,
+): { san: string; source: EngineAdviceSource } | null {
+  if (explorerBest?.san) return { san: explorerBest.san, source: 'explorer' }
+  if (browserSan) return { san: browserSan, source: 'browser' }
+  return null
+}
+
+/** Hover text for the green ENGINE label. */
+export function engineAdviceLabel(source: EngineAdviceSource): string {
+  return source === 'explorer' ? 'Explorer engine' : 'Browser engine'
+}
+
 /** Saved explorer-engine move that is best for the side about to play. */
 export function bestExplorerEngineMove<T extends ScoredMove>(
   moves: readonly T[],
