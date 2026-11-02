@@ -873,11 +873,9 @@ export default function App() {
   const recommendationSquares = explorerSquares ?? fallbackSquares
   const tipFrom = previewArrow?.from ?? recommendationSquares?.from ?? null
   const tipTo = previewArrow?.to ?? recommendationSquares?.to ?? null
-  const recommendedUci = explorerSquares
-    ? explorerTip.bestUci
-    : explorerReady
-      ? (best?.uci ?? null)
-      : null
+  // ★ is the saved explorer-engine move. Green squares still fall back to
+  // the book, the review arrow, or Stockfish when that score is missing.
+  const recommendedUci = explorerReady ? explorerTip.bestUci : null
 
   const endOutcome = outcomeFromResult(gameOver, playerColor)
   const scrubbingImport =

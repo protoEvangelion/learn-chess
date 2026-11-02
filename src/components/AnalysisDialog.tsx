@@ -89,9 +89,9 @@ type Props = {
   onPreviewMove?: (move: { fen: string; san: string } | null) => void
   onPlaySan?: (sans: string[], play?: string) => void
   playedSans?: string[]
-  /** Explorer engine best UCI for the live board — greens that row in Explore. */
+  /** Saved explorer-engine best UCI. Explore puts a ★ on that move. */
   recommendedUci?: string | null
-  /** White's worst explorer-engine UCI — reds that one row in Explore. */
+  /** White's worst saved score. Explore puts a ✕ on that move. */
   worstUci?: string | null
   linePly?: number
   lineLength?: number

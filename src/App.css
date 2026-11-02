@@ -1207,34 +1207,29 @@ body.is-panel-resizing canvas {
   background-color: color-mix(in srgb, var(--sw-teal) 44%, var(--sw-bg0));
 }
 
-/* Explorer engine's best move for the side to move. */
-.explorer-table-scroll tbody tr.is-recommended {
-  background-color: color-mix(in srgb, #4ade80 28%, var(--sw-bg0));
-  box-shadow: inset 3px 0 0 #4ade80;
+/* Keep the SAN and icons on screen. The opening name truncates first. */
+.explorer-table-scroll th.explorer-move-col,
+.explorer-table-scroll td.explorer-move-col {
+  width: 8.75rem;
+  min-width: 8.75rem;
 }
 
-.explorer-table-scroll tbody tr.is-recommended:hover {
-  background-color: color-mix(in srgb, #4ade80 38%, var(--sw-bg0));
+.explorer-move-icons {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.1rem;
 }
 
-.explorer-table-scroll tbody tr.is-recommended.is-current {
-  background-color: color-mix(in srgb, #4ade80 34%, var(--sw-bg0));
-  box-shadow: inset 3px 0 0 #4ade80;
-}
-
-/* One row: White's lowest saved engine score. Not Black's moves, not every bad move. */
-.explorer-table-scroll tbody tr.is-worst {
-  background-color: color-mix(in srgb, #f87171 28%, var(--sw-bg0));
-  box-shadow: inset 3px 0 0 #f87171;
-}
-
-.explorer-table-scroll tbody tr.is-worst:hover {
-  background-color: color-mix(in srgb, #f87171 38%, var(--sw-bg0));
-}
-
-.explorer-table-scroll tbody tr.is-worst.is-current {
-  background-color: color-mix(in srgb, #f87171 34%, var(--sw-bg0));
-  box-shadow: inset 3px 0 0 #f87171;
+.explorer-move-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95rem;
+  height: 0.95rem;
+  font-size: 0.72rem;
+  line-height: 1;
+  cursor: help;
 }
 
 .explorer-tip {

@@ -35,6 +35,12 @@ import {
   saveExplorerRatings,
   saveExplorerSpeeds,
 } from '@/lib/explorerFilterPrefs'
+import {
+  explorerMoveMarks,
+  MOVE_MARK_GLYPH,
+  MOVE_MARK_HINT,
+  type MoveMark,
+} from '@/lib/explorerMoveMarks'
 import { START_FEN } from '@/lib/fenBridge'
 import { cn } from '@/lib/utils'
 import {
@@ -135,6 +141,14 @@ function shareLabel(row: ExploreRow): string | null {
 function winLabel(row: ExploreRow): string | null {
   if (row.kind === 'status' || row.winRate < 0) return null
   return `${(row.winRate * 100).toFixed(1)}%`
+}
+
+/** The percent printed in the Win column. Blank cells stay out of the icons. */
+function shownWinPercent(row: ExploreRow): number | null {
+  const label = winLabel(row)
+  if (!label) return null
+  const value = Number(label.slice(0, -1))
+  return Number.isFinite(value) ? value : null
 }
 
 /** White's edge after the move. `+0.23` is a quarter pawn. */
@@ -269,34 +283,6 @@ function findRow(rows: readonly ExploreRow[], id: string): ExploreRow | null {
 
 function sanKey(san: string) {
   return san.replace(/[+#]$/, '')
-}
-
-/** Next-move row whose UCI is the last move of `play`. */
-function rowPlaysUci(row: ExploreRow, uci: string | null | undefined, playedLen: number) {
-  if (!uci || row.kind === 'status') return false
-  if (row.path.length !== playedLen + 1) return false
-  const parts = row.play.split(',')
-  return parts[parts.length - 1] === uci
-}
-
-/** Next-move row for the explorer engine's best move from this position. */
-function isRecommendedRow(
-  row: ExploreRow,
-  recommendedUci: string | null | undefined,
-  playedLen: number,
-) {
-  return rowPlaysUci(row, recommendedUci, playedLen)
-}
-
-/** White's single worst explorer-engine move. Never the green best-move row. */
-function isWorstRow(
-  row: ExploreRow,
-  worstUci: string | null | undefined,
-  recommendedUci: string | null | undefined,
-  playedLen: number,
-) {
-  if (!worstUci || worstUci === recommendedUci) return false
-  return rowPlaysUci(row, worstUci, playedLen)
 }
 
 /** Walk the played line, opening each move until its replies are loaded. */
@@ -462,6 +448,35 @@ function ResultBar({
   )
 }
 
+function MoveMarkIcon({
+  mark,
+  onShow,
+  onHide,
+}: {
+  mark: MoveMark
+  onShow: (point: { clientX: number; clientY: number }, text: string) => void
+  onHide: () => void
+}) {
+  const hint = MOVE_MARK_HINT[mark]
+  return (
+    <span
+      className="explorer-move-icon"
+      role="img"
+      aria-label={hint}
+      tabIndex={0}
+      onMouseEnter={(event) => onShow(event, hint)}
+      onFocus={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect()
+        onShow({ clientX: rect.left, clientY: rect.top }, hint)
+      }}
+      onMouseLeave={onHide}
+      onBlur={onHide}
+    >
+      {MOVE_MARK_GLYPH[mark]}
+    </span>
+  )
+}
+
 function SortHeader({
   label,
   sorted,
@@ -499,7 +514,7 @@ function MoveTable({
   months: ExplorerMonth[]
   playedSans: string[]
   recommendedUci?: string | null
-  /** White's worst explorer-engine UCI. One row, and only on White's turn. */
+  /** White's worst saved score. One ✕, and only on White's turn. */
   worstUci?: string | null
   onPlaySan?: (sans: string[], play?: string) => void
 }) {
@@ -535,6 +550,18 @@ function MoveTable({
   const hideTip = useCallback(() => {
     if (tipRef.current) tipRef.current.hidden = true
   }, [])
+
+  const marks = useMemo(
+    () =>
+      explorerMoveMarks({
+        rows: data,
+        playedSans,
+        recommendedUci,
+        worstUci,
+        shownWin: shownWinPercent,
+      }),
+    [data, playedSans, recommendedUci, worstUci],
+  )
 
   const syncWindow = useCallback(() => {
     const el = scrollerRef.current
@@ -642,6 +669,20 @@ function MoveTable({
                   ? `${item.eco ? `${item.eco} ` : ''}${item.name}`.trim()
                   : ''
             const playable = item.path.length > 0 && Boolean(item.san)
+            const rowMarks = marks.get(item.id) ?? []
+            const icons =
+              rowMarks.length > 0 ? (
+                <span className="explorer-move-icons" data-marks={rowMarks.join(' ')}>
+                  {rowMarks.map((mark) => (
+                    <MoveMarkIcon
+                      key={mark}
+                      mark={mark}
+                      onShow={showTip}
+                      onHide={hideTip}
+                    />
+                  ))}
+                </span>
+              ) : null
             return (
               <div
                 className="flex min-w-0 items-center gap-1"
@@ -667,17 +708,28 @@ function MoveTable({
                   <span className="size-6 shrink-0" />
                 )}
                 {playable ? (
-                  <span className="min-w-0 truncate text-left">
-                    <span className="font-semibold">{title}</span>
+                  <span className="flex min-w-0 items-center gap-1 text-left">
+                    <span className="shrink-0 font-semibold">{title}</span>
+                    {icons}
                     {detail ? (
-                      <span className="ml-1.5 font-normal text-muted-foreground">{detail}</span>
+                      <span className="min-w-0 truncate font-normal text-muted-foreground">
+                        {detail}
+                      </span>
                     ) : null}
                   </span>
                 ) : (
-                  <span className={cn('min-w-0 truncate', item.kind === 'status' && 'text-muted-foreground')}>
-                    <span className="font-semibold">{title}</span>
+                  <span
+                    className={cn(
+                      'flex min-w-0 items-center gap-1',
+                      item.kind === 'status' && 'text-muted-foreground',
+                    )}
+                  >
+                    <span className="shrink-0 font-semibold">{title}</span>
+                    {icons}
                     {detail ? (
-                      <span className="ml-1.5 font-normal text-muted-foreground">{detail}</span>
+                      <span className="min-w-0 truncate font-normal text-muted-foreground">
+                        {detail}
+                      </span>
                     ) : null}
                   </span>
                 )}
@@ -789,7 +841,7 @@ function MoveTable({
             ),
         }),
       ]),
-    [hideTip, showTip],
+    [hideTip, marks, showTip],
   )
 
   const table = useTable({
@@ -870,7 +922,7 @@ function MoveTable({
                     key={header.id}
                     className={cn(
                       'sticky top-0 z-10 h-8 bg-[var(--sw-bg0)] px-1 text-xs',
-                      header.column.id === 'move' && 'px-1.5',
+                      header.column.id === 'move' && 'explorer-move-col px-1.5',
                     )}
                     style={
                       header.column.id === 'share'
@@ -902,17 +954,6 @@ function MoveTable({
               </tr>
             ) : null}
             {visibleRows.map((row, index) => {
-              const recommended = isRecommendedRow(
-                row.original,
-                recommendedUci,
-                playedSans.length,
-              )
-              const worst = isWorstRow(
-                row.original,
-                worstUci,
-                recommendedUci,
-                playedSans.length,
-              )
               return (
               <TableRow
                 key={row.id}
@@ -922,16 +963,7 @@ function MoveTable({
                   row.getCanExpand() && 'is-expandable',
                   row.original.path.length > 0 && 'cursor-pointer',
                   row.id === activeId && 'is-current',
-                  recommended && 'is-recommended',
-                  worst && 'is-worst',
                 )}
-                title={
-                  recommended
-                    ? 'Explorer engine’s best move'
-                    : worst
-                      ? 'White’s worst engine move'
-                      : undefined
-                }
                 data-san={row.original.san || undefined}
                 data-row-id={row.id}
                 onMouseDown={(event) => {
@@ -950,7 +982,7 @@ function MoveTable({
                     key={cell.id}
                     className={cn(
                       'h-9 overflow-hidden whitespace-nowrap py-0 text-xs',
-                      cell.column.id === 'move' ? 'px-1.5' : 'px-1',
+                      cell.column.id === 'move' ? 'explorer-move-col px-1.5' : 'px-1',
                     )}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -975,9 +1007,9 @@ function MoveTable({
 export const ExploreOpenings: FC<{
   onPlaySan?: (sans: string[], play?: string) => void
   playedSans?: string[]
-  /** Explorer engine's best UCI for the current board position. */
+  /** Saved explorer-engine best UCI. That row gets a ★. */
   recommendedUci?: string | null
-  /** White's worst explorer-engine UCI. Not painted when it is also the best move. */
+  /** White's worst saved score. That row gets a ✕, unless it is also the best. */
   worstUci?: string | null
 }> = ({ onPlaySan, playedSans = [], recommendedUci = null, worstUci = null }) => {
   const [ratings, setRatings] = useState<RatingBandId[]>(() => loadExplorerRatings())
