@@ -40,16 +40,16 @@ export function readPlayerColorHeader(pgn: string): PlayerSide | null {
 
 /**
  * Words the review coach must follow.
- * The live "side to move" rule talks as White whenever White is about to move,
- * which is the usual end of a game the human played as Black.
+ * “You” stays the human’s color for the whole finished game.
+ * He can still ask what the opponent did or should have done.
  */
 export function reviewCoachVoice(color: PlayerSide): string {
   const you = color === 'white' ? 'White' : 'Black'
   const opp = color === 'white' ? 'Black' : 'White'
   return [
-    `The human played ${you} in this imported game. Speak as “you” to ${you} only.`,
-    `Do not talk as if the human played ${opp}.`,
+    `The human played ${you} in this finished game. “You” means ${you}.`,
     `Call ${opp} the opponent (“they”), never “you”.`,
-    `If ${opp} is the side to move right now, explain what ${you} is facing. Do not coach ${opp} as “you”.`,
+    `If he asks about ${opp} — their move, their plan, or what they should have done — answer. Do not refuse.`,
+    `Keep calling the human “you” while you explain ${opp}.`,
   ].join(' ')
 }

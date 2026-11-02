@@ -4,6 +4,14 @@ import { streamText } from 'ai'
 export const EXPLAIN_MODEL =
   process.env.AI_COACH_MODEL ?? 'deepseek/deepseek-v4.1-flash'
 
+/**
+ * DeepSeek V4.1 Flash effort, via the AI SDK (AI Gateway).
+ * Catalog effort for this model: none | low | high | max.
+ * `low` is that provider's low setting. It still asks for a normal text answer.
+ * Do not set this back to `none` — that turns thinking off.
+ */
+export const COACH_REASONING = 'low' as const
+
 function deltaText(part: { text?: unknown; delta?: unknown }): string {
   if (typeof part.text === 'string') return part.text
   if (typeof part.delta === 'string') return part.delta
@@ -39,6 +47,43 @@ function coachError(error: unknown): Error {
   return new Error(plain || 'Coach request failed')
 }
 
+/**
+ * One model call at low thinking. Returns the answer text only.
+ * Reasoning tokens are not shown to the player.
+ */
+async function readCoachAnswer(
+  prompt: string,
+  signal: AbortSignal,
+  onDelta: (text: string) => void,
+): Promise<string> {
+  const result = streamText({
+    model: EXPLAIN_MODEL,
+    prompt,
+    abortSignal: signal,
+    maxOutputTokens: 1_200,
+    timeout: 55_000,
+    reasoning: COACH_REASONING,
+  })
+
+  let assembled = ''
+  for await (const part of result.stream) {
+    if (part.type === 'error') throw part.error
+    if (part.type !== 'text-delta') continue
+    const text = deltaText(part)
+    if (!text) continue
+    assembled += text
+    onDelta(text)
+  }
+  if (!assembled.trim()) {
+    const full = (await result.text).trim()
+    if (full) {
+      assembled = full
+      onDelta(full)
+    }
+  }
+  return assembled.trim()
+}
+
 export function streamCoachAsk(
   prompt: string,
   onDelta: (text: string) => void,
@@ -49,41 +94,18 @@ export function streamCoachAsk(
 
   const done = (async () => {
     try {
-      const result = streamText({
-        model: EXPLAIN_MODEL,
-        prompt,
-        abortSignal: controller.signal,
-        maxOutputTokens: 1_200,
-        timeout: 55_000,
-        // V4 Flash reasons by default and can end with no answer text.
-        reasoning: 'none',
-      })
-
-      let assembled = ''
-      for await (const part of result.stream) {
-        if (part.type === 'error') throw part.error
-        if (part.type !== 'text-delta') continue
-        const text = deltaText(part)
-        if (!text) continue
-        assembled += text
-        onDelta(text)
+      let text = await readCoachAnswer(prompt, controller.signal, onDelta)
+      // Low thinking can still come back as reasoning with an empty answer.
+      // One more try, still at low — never drop back to reasoning: 'none'.
+      if (!text && !controller.signal.aborted) {
+        text = await readCoachAnswer(
+          `${prompt}\n\nThe last reply had no answer text. Reply again with the answer in the normal message.`,
+          controller.signal,
+          onDelta,
+        )
       }
-      if (!assembled.trim()) {
-        const full = (await result.text).trim()
-        if (full) {
-          assembled = full
-          onDelta(full)
-        }
-      }
-      if (!assembled.trim()) {
-        const reasoned = (await result.reasoningText)?.trim() ?? ''
-        if (reasoned.includes('"explanation"') || reasoned.length > 40) {
-          assembled = reasoned
-          onDelta(reasoned)
-        }
-      }
-      if (!assembled.trim()) throw new Error('AI Gateway returned no text')
-      onDone(assembled.trim())
+      if (!text) throw new Error('AI Gateway returned no text')
+      onDone(text)
     } catch (error) {
       if (controller.signal.aborted) return
       onError(coachError(error))

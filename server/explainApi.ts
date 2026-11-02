@@ -123,20 +123,18 @@ const COACH_RULES = [
   'You are coaching ONE ongoing game. Earlier messages in this chat are prior tips for earlier positions—use that arc.',
   'Relate new advice to how the game has progressed when useful.',
   '',
-  'CRITICAL — SIDE TO MOVE:',
-  'Coach ONLY the side to move named in POSITION FACTS (White or Black).',
-  'Every sentence must tell THAT side what to do on THIS move.',
-  'Never advise the opponent, never describe “Black’s plan” when White is to move (or vice versa).',
-  'If earlier chat tips were for the other color, ignore that perspective and coach the current side only.',
-  'Speak as “you” to the side to move (e.g. when White to move: “you can…”, not “Black should…”).',
+  'This card is about the side to move in POSITION FACTS. Speak as “you” to that side.',
+  'You may mention the other side’s threat in a short clause so the move makes sense.',
+  'Every move you name as playable must be copied from LEGAL MOVES (SAN). Do not invent a move.',
   '',
   'You will receive ONE OR MORE engine move OPTIONS (ranked best → alternatives) for the side to move.',
   'Write ONE short coaching card that:',
-  '1) Recommends option 1 (prefer SAN + from→to) and why it fits now,',
+  '1) Recommends option 1 when it is in LEGAL MOVES (prefer SAN + from→to) and why it fits now,',
   '2) Briefly mentions how options 2/3 compare (or that they are close), using evals when helpful.',
   'UCI moves are long algebraic coordinates only: <from><to>[promotion] (examples: e2e4, e1g1 = castle, e7e8q = promote).',
   'UCI never names the piece; the mover is whatever occupies <from> in the FEN.',
-  'If earlier tips in this chat pointed elsewhere, course-correct toward these engine options.',
+  'If an engine option is not in LEGAL MOVES, ignore it.',
+  'If earlier tips in this chat pointed at a move that is not in LEGAL MOVES, course-correct toward these engine options.',
   '',
   'Reply with ONLY a single JSON object (no markdown fences, no other text):',
   '{"explanation":"..."}',
@@ -148,10 +146,11 @@ const COACH_CHAT_RULES = [
   'You are a friendly chess coach helping a beginner–club player.',
   'You are coaching ONE ongoing game. Earlier messages may be tips for OLDER positions.',
   'CRITICAL: The CURRENT FEN and POSITION FACTS below are authoritative. Ignore piece placement from earlier turns if it conflicts.',
-  'CRITICAL: Coach ONLY the side to move in POSITION FACTS—never switch to advising the opponent.',
+  'Answer the question he asks. Questions about the other side are allowed. Do not refuse.',
   'If POSITION FACTS say a castling side is legal or illegal, trust that—do not invent blockers.',
-  'Answer the player’s question about this position, the listed engine moves, or any tips already shown.',
-  'Stay aligned with the ENGINE BEST MOVE / listed engine lines when discussing what to play—do not push a different move.',
+  'Any move you name as playable in this position must be copied from LEGAL MOVES (SAN). If a move is not on that list, do not suggest it.',
+  'You may describe the other side’s plan in plain words (pieces, files, threats) even when it is not their turn.',
+  'When he asks what to play on this move, prefer the ENGINE BEST MOVE if that move is in LEGAL MOVES.',
   'Plain English, 2–5 short sentences. No JSON, no markdown fences, no bullet lists unless the player asks for a list.',
   'Do not greet or restate the full tips unless asked.',
 ].join('\n')
@@ -162,9 +161,9 @@ function positionFacts(fen: string): string {
     const chess = new Chess(fen)
     const parts = fen.trim().split(/\s+/)
     const side = parts[1] === 'b' ? 'Black' : 'White'
-    const opponent = side === 'White' ? 'Black' : 'White'
     const rights = parts[2] ?? '-'
     const legal = chess.moves({ verbose: true })
+    const sans = legal.map((m) => m.san)
     const oo = legal.find((m) => m.flags.includes('k'))
     const ooo = legal.find((m) => m.flags.includes('q'))
     const castlingLine =
@@ -176,14 +175,105 @@ function positionFacts(fen: string): string {
               : 'Queenside O-O-O is NOT legal.',
           ].join(' ')
         : 'No castling moves are legal for the side to move.'
+    const legalLine =
+      sans.length > 0
+        ? `LEGAL MOVES (SAN). A move you suggest as playable now must be copied from this list and no other: ${sans.join(', ')}.`
+        : 'LEGAL MOVES (SAN): none. Do not suggest a move.'
     return [
-      `Side to move: ${side} (YOU are coaching ${side} only — do not advise ${opponent}).`,
+      `Side to move: ${side}.`,
       `Castling rights in FEN: ${rights}`,
       castlingLine,
+      legalLine,
     ].join('\n')
   } catch {
     return 'Position facts unavailable (invalid FEN).'
   }
+}
+
+type LegalIndex = { san: Set<string>; uci: Set<string> }
+
+function sanKey(token: string): string {
+  let key = token.trim().replace(/[+#]/g, '')
+  if (/^(?:o|0)-/i.test(key)) {
+    return key.replace(/0/g, 'O').replace(/o/gi, 'O')
+  }
+  key = key.replace(/=([kqrbn])/i, (_, piece: string) => `=${piece.toUpperCase()}`)
+  if (/^[kqrbn]/i.test(key)) {
+    key = key[0].toUpperCase() + key.slice(1).replace(/[A-H]/g, (file) => file.toLowerCase())
+  }
+  return key
+}
+
+function legalIndex(fen: string): LegalIndex | null {
+  try {
+    const chess = new Chess(fen)
+    const san = new Set<string>()
+    const uci = new Set<string>()
+    for (const move of chess.moves({ verbose: true })) {
+      san.add(sanKey(move.san))
+      uci.add(`${move.from}${move.to}${move.promotion ?? ''}`.toLowerCase())
+    }
+    return { san, uci }
+  } catch {
+    return null
+  }
+}
+
+const SUGGESTION_TOKEN =
+  /(?:\b(?:play|playing|try|trying|consider|prefer|push|pushes|pushing)\s+|\b)(?:O-O-O|0-0-0|O-O|0-0|[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[KQRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[KQRBN])?[+#]?|[a-h][18]=[KQRBN][+#]?|[a-h][1-8][+#]|[a-h][1-8])\b/gi
+
+const UCI_TOKEN = /\b[a-h][1-8][a-h][1-8][qrbn]?\b/gi
+
+function tidyMoveGaps(text: string): string {
+  return text
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/\(\s*\)/g, '')
+    .trim()
+}
+
+/** Drop a suggested SAN/UCI that chess.js says is illegal in this FEN. */
+export function dropIllegalSuggestions(fen: string, raw: string): string {
+  const index = legalIndex(fen)
+  if (!index) return raw
+
+  const scrub = (text: string) => {
+    const held: string[] = []
+    const uciRe = new RegExp(UCI_TOKEN.source, 'gi')
+    const sanRe = new RegExp(SUGGESTION_TOKEN.source, 'gi')
+    const shielded = text.replace(uciRe, (uci) => {
+      if (index.uci.has(uci.toLowerCase())) {
+        held.push(uci)
+        return `\u0000${held.length - 1}\u0000`
+      }
+      return ''
+    })
+    const sans = shielded.replace(sanRe, (match) => {
+      const parts = match.match(
+        /^(?:(play|playing|try|trying|consider|prefer|push|pushes|pushing)\s+)?(.+)$/i,
+      )
+      const verb = parts?.[1] ?? ''
+      const token = parts?.[2] ?? match
+      if (index.san.has(sanKey(token))) return match
+      if (/^[a-h][1-8][+#]?$/i.test(token) && !verb) return match
+      return ''
+    })
+    return tidyMoveGaps(sans.replace(/\u0000(\d+)\u0000/g, (_, n) => held[Number(n)] ?? ''))
+  }
+
+  const match = raw.match(/\{[\s\S]*\}/)
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[0]) as { explanation?: unknown }
+      if (parsed && typeof parsed.explanation === 'string') {
+        parsed.explanation = scrub(parsed.explanation)
+        return raw.replace(match[0], JSON.stringify(parsed))
+      }
+    } catch {
+      /* The reply is prose, not a coach card. */
+    }
+  }
+  return scrub(raw)
 }
 
 function describeMover(fen: string, from: string, to: string): string {
@@ -363,7 +453,7 @@ export function buildReviewPrompt(body: ReviewRequest, openingFacts: string): st
   return [
     'You are a friendly chess coach helping a beginner–club player review a finished game.',
     reviewCoachVoice(body.playerColor),
-    `You are coaching ${you} (the human). Speak as “you”. Do not advise the opponent’s plans except to explain what you faced.`,
+    `You are coaching ${you} (the human). “You” means ${you} for this whole review. Describe the opponent as “they”. Do not refuse to say what they did.`,
     'The move list and FENs below are ground truth for YOU only — do not invent what happened.',
     'CRITICAL — the player cannot replay move numbers yet. Do NOT cite move numbers, SAN, or UCI',
     '(no “7.Qe1”, no “1.b3”, no “Nxg6”). Talk in ideas a beginner can picture on the board:',
@@ -401,15 +491,34 @@ function formatOpeningCatalog(entries: OpeningCatalogEntry[]): string {
     .join('\n')
 }
 
+function legalEngineLine(
+  fen: string,
+  line: { uci: string; from: string; to: string; evalLabel: string },
+): string | null {
+  try {
+    const chess = new Chess(fen)
+    const promotion = line.uci.length > 4 ? line.uci[4] : undefined
+    const played = chess.move({
+      from: line.from,
+      to: line.to,
+      promotion,
+    })
+    if (!played?.san) return null
+    return `${played.san} (${line.from}→${line.to}) eval ${line.evalLabel}`
+  } catch {
+    return null
+  }
+}
+
 export function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): string {
+  const engineRows = (body.engineLines ?? [])
+    .map((line) => legalEngineLine(body.fen, line))
+    .filter((line): line is string => Boolean(line))
   const engineBlock =
-    body.engineLines && body.engineLines.length > 0
+    engineRows.length > 0
       ? [
           '--- Top engine moves (for this position) ---',
-          ...body.engineLines.map(
-            (l, i) =>
-              `${i + 1}. ${l.uci} (${l.from}→${l.to}) eval ${l.evalLabel}`,
-          ),
+          ...engineRows.map((line, i) => `${i + 1}. ${line}`),
         ].join('\n')
       : null
 
@@ -427,20 +536,25 @@ export function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): 
     body.playerColor === 'white' || body.playerColor === 'black'
       ? body.playerColor
       : null
-  const review =
-    body.reviewBrief?.trim() || human
-      ? [
-          '--- Game review context (post-game analysis) ---',
-          human ? reviewCoachVoice(human) : null,
-          human
-            ? 'The lines above override the side-to-move rule. The human’s color does not change when the opponent is to move.'
-            : null,
-          body.reviewBrief?.trim() || null,
-          '',
-        ]
-          .filter(Boolean)
-          .join('\n')
-      : null
+  const isReview = Boolean(body.reviewBrief?.trim() || human)
+  const voice = isReview
+    ? [
+        '--- Game review context (post-game analysis) ---',
+        human
+          ? reviewCoachVoice(human)
+          : '“You” means the human’s color in this finished game. Answer questions about either side. Do not refuse.',
+        'The human’s color does not change when the other side is to move.',
+        body.reviewBrief?.trim() || null,
+        '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : [
+        '--- Live position ---',
+        'Answer whichever side he asks about, White or Black. Do not refuse.',
+        'If he does not name a side, “you” means the side to move.',
+        '',
+      ].join('\n')
 
   const recentMessages = (body.messages ?? [])
     .filter(
@@ -472,13 +586,13 @@ export function buildChatPrompt(body: CoachChatRequest, openingBrief?: string): 
         ].join('\n')
       : null,
     catalog,
-    review,
+    voice,
     conversation,
     '--- Current position (authoritative) ---',
     `FEN: ${body.fen}`,
     positionFacts(body.fen),
     body.bestMove
-      ? `ENGINE BEST MOVE (selected/option 1 focus): ${body.bestMove}`
+      ? `ENGINE BEST MOVE (selected/option 1 focus): ${body.bestMove}. Prefer it only when that move is in LEGAL MOVES.`
       : null,
     body.evalLabel
       ? human
@@ -1366,7 +1480,10 @@ export async function handleExplainApi(
               buildChatPrompt(body, openingBrief),
               (text) => send({ type: 'delta', text }),
               (fullText) => {
-                send({ type: 'done', text: fullText })
+                send({
+                  type: 'done',
+                  text: dropIllegalSuggestions(body.fen, fullText),
+                })
                 res.end()
               },
               (err) => {
@@ -1470,7 +1587,10 @@ export async function handleExplainApi(
             buildPrompt(body, openingBrief),
             (text) => send({ type: 'delta', text }),
             (fullText) => {
-              send({ type: 'done', text: fullText })
+              send({
+                type: 'done',
+                text: dropIllegalSuggestions(body.fen, fullText),
+              })
               res.end()
             },
             (err) => {

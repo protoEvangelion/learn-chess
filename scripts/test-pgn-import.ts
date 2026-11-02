@@ -2,6 +2,7 @@
  * Smoke test for PGN import.
  * Run: npx tsx --tsconfig tsconfig.app.json scripts/test-pgn-import.ts
  */
+import { COACH_REASONING } from '../server/aiCoach'
 import { parsePgnToImportedGame, positionAtPly } from '../src/lib/pgnImport'
 import { arrowsForReplies } from '../src/lib/replyArrows'
 import { reviewCoachVoice, sideForUsername } from '../src/lib/playerSide'
@@ -71,10 +72,9 @@ const scholars = `[Event "Scholar"]
   assert(sideForUsername('Alice', 'Bob', 'hikaru') === null, 'unknown side is not white')
   const voice = reviewCoachVoice('black')
   assert(voice.includes('The human played Black'), 'coach voice names black')
-  assert(
-    voice.includes('Do not talk as if the human played White'),
-    'coach voice forbids white',
-  )
+  assert(voice.includes('“You” means Black'), 'coach voice keeps you as black')
+  assert(voice.includes('Do not refuse'), 'coach voice answers about white')
+  assert(voice.includes('never “you”'), 'opponent is not called you')
   const whiteVoice = reviewCoachVoice('white')
   assert(whiteVoice.includes('The human played White'), 'coach voice names white')
 }
@@ -111,7 +111,10 @@ const scholars = `[Event "Scholar"]
 }
 
 {
-  const { buildChatPrompt, buildReviewPrompt } = await import('../server/explainApi.ts')
+  const { buildChatPrompt, buildReviewPrompt, dropIllegalSuggestions } = await import(
+    '../server/explainApi.ts'
+  )
+  assert(COACH_REASONING === 'low', 'coach thinking is the provider low setting')
   const chat = buildChatPrompt({
     gameId: 'g',
     fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
@@ -120,10 +123,39 @@ const scholars = `[Event "Scholar"]
     reviewBrief: 'You played as Black.',
   })
   assert(chat.includes('The human played Black'), 'chat prompt speaks as black')
+  assert(chat.includes('“You” means Black'), 'chat prompt keeps you as black')
+  assert(chat.includes('Do not refuse'), 'review chat answers the other side')
+  assert(chat.includes('LEGAL MOVES'), 'review chat lists legal moves')
   assert(
-    chat.includes('Do not talk as if the human played White'),
-    'chat prompt forbids white',
+    !chat.includes('never switch to advising the opponent'),
+    'review chat does not forbid the other side',
   )
+  const live = buildChatPrompt({
+    gameId: 'g',
+    fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    question: 'What is Black trying to do?',
+  })
+  assert(live.includes('Answer whichever side'), 'live chat answers either side')
+  assert(live.includes('LEGAL MOVES'), 'live chat lists legal moves')
+  assert(live.includes('e4'), 'e4 is offered as a legal move')
+  assert(!live.includes('Na4'), 'illegal Na4 is not in the legal list')
+  const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+  const cleaned = dropIllegalSuggestions(
+    startFen,
+    'Play Na4. e4 is the move. The king is on e1. Try e2e5. Also e2e4.',
+  )
+  assert(!cleaned.includes('Na4'), 'drops illegal Na4')
+  assert(cleaned.includes('e4'), 'keeps legal e4')
+  assert(cleaned.includes('e1'), 'keeps a square name')
+  assert(!cleaned.includes('e2e5'), 'drops illegal uci')
+  assert(cleaned.includes('e2e4'), 'keeps legal uci')
+  const card = dropIllegalSuggestions(
+    startFen,
+    '{"explanation":"Play Na4 or e4."}',
+  )
+  const parsed = JSON.parse(card) as { explanation: string }
+  assert(!parsed.explanation.includes('Na4'), 'json card drops illegal Na4')
+  assert(parsed.explanation.includes('e4'), 'json card keeps legal e4')
   const review = buildReviewPrompt(
     {
       gameId: 'g',
