@@ -659,15 +659,23 @@ function explorerFailureStatus(message: string): number {
 /**
  * Lichess stores a Stockfish result for common positions. We turn their
  * first move (a square code like e2e4) into normal notation (e4).
- * A 404 means that position was never stored.
+ * A 404 means that position was never stored under this exact FEN. Clocks
+ * are not part of the position, so a bogus fullmove (an opening exported as
+ * move 69) is retried as move 1, then the explorer's saved engine move.
  */
-async function cloudBestMove(fen: string): Promise<{ san: string; uci: string } | null> {
-  let chess: Chess
-  try {
-    chess = new Chess(fen)
-  } catch {
-    throw new Error('bad fen')
-  }
+function fenWithOpeningClocks(fen: string): string | null {
+  const parts = fen.trim().split(/\s+/)
+  if (parts.length < 6) return null
+  if (parts[4] === '0' && parts[5] === '1') return null
+  parts[4] = '0'
+  parts[5] = '1'
+  return parts.join(' ')
+}
+
+async function lichessCloudMove(
+  chess: Chess,
+  fen: string,
+): Promise<{ san: string; uci: string } | null> {
   const endpoint = new URL('https://lichess.org/api/cloud-eval')
   endpoint.searchParams.set('fen', fen)
   endpoint.searchParams.set('multiPv', '1')
@@ -690,6 +698,66 @@ async function cloudBestMove(fen: string): Promise<{ san: string; uci: string } 
   })
   if (!played) return null
   return { san: played.san, uci }
+}
+
+function whiteScore(move: {
+  engineCp: number | null
+  engineMate: number | null
+}): number | null {
+  const mate = move.engineMate
+  if (mate !== null && mate !== 0) {
+    return mate > 0 ? 1_000_000 - mate : -1_000_000 - mate
+  }
+  return move.engineCp
+}
+
+/** Saved explorer-engine move when Lichess has no cloud eval for this board. */
+async function explorerEngineMove(
+  fen: string,
+): Promise<{ san: string; uci: string } | null> {
+  try {
+    const chess = new Chess(fen)
+    const position = await queryExplorerPosition(fen, allRatingBands())
+    const side = chess.turn() === 'b' ? 'black' : 'white'
+    let best: { san: string; uci: string } | null = null
+    let bestScore = 0
+    for (const move of position.moves) {
+      const score = whiteScore(move)
+      if (score === null || !move.san || !move.uci) continue
+      if (!best) {
+        best = { san: move.san, uci: move.uci }
+        bestScore = score
+        continue
+      }
+      const better = side === 'white' ? score > bestScore : score < bestScore
+      if (better) {
+        best = { san: move.san, uci: move.uci }
+        bestScore = score
+      }
+    }
+    return best
+  } catch (err) {
+    console.warn('[cloud-eval] explorer fallback failed:', err)
+    return null
+  }
+}
+
+async function cloudBestMove(fen: string): Promise<{ san: string; uci: string } | null> {
+  let chess: Chess
+  try {
+    chess = new Chess(fen)
+  } catch {
+    throw new Error('bad fen')
+  }
+  const canonical = chess.fen()
+  const direct = await lichessCloudMove(chess, canonical)
+  if (direct) return direct
+  const reset = fenWithOpeningClocks(canonical)
+  if (reset) {
+    const retry = await lichessCloudMove(new Chess(reset), reset)
+    if (retry) return retry
+  }
+  return explorerEngineMove(canonical)
 }
 
 function sendJson(

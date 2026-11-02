@@ -624,7 +624,11 @@ export default function App() {
   const movingTo = useGameState((s) => s.movingTo)
 
   const fenHistory =
-    reviewImport != null ? history.slice(0, scrubIndex) : history
+    reviewImport != null
+      ? history.slice(0, scrubIndex)
+      : drillStatus === 'complete' && drillReview
+        ? drillReview.history.slice(0, drillPlyIndex)
+        : history
   const playedSans = useMemo(
     () => historyToSans(reviewImport != null ? history.slice(0, scrubIndex) : history),
     [history, reviewImport, scrubIndex],
@@ -1431,7 +1435,11 @@ export default function App() {
       const pos = positionAtPly(drillReview, next)
       setDrillPlyIndex(next)
       setBoard(pos.board)
-      useGameState.setState({ turn: pos.turn, movingTo: null })
+      useGameState.setState({
+        turn: pos.turn,
+        history: drillReview.history.slice(0, next),
+        movingTo: null,
+      })
       setSelected(null)
       setMoves([])
       setPendingEngineMove(null)

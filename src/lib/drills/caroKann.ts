@@ -67,7 +67,10 @@ export const CARO_KANN_LINES: DrillLine[] = [
       ply('Nc5', 'We attack that queen and eye d3.'),
       ply('Qc4', 'They step the queen to c4.'),
       ply('Nd3+', 'Check. The knight lands on d3.'),
-      ply('Ke2', 'They press the knight with the king instead of taking it.'),
+      ply(
+        'Ke2',
+        'They press the knight with the king instead of taking it. Our queen on d7 defends that knight, so their queen does not win it by capturing.',
+      ),
       ply('Rc8', 'We ignore the knight and put the rook on the open file.'),
       ply('Qxd3', 'They finally take the knight.'),
       ply('Qxd3+', 'We take their queen with check.'),

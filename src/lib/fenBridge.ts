@@ -66,9 +66,38 @@ export function boardToFen(
 
   const castling = castlingRights(board)
   const ep = enPassantTarget(history)
-  const fullmove = Math.floor(history.length / 2) + 1
+  const fullmove = fullmoveFor(board, history)
 
   return `${rows.join('/')} ${turn === 'white' ? 'w' : 'b'} ${castling} ${ep} 0 ${fullmove}`
+}
+
+/**
+ * Chess move number: one full move is a white ply and a black ply, so this is
+ * floor(plies / 2) + 1. Never the raw ply index. A history that did not
+ * produce this board must not donate its length — that exported an opening
+ * as move 69 and the explorer/cloud lookup missed it.
+ */
+function fullmoveFor(board: Board, history: HistoryItem[]): number {
+  if (!historyProducesBoard(board, history)) return 1
+  return Math.floor(history.length / 2) + 1
+}
+
+function historyProducesBoard(board: Board, history: HistoryItem[]): boolean {
+  if (history.length === 0) return true
+  const last = history[history.length - 1]
+  const from = board[last.from.y]?.[last.from.x]?.piece
+  const to = board[last.to.y]?.[last.to.x]?.piece
+  if (
+    from &&
+    from.id === last.piece.id &&
+    from.color === last.piece.color &&
+    from.type === last.piece.type
+  ) {
+    return false
+  }
+  if (!to || to.color !== last.piece.color) return false
+  if (to.type === last.piece.type) return to.id === last.piece.id
+  return last.piece.type === 'pawn' && (last.to.y === 0 || last.to.y === 7)
 }
 
 export type FenGame = {
