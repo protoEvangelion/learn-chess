@@ -149,6 +149,8 @@ const COACH_CHAT_RULES = [
   'Answer the question he asks. Questions about the other side are allowed. Do not refuse.',
   'If POSITION FACTS say a castling side is legal or illegal, trust that—do not invent blockers.',
   'Any move you name as playable in this position must be copied from LEGAL MOVES (SAN). If a move is not on that list, do not suggest it.',
+  'You may still name a move you are only explaining, including the move he played and a reply by the other side.',
+  'If he asks about a move that is not legal SAN, such as “nx2”, answer in words and name the real square (such as f2). Keep his word in the reply.',
   'You may describe the other side’s plan in plain words (pieces, files, threats) even when it is not their turn.',
   'When he asks what to play on this move, prefer the ENGINE BEST MOVE if that move is in LEGAL MOVES.',
   'Plain English, 2–5 short sentences. No JSON, no markdown fences, no bullet lists unless the player asks for a list.',
@@ -219,10 +221,35 @@ function legalIndex(fen: string): LegalIndex | null {
   }
 }
 
-const SUGGESTION_TOKEN =
-  /(?:\b(?:play|playing|try|trying|consider|prefer|push|pushes|pushing)\s+|\b)(?:O-O-O|0-0-0|O-O|0-0|[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[KQRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[KQRBN])?[+#]?|[a-h][18]=[KQRBN][+#]?|[a-h][1-8][+#]|[a-h][1-8])\b/gi
+/**
+ * A bare recommendation: “Play Na4”, “Try e2e5”.
+ * “If you play Nxf2” is an explanation, so the lookbehind leaves that name in the sentence.
+ * The check or mate mark stays on the token. A trailing word-boundary used to stop before “+”,
+ * which turned **Ng1+** into **+**.
+ */
+const RECOMMENDED_MOVE =
+  /(?<!\bif\s+\w+\s+)\b(play|playing|try|trying|consider|prefer|push|pushes|pushing)\s+(O-O-O|0-0-0|O-O|0-0|[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[KQRBN])?|[a-h]x[a-h][1-8](?:=[KQRBN])?|[a-h][18]=[KQRBN]|[a-h][1-8][a-h][1-8][qrbn]?|[a-h][1-8])([+#])?/gi
 
-const UCI_TOKEN = /\b[a-h][1-8][a-h][1-8][qrbn]?\b/gi
+function moveIsLegal(index: LegalIndex, token: string): boolean {
+  if (index.uci.has(token.toLowerCase())) return true
+  return index.san.has(sanKey(token))
+}
+
+/** Quotes and bold are names being discussed. Put them aside so the filter cannot empty them. */
+function holdDiscussedSpellings(text: string): { text: string; held: string[] } {
+  const held: string[] = []
+  const shield = (chunk: string) => {
+    held.push(chunk)
+    return `\u0000${held.length - 1}\u0000`
+  }
+  return {
+    held,
+    text: text
+      .replace(/\*\*[^*]*\*\*/g, shield)
+      .replace(/“[^”]*”/g, shield)
+      .replace(/"[^"]*"/g, shield),
+  }
+}
 
 function tidyMoveGaps(text: string): string {
   return text
@@ -232,33 +259,28 @@ function tidyMoveGaps(text: string): string {
     .trim()
 }
 
-/** Drop a suggested SAN/UCI that chess.js says is illegal in this FEN. */
+/**
+ * Drop a move only when the coach tells the player to play it and chess.js says
+ * that move is illegal in this FEN. Discussed names stay, including the move the
+ * player wrote, a quoted “nx2”, and bold **Ng1+**.
+ */
 export function dropIllegalSuggestions(fen: string, raw: string): string {
   const index = legalIndex(fen)
   if (!index) return raw
 
   const scrub = (text: string) => {
-    const held: string[] = []
-    const uciRe = new RegExp(UCI_TOKEN.source, 'gi')
-    const sanRe = new RegExp(SUGGESTION_TOKEN.source, 'gi')
-    const shielded = text.replace(uciRe, (uci) => {
-      if (index.uci.has(uci.toLowerCase())) {
-        held.push(uci)
-        return `\u0000${held.length - 1}\u0000`
-      }
-      return ''
-    })
-    const sans = shielded.replace(sanRe, (match) => {
-      const parts = match.match(
-        /^(?:(play|playing|try|trying|consider|prefer|push|pushes|pushing)\s+)?(.+)$/i,
-      )
-      const verb = parts?.[1] ?? ''
-      const token = parts?.[2] ?? match
-      if (index.san.has(sanKey(token))) return match
-      if (/^[a-h][1-8][+#]?$/i.test(token) && !verb) return match
-      return ''
-    })
-    return tidyMoveGaps(sans.replace(/\u0000(\d+)\u0000/g, (_, n) => held[Number(n)] ?? ''))
+    const { text: shielded, held } = holdDiscussedSpellings(text)
+    RECOMMENDED_MOVE.lastIndex = 0
+    const stripped = shielded.replace(
+      RECOMMENDED_MOVE,
+      (match, verb: string, token: string) => {
+        if (moveIsLegal(index, token)) return match
+        return `${verb} `
+      },
+    )
+    return tidyMoveGaps(
+      stripped.replace(/\u0000(\d+)\u0000/g, (_, n) => held[Number(n)] ?? ''),
+    )
   }
 
   const match = raw.match(/\{[\s\S]*\}/)

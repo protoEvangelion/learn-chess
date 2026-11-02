@@ -126,6 +126,8 @@ const scholars = `[Event "Scholar"]
   assert(chat.includes('“You” means Black'), 'chat prompt keeps you as black')
   assert(chat.includes('Do not refuse'), 'review chat answers the other side')
   assert(chat.includes('LEGAL MOVES'), 'review chat lists legal moves')
+  assert(chat.includes('“nx2”'), 'chat prompt keeps the nx2 example')
+  assert(chat.includes('name the real square'), 'chat prompt names the square in words')
   assert(
     !chat.includes('never switch to advising the opponent'),
     'review chat does not forbid the other side',
@@ -156,6 +158,35 @@ const scholars = `[Event "Scholar"]
   const parsed = JSON.parse(card) as { explanation: string }
   assert(!parsed.explanation.includes('Na4'), 'json card drops illegal Na4')
   assert(parsed.explanation.includes('e4'), 'json card keeps legal e4')
+  const explained = dropIllegalSuggestions(
+    startFen,
+    [
+      'Let’s sort out what that “nx2” idea was actually doing, because the point isn’t just winning a pawn.',
+      'If you play **Nxf2**, the knight on f2 attacks the white **queen on d4**.',
+      'So **Nxf2** is not taking the white queen, while **Ng1+** just gives check.',
+      'In the actual position after **Ng1+**, White can answer with **Rxg1**.',
+      'Your move Qh5 left the knight loose.',
+    ].join(' '),
+  )
+  assert(explained.includes('“nx2”'), 'keeps the player’s nx2 in quotes')
+  assert(explained.includes('**Nxf2**'), 'keeps a discussed knight move')
+  assert(explained.includes('**Ng1+**'), 'keeps the check mark on Ng1+')
+  assert(explained.includes('**Rxg1**'), 'keeps a discussed reply')
+  assert(explained.includes('Qh5'), 'keeps the move the player made')
+  assert(!explained.includes('****'), 'does not turn a move into stars')
+  assert(!explained.includes('**+**'), 'does not leave a bare check mark')
+  assert(!explained.includes('“”'), 'does not blank quotes')
+  assert(
+    dropIllegalSuggestions(
+      startFen,
+      'If you play Nxf2, the knight lands on f2.',
+    ).includes('Nxf2'),
+    'keeps a move the sentence is explaining',
+  )
+  assert(
+    !dropIllegalSuggestions(startFen, 'Play Ng1+ now.').includes('Ng1'),
+    'drops an illegal recommendation including its check mark',
+  )
   const review = buildReviewPrompt(
     {
       gameId: 'g',
