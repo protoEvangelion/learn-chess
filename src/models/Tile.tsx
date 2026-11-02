@@ -127,16 +127,16 @@ const BestMoveBorder: FC = () => {
   )
 }
 
-const PieceSafetyBadge: FC<{ safety: PieceSafety }> = ({ safety }) => (
+const PieceSafetyBadge: FC<{ safety: Exclude<PieceSafety, 'safe'> }> = ({
+  safety,
+}) => (
   <BorderLayer
     y={
       safety === 'hanging'
         ? RING_Y + 0.004
         : safety === 'contested'
           ? RING_Y + 0.002
-          : safety === 'loose'
-            ? RING_Y
-            : RING_Y - 0.002
+          : RING_Y
     }
     color={PIECE_SAFETY_COLOR[safety]}
   />
@@ -304,7 +304,9 @@ export const TileComponent: FC<{
       {isLastMove && !isWrongAttempt && !isPremove && <LastMoveBorder />}
       {isTip && <BestMoveBorder />}
       {isOppCheckPreview && <OppCheckRing />}
-      {pieceSafety && <PieceSafetyBadge safety={pieceSafety} />}
+      {pieceSafety && pieceSafety !== 'safe' && (
+        <PieceSafetyBadge safety={pieceSafety} />
+      )}
       {canMoveHere && movePreview?.captureTrade && (
         <TradeMarker preview={movePreview} />
       )}

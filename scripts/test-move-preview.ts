@@ -6,6 +6,7 @@ import { createBoard, createTestBoard } from '../src/logic/board'
 import { movesForPiece } from '../src/logic/pieces'
 import {
   iconsForPreview,
+  PIECE_SAFETY_COLOR,
   pieceSafetyMap,
   previewByDestination,
   previewMove,
@@ -175,6 +176,22 @@ function assert(cond: boolean, msg: string) {
   ])
   const safety = pieceSafetyMap(board, 'white')
   assert(safety.get('4,4') === 'contested', `Pe4 contested got ${safety.get('4,4')}`)
+}
+
+// 9) Protected pieces stay classified as safe, but that level is not drawn in blue
+{
+  const board = createBoard()
+  const safety = pieceSafetyMap(board, 'white')
+  assert(safety.get('0,6') === 'safe', `Pa2 safe got ${safety.get('0,6')}`)
+  assert(!('safe' in PIECE_SAFETY_COLOR), 'safe has no outline color')
+  const colors = Object.values(PIECE_SAFETY_COLOR)
+  assert(
+    !colors.includes('#4d9fff') && !colors.includes('#5eb0ff'),
+    'piece-safety frames are not blue',
+  )
+  assert(PIECE_SAFETY_COLOR.loose === '#f0a020', 'loose stays orange')
+  assert(PIECE_SAFETY_COLOR.hanging === '#ff4040', 'hanging stays red')
+  assert(PIECE_SAFETY_COLOR.contested === '#ff4fd8', 'contested stays violet')
 }
 
 if (failed) {

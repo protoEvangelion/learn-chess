@@ -265,11 +265,14 @@ export function pieceSafetyMap(
   return map
 }
 
-export const PIECE_SAFETY_COLOR: Record<PieceSafety, string> = {
+/**
+ * Square frames for piece safety. `safe` (protected, not attacked) is omitted:
+ * that level was blue (`#4d9fff`) and outlined almost every friendly piece.
+ */
+export const PIECE_SAFETY_COLOR: Record<Exclude<PieceSafety, 'safe'>, string> = {
   hanging: '#ff4040',
   contested: '#ff4fd8',
   loose: '#f0a020',
-  safe: '#4d9fff',
 }
 
 export function tradeMarkerLabel(trade: {
