@@ -3,7 +3,8 @@
  * Run: npx tsx --tsconfig tsconfig.app.json scripts/test-pgn-import.ts
  */
 import { COACH_REASONING } from '../server/aiCoach'
-import { parsePgnToImportedGame, positionAtPly } from '../src/lib/pgnImport'
+import { parsePgnToImportedGame, playedMoveAtPly, positionAtPly } from '../src/lib/pgnImport'
+import { positionToSquare } from '../src/lib/fenBridge'
 import { arrowsForReplies } from '../src/lib/replyArrows'
 import { reviewCoachVoice, sideForUsername } from '../src/lib/playerSide'
 
@@ -224,6 +225,35 @@ const scholars = `[Event "Scholar"]
   )
   assert(whiteReview.includes('YOU (White) e4'), 'white move is YOU for white')
   assert(whiteReview.includes('The human played White'), 'review prompt names white')
+}
+
+{
+  // Knight leaves e2 for g1 (file changes by two). A later black move must not
+  // steal the highlight, and the destination must not slide one file left to f1.
+  const pgn = `[SetUp "1"]
+[FEN "k7/8/8/8/8/5K2/4n2P/8 w - - 0 1"]
+[White "Tester"]
+[Black "Other"]
+[Result "*"]
+
+1. h3 Ng1+ 2. Kg4 Nf3 *`
+  const g = parsePgnToImportedGame(pgn, { preferColor: 'white' })
+  const clicked = playedMoveAtPly(g.history, 2)
+  assert(clicked !== null, 'Ng1+ has squares')
+  assert(positionToSquare(clicked!.from) === 'e2', `Ng1+ from ${clicked && positionToSquare(clicked.from)}`)
+  assert(positionToSquare(clicked!.to) === 'g1', `Ng1+ to ${clicked && positionToSquare(clicked.to)}`)
+  assert(positionToSquare(clicked!.to) !== 'f1', 'destination is not one file left')
+  const later = playedMoveAtPly(g.history, g.history.length)
+  assert(positionToSquare(later!.to) === 'f3', 'end of the game is Nf3, not Ng1+')
+  const afterNg1 = positionAtPly(g, 2)
+  const knight = afterNg1.board[clicked!.to.y][clicked!.to.x].piece
+  assert(knight?.type === 'knight' && knight.color === 'black', 'knight sits on the highlighted g1 square')
+  const whiteKnight = playedMoveAtPly(
+    parsePgnToImportedGame(`[White "A"]\n[Black "B"]\n\n1. Nf3 *`, { preferColor: 'black' }).history,
+    1,
+  )
+  assert(positionToSquare(whiteKnight!.from) === 'g1', 'Nf3 starts on g1')
+  assert(positionToSquare(whiteKnight!.to) === 'f3', 'Nf3 lands on f3, not e3')
 }
 
 if (failed) {

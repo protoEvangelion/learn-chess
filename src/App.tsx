@@ -83,6 +83,7 @@ import {
   historyToSans,
   isChessComGameUrl,
   parsePgnToImportedGame,
+  playedMoveAtPly,
   positionAtPly,
   type ImportedGame,
 } from '@/lib/pgnImport'
@@ -843,6 +844,11 @@ export default function App() {
     if (!san) return null
     return squaresForSan(board, history, turn, san)
   }, [board, drillLine, drillPlyIndex, drillStatus, history, turn])
+
+  const reviewHighlight = useMemo(() => {
+    if (!reviewImport) return undefined
+    return playedMoveAtPly(reviewImport.history, scrubIndex)
+  }, [reviewImport, scrubIndex])
 
   const reviewArrow = useMemo(() => {
     if (!reviewImport || !analysisReport || scrubIndex <= 0) return null
@@ -2917,6 +2923,7 @@ export default function App() {
                   drillStatus === 'playing' ? validateDrillMove : undefined
                 }
                 frequencyArrows={frequencyArrows}
+                highlightMove={reviewHighlight}
               />
             </group>
           </Canvas>

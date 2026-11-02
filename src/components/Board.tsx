@@ -88,6 +88,11 @@ export const BoardComponent: FC<{
   validateMove?: (move: Move) => boolean
   /** Opening-tree arrows: more frequent moves are more opaque. */
   frequencyArrows?: FrequencyArrow[]
+  /**
+   * Analysis scrub. Pass the clicked move so both of its squares light up.
+   * `null` means the start position (no move). Omit it during live play.
+   */
+  highlightMove?: { from: Position; to: Position } | null
 }> = ({
   selected,
   setSelected,
@@ -114,6 +119,7 @@ export const BoardComponent: FC<{
   playBothSides = false,
   validateMove,
   frequencyArrows = [],
+  highlightMove,
 }) => {
   const [lastSelected, setLastSelected] = useState<Tile | null>(null)
   const turn = useGameState((s) => s.turn)
@@ -129,12 +135,17 @@ export const BoardComponent: FC<{
     to: Position
   } | null>(null)
 
-  const lastOpponentMove = (() => {
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].piece.color !== playerColor) return history[i]
-    }
-    return null
-  })()
+  // Live play marks the opponent's last reply. Analysis passes the clicked
+  // move instead — including your own moves, and not a later move in the game.
+  const lastMoveSquares =
+    highlightMove !== undefined
+      ? highlightMove
+      : (() => {
+          for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i].piece.color !== playerColor) return history[i]
+          }
+          return null
+        })()
 
   const [redLightPosition, setRedLightPosition] = useState<Position>({
     x: 0,
@@ -801,9 +812,9 @@ export const BoardComponent: FC<{
             checkIfPositionsMatch(tile.position, tipTo)
           const isCheck = checkIfPositionsMatch(tile.position, checkedKingPos)
           const isLastMove =
-            !!lastOpponentMove &&
-            (checkIfPositionsMatch(tile.position, lastOpponentMove.from) ||
-              checkIfPositionsMatch(tile.position, lastOpponentMove.to))
+            !!lastMoveSquares &&
+            (checkIfPositionsMatch(tile.position, lastMoveSquares.from) ||
+              checkIfPositionsMatch(tile.position, lastMoveSquares.to))
           const isWrongAttempt =
             checkIfPositionsMatch(tile.position, wrongFrom) ||
             checkIfPositionsMatch(tile.position, wrongTo)

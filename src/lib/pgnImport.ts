@@ -1,5 +1,5 @@
 import { Chess, type Move as ChessMove } from 'chess.js'
-import { copyBoard, createBoard, type Board } from '@logic/board'
+import { copyBoard, createBoard, type Board, type Position } from '@logic/board'
 import type { Color, MoveTypes, Piece } from '@logic/pieces'
 import { getTile } from '@logic/pieces'
 import { isPawn } from '@logic/pieces/pawn'
@@ -384,6 +384,24 @@ export function parsePgnToImportedGame(
     blackElo,
     result,
     pgn: pgnWithNames(history, whiteName, blackName, result, playerColor) || trimmed,
+  }
+}
+
+/**
+ * From/to of the move that was just played to reach `scrubIndex`.
+ * 0 is the start position, so there is no move to mark.
+ * Coordinates are copied so a later edit of the history object cannot slide the square.
+ */
+export function playedMoveAtPly(
+  history: HistoryItem[],
+  scrubIndex: number,
+): { from: Position; to: Position } | null {
+  if (scrubIndex <= 0) return null
+  const item = history[scrubIndex - 1]
+  if (!item) return null
+  return {
+    from: { x: item.from.x, y: item.from.y },
+    to: { x: item.to.x, y: item.to.y },
   }
 }
 
