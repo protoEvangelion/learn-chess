@@ -42,6 +42,7 @@ import {
   fetchLichessExplorer,
   whiteWinRate,
 } from '@/lib/lichessExplorer'
+import { bestExplorerEngineMove } from '@/lib/explorerEngineMove'
 import { loadExplorerRatings, loadExplorerSpeeds } from '@/lib/explorerFilterPrefs'
 import {
   evalGraphHalfRange,
@@ -88,8 +89,10 @@ type Props = {
   onPreviewMove?: (move: { fen: string; san: string } | null) => void
   onPlaySan?: (sans: string[], play?: string) => void
   playedSans?: string[]
-  /** Stockfish best UCI for the live board — greens that row in Explore. */
+  /** Explorer engine best UCI for the live board — greens that row in Explore. */
   recommendedUci?: string | null
+  /** White's worst explorer-engine UCI — reds that one row in Explore. */
+  worstUci?: string | null
   linePly?: number
   lineLength?: number
   onLineStep?: (index: number) => void
@@ -446,11 +449,16 @@ function MoveChoices({
           (a, b) => explorerGames(b) - explorerGames(a),
         )
         const next: ChoiceRow[] = []
-        if (ply.bestSan) {
-          const match = position.moves.find((move) => move.san === ply.bestSan)
+        const explorerBest = bestExplorerEngineMove(
+          position.moves,
+          ply.color === 'black' ? 'black' : 'white',
+        )
+        const engineSan = explorerBest?.san ?? ply.bestSan
+        if (engineSan) {
+          const match = position.moves.find((move) => move.san === engineSan)
           const games = match ? explorerGames(match) : 0
           next.push({
-            san: ply.bestSan,
+            san: engineSan,
             pct: match && games > 0 ? Math.round(rate(match) * 100) : null,
             games: match && games > 0 ? games : null,
             engine: true,
@@ -639,6 +647,7 @@ export const AnalysisDialog: FC<Props> = ({
   onPlaySan,
   playedSans = [],
   recommendedUci = null,
+  worstUci = null,
   linePly = 0,
   lineLength = 0,
   onLineStep,
@@ -877,6 +886,7 @@ export const AnalysisDialog: FC<Props> = ({
                 onPlaySan={onPlaySan}
                 playedSans={playedSans}
                 recommendedUci={recommendedUci}
+                worstUci={worstUci}
               />
               {onSendCoachChat ? (
                 <div className="drill-coach-embed">

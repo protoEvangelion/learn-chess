@@ -271,16 +271,32 @@ function sanKey(san: string) {
   return san.replace(/[+#]$/, '')
 }
 
-/** Next-move row whose UCI matches Stockfish’s top choice from the current position. */
+/** Next-move row whose UCI is the last move of `play`. */
+function rowPlaysUci(row: ExploreRow, uci: string | null | undefined, playedLen: number) {
+  if (!uci || row.kind === 'status') return false
+  if (row.path.length !== playedLen + 1) return false
+  const parts = row.play.split(',')
+  return parts[parts.length - 1] === uci
+}
+
+/** Next-move row for the explorer engine's best move from this position. */
 function isRecommendedRow(
   row: ExploreRow,
   recommendedUci: string | null | undefined,
   playedLen: number,
 ) {
-  if (!recommendedUci || row.kind === 'status') return false
-  if (row.path.length !== playedLen + 1) return false
-  const parts = row.play.split(',')
-  return parts[parts.length - 1] === recommendedUci
+  return rowPlaysUci(row, recommendedUci, playedLen)
+}
+
+/** White's single worst explorer-engine move. Never the green best-move row. */
+function isWorstRow(
+  row: ExploreRow,
+  worstUci: string | null | undefined,
+  recommendedUci: string | null | undefined,
+  playedLen: number,
+) {
+  if (!worstUci || worstUci === recommendedUci) return false
+  return rowPlaysUci(row, worstUci, playedLen)
 }
 
 /** Walk the played line, opening each move until its replies are loaded. */
@@ -474,6 +490,7 @@ function MoveTable({
   months,
   playedSans,
   recommendedUci,
+  worstUci,
   onPlaySan,
 }: {
   rows: ExploreRow[]
@@ -482,6 +499,8 @@ function MoveTable({
   months: ExplorerMonth[]
   playedSans: string[]
   recommendedUci?: string | null
+  /** White's worst explorer-engine UCI. One row, and only on White's turn. */
+  worstUci?: string | null
   onPlaySan?: (sans: string[], play?: string) => void
 }) {
   const [data, setData] = useState(rows)
@@ -882,7 +901,19 @@ function MoveTable({
                 <td colSpan={5} style={{ height: padTop, padding: 0, border: 0 }} />
               </tr>
             ) : null}
-            {visibleRows.map((row, index) => (
+            {visibleRows.map((row, index) => {
+              const recommended = isRecommendedRow(
+                row.original,
+                recommendedUci,
+                playedSans.length,
+              )
+              const worst = isWorstRow(
+                row.original,
+                worstUci,
+                recommendedUci,
+                playedSans.length,
+              )
+              return (
               <TableRow
                 key={row.id}
                 ref={index === 0 ? measureRow : undefined}
@@ -891,9 +922,16 @@ function MoveTable({
                   row.getCanExpand() && 'is-expandable',
                   row.original.path.length > 0 && 'cursor-pointer',
                   row.id === activeId && 'is-current',
-                  isRecommendedRow(row.original, recommendedUci, playedSans.length) &&
-                    'is-recommended',
+                  recommended && 'is-recommended',
+                  worst && 'is-worst',
                 )}
+                title={
+                  recommended
+                    ? 'Explorer engine’s best move'
+                    : worst
+                      ? 'White’s worst engine move'
+                      : undefined
+                }
                 data-san={row.original.san || undefined}
                 data-row-id={row.id}
                 onMouseDown={(event) => {
@@ -919,7 +957,8 @@ function MoveTable({
                   </TableCell>
                 ))}
               </TableRow>
-            ))}
+              )
+            })}
             {padBottom > 0 ? (
               <tr aria-hidden="true">
                 <td colSpan={5} style={{ height: padBottom, padding: 0, border: 0 }} />
@@ -936,9 +975,11 @@ function MoveTable({
 export const ExploreOpenings: FC<{
   onPlaySan?: (sans: string[], play?: string) => void
   playedSans?: string[]
-  /** Stockfish best UCI for the current board position. */
+  /** Explorer engine's best UCI for the current board position. */
   recommendedUci?: string | null
-}> = ({ onPlaySan, playedSans = [], recommendedUci = null }) => {
+  /** White's worst explorer-engine UCI. Not painted when it is also the best move. */
+  worstUci?: string | null
+}> = ({ onPlaySan, playedSans = [], recommendedUci = null, worstUci = null }) => {
   const [ratings, setRatings] = useState<RatingBandId[]>(() => loadExplorerRatings())
   const [speeds, setSpeeds] = useState<ExplorerSpeed[]>(() => loadExplorerSpeeds())
   const [availableMonths, setAvailableMonths] = useState<ExplorerMonth[]>([])
@@ -1100,6 +1141,7 @@ export const ExploreOpenings: FC<{
           months={selectedMonths}
           playedSans={playedSans}
           recommendedUci={recommendedUci}
+          worstUci={worstUci}
           onPlaySan={onPlaySan}
         />
       ) : null}

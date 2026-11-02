@@ -65,6 +65,8 @@ import {
   type BestMoveResult,
   type StrengthLevel,
 } from '@/lib/stockfishOpponent'
+import { uciToSquares } from '@/lib/uci'
+import { useExplorerEngineMove } from '@/lib/useExplorerEngineMove'
 import { EndGameOverlay, outcomeFromResult } from '@/EndGameOverlay'
 import { parseCoachExplain } from '@/lib/coachTips'
 import {
@@ -630,6 +632,18 @@ export default function App() {
     () => boardToFen(board, turn, fenHistory),
     [board, turn, fenHistory],
   )
+  const explorerTip = useExplorerEngineMove(fen)
+  const explorerReady =
+    explorerTip.fen === fen && explorerTip.status !== 'loading'
+  const explorerSquares = useMemo(() => {
+    if (!explorerReady || !explorerTip.bestUci) return null
+    const squares = uciToSquares(explorerTip.bestUci)
+    if (!squares) return null
+    return {
+      from: squareToPosition(squares.from),
+      to: squareToPosition(squares.to),
+    }
+  }, [explorerReady, explorerTip.bestUci])
   const sharePgn = useMemo(() => {
     if (reviewImport?.pgn) return reviewImport.pgn
     return historyToPgn(history) || fenToSetupPgn(fen)
@@ -845,16 +859,25 @@ export default function App() {
     from: Position
     to: Position
   } | null>(null)
-  const tipFrom =
-    drillHintSquares?.from ??
-    previewArrow?.from ??
-    reviewArrow?.from ??
-    (showBestArrow && best ? squareToPosition(best.from) : null)
-  const tipTo =
-    drillHintSquares?.to ??
-    previewArrow?.to ??
-    reviewArrow?.to ??
-    (showBestArrow && best ? squareToPosition(best.to) : null)
+  const stockfishSquares =
+    showBestArrow && best
+      ? { from: squareToPosition(best.from), to: squareToPosition(best.to) }
+      : null
+  // Explorer engine move owns the green squares. While that request is still
+  // out, leave them blank so Stockfish, the drill book, and the review arrow
+  // cannot flash a different move. After the explorer answers with no saved
+  // score, those older tips are the fallback.
+  const fallbackSquares = explorerReady
+    ? (drillHintSquares ?? reviewArrow ?? stockfishSquares)
+    : null
+  const recommendationSquares = explorerSquares ?? fallbackSquares
+  const tipFrom = previewArrow?.from ?? recommendationSquares?.from ?? null
+  const tipTo = previewArrow?.to ?? recommendationSquares?.to ?? null
+  const recommendedUci = explorerSquares
+    ? explorerTip.bestUci
+    : explorerReady
+      ? (best?.uci ?? null)
+      : null
 
   const endOutcome = outcomeFromResult(gameOver, playerColor)
   const scrubbingImport =
@@ -1021,28 +1044,36 @@ export default function App() {
     showBestMove,
   ])
 
-  // Play the held reply once its best-move arrow is visible.
+  // Play the held reply once the green recommendation is on the board.
+  // An explorer engine move counts. Stockfish is only the fallback.
   useEffect(() => {
     if (!heldEngineMove) return
-    if (!showBestMove || analysisStatus === 'error') {
+    const release = () => {
       const move = heldEngineMove
       heldEngineMoveRef.current = null
       setHeldEngineMove(null)
       setOpponentThinking(false)
       setPendingEngineMove(move)
+    }
+    if (!showBestMove || analysisStatus === 'error') {
+      release()
       return
     }
-    if (!showBestArrow) return
-    const move = heldEngineMove
-    const timer = window.setTimeout(() => {
-      if (heldEngineMoveRef.current !== move) return
-      heldEngineMoveRef.current = null
-      setHeldEngineMove(null)
-      setOpponentThinking(false)
-      setPendingEngineMove(move)
-    }, 800)
+    if (explorerSquares) {
+      const timer = window.setTimeout(release, 800)
+      return () => window.clearTimeout(timer)
+    }
+    if (!explorerReady || !showBestArrow) return
+    const timer = window.setTimeout(release, 800)
     return () => window.clearTimeout(timer)
-  }, [heldEngineMove, showBestMove, showBestArrow, analysisStatus])
+  }, [
+    heldEngineMove,
+    showBestMove,
+    showBestArrow,
+    analysisStatus,
+    explorerReady,
+    explorerSquares,
+  ])
 
   // Leaving Drill restores the game you paused, and keeps the selected line
   // in the picker. Explorer is the exception: an in-progress drill stays on
@@ -2509,7 +2540,8 @@ export default function App() {
         onPreviewMove={previewReviewMove}
         onPlaySan={playExploreLine}
         playedSans={playedSans}
-        recommendedUci={best?.uci ?? null}
+        recommendedUci={recommendedUci}
+        worstUci={explorerReady ? explorerTip.worstUci : null}
         linePly={history.length}
         lineLength={history.length + exploreFutureCount}
         onLineStep={stepLiveLine}

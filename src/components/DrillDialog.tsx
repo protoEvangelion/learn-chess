@@ -395,7 +395,7 @@ export const DrillDialog: FC<Props> = ({
               <p
                 className="drill-step-stats"
                 aria-live="polite"
-                title="Played is this move's share of games in the opener's current filters. White / Draw / Black is how those games ended. Computer is the stored engine move. The green squares stay the book move."
+                title="Played is this move's share of games in the opener's current filters. White / Draw / Black is how those games ended. Computer is the stored engine move. The green squares are that explorer engine move, and the book move only when the position has no saved engine score."
               >
                 {stepStatsText}
               </p>

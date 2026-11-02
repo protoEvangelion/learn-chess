@@ -1207,7 +1207,7 @@ body.is-panel-resizing canvas {
   background-color: color-mix(in srgb, var(--sw-teal) 44%, var(--sw-bg0));
 }
 
-/* Stockfish’s top move for the current position */
+/* Explorer engine's best move for the side to move. */
 .explorer-table-scroll tbody tr.is-recommended {
   background-color: color-mix(in srgb, #4ade80 28%, var(--sw-bg0));
   box-shadow: inset 3px 0 0 #4ade80;
@@ -1220,6 +1220,21 @@ body.is-panel-resizing canvas {
 .explorer-table-scroll tbody tr.is-recommended.is-current {
   background-color: color-mix(in srgb, #4ade80 34%, var(--sw-bg0));
   box-shadow: inset 3px 0 0 #4ade80;
+}
+
+/* One row: White's lowest saved engine score. Not Black's moves, not every bad move. */
+.explorer-table-scroll tbody tr.is-worst {
+  background-color: color-mix(in srgb, #f87171 28%, var(--sw-bg0));
+  box-shadow: inset 3px 0 0 #f87171;
+}
+
+.explorer-table-scroll tbody tr.is-worst:hover {
+  background-color: color-mix(in srgb, #f87171 38%, var(--sw-bg0));
+}
+
+.explorer-table-scroll tbody tr.is-worst.is-current {
+  background-color: color-mix(in srgb, #f87171 34%, var(--sw-bg0));
+  box-shadow: inset 3px 0 0 #f87171;
 }
 
 .explorer-tip {
