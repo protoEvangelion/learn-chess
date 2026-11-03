@@ -41,13 +41,22 @@ import {
   explorerGames,
   fetchLichessExplorer,
   whiteWinRate,
+  type ExplorerMove,
 } from '@/lib/lichessExplorer'
 import {
   advisedEngineMove,
   bestExplorerEngineMove,
   engineAdviceLabel,
+  rankExplorerEngineMoves,
+  worstWhiteExplorerMove,
   type EngineAdviceSource,
 } from '@/lib/explorerEngineMove'
+import {
+  explorerMoveMarks,
+  MOVE_MARK_GLYPH,
+  MOVE_MARK_HINT,
+  type MoveMark,
+} from '@/lib/explorerMoveMarks'
 import { loadExplorerRatings, loadExplorerSpeeds } from '@/lib/explorerFilterPrefs'
 import {
   evalGraphHalfRange,
@@ -413,7 +422,7 @@ export function EvalGraph({
   )
 }
 
-const MOVE_TABLE_CAP = 6
+const TOP_ENGINE_MOVES = 5
 
 type ChoiceRow = {
   san: string
@@ -422,6 +431,80 @@ type ChoiceRow = {
   engine: boolean
   /** Set on the green ENGINE row. Hover says which engine picked it. */
   engineSource?: EngineAdviceSource
+  /** Side-to-move eval. Plus is good for the side about to play. */
+  engineLabel: string | null
+  engineTip: string | null
+  marks: MoveMark[]
+}
+
+function sanKey(san: string) {
+  return san.replace(/[+#]$/, '')
+}
+
+function savedEngineTip(depth: number | null): string {
+  return depth !== null && depth > 0 ? `Depth ${depth}` : 'Saved engine score'
+}
+
+/** Top explorer-engine rows for this ply, plus the played move when it missed the cut. */
+function choiceRowsForPly(
+  moves: readonly ExplorerMove[],
+  side: 'white' | 'black',
+  playedSan: string,
+): ChoiceRow[] {
+  const rate = side === 'black' ? blackWinRate : whiteWinRate
+  const ranked = rankExplorerEngineMoves(moves, side, {
+    limit: TOP_ENGINE_MOVES,
+    playedSan,
+  })
+  const best = bestExplorerEngineMove(moves, side)
+  const worst = worstWhiteExplorerMove(moves, side)
+  const marks = explorerMoveMarks({
+    rows: moves.map((move) => ({
+      id: move.uci,
+      san: move.san,
+      kind: 'opening',
+      path: [move.san],
+      play: move.uci,
+      games: explorerGames(move),
+      winRate: whiteWinRate(move),
+    })),
+    playedSans: [],
+    recommendedUci: best?.uci ?? null,
+    worstUci: worst?.uci ?? null,
+    shownWin: (row) => {
+      if (row.winRate < 0) return null
+      const value = Number((row.winRate * 100).toFixed(1))
+      return Number.isFinite(value) ? value : null
+    },
+  })
+  const playedKey = sanKey(playedSan)
+  const rows: ChoiceRow[] = ranked.map((item, index) => {
+    const games = explorerGames(item.move)
+    const scored = item.score !== null
+    const engine = index === 0 && scored
+    return {
+      san: item.move.san,
+      pct: games > 0 ? Math.round(rate(item.move) * 100) : null,
+      games: games > 0 ? games : null,
+      engine,
+      engineSource: engine ? 'explorer' : undefined,
+      engineLabel: item.label,
+      engineTip: item.label ? savedEngineTip(item.move.engineDepth) : null,
+      marks: marks.get(item.move.uci) ?? [],
+    }
+  })
+  if (playedSan && !rows.some((row) => sanKey(row.san) === playedKey)) {
+    rows.push({
+      san: playedSan,
+      pct: null,
+      games: null,
+      engine: false,
+      engineLabel: null,
+      engineTip: null,
+      marks: [],
+    })
+  }
+  return rows
 }
 
 function MoveChoices({
@@ -451,40 +534,8 @@ function MoveChoices({
       { speeds },
     )
       .then((position) => {
-        const rate = ply.color === 'black' ? blackWinRate : whiteWinRate
-        const ranked = [...position.moves].sort(
-          (a, b) => explorerGames(b) - explorerGames(a),
-        )
-        const next: ChoiceRow[] = []
-        const explorerBest = bestExplorerEngineMove(
-          position.moves,
-          ply.color === 'black' ? 'black' : 'white',
-        )
-        const advised = advisedEngineMove(explorerBest, ply.bestSan)
-        if (advised) {
-          const match = position.moves.find((move) => move.san === advised.san)
-          const games = match ? explorerGames(match) : 0
-          next.push({
-            san: advised.san,
-            pct: match && games > 0 ? Math.round(rate(match) * 100) : null,
-            games: match && games > 0 ? games : null,
-            engine: true,
-            engineSource: advised.source,
-          })
-        }
-        for (const move of ranked) {
-          if (next.length >= MOVE_TABLE_CAP) break
-          if (next.some((row) => row.san === move.san)) continue
-          const games = explorerGames(move)
-          if (games <= 0) continue
-          next.push({
-            san: move.san,
-            pct: Math.round(rate(move) * 100),
-            games,
-            engine: false,
-          })
-        }
-        setRows(next)
+        const side = ply.color === 'black' ? 'black' : 'white'
+        setRows(choiceRowsForPly(position.moves, side, ply.san))
         setStatus('ready')
       })
       .catch((err: unknown) => {
@@ -499,12 +550,15 @@ function MoveChoices({
               games: null,
               engine: true,
               engineSource: advised.source,
+              engineLabel: null,
+              engineTip: null,
+              marks: [],
             },
           ])
         }
       })
     return () => controller.abort()
-  }, [ply.bestSan, ply.color, ply.fen])
+  }, [ply.bestSan, ply.color, ply.fen, ply.san])
 
   return (
     <div
@@ -527,44 +581,66 @@ function MoveChoices({
               <th>Move</th>
               <th>Win %</th>
               <th>Games</th>
+              <th>Engine</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr
-                key={row.san}
-                className={[
-                  row.engine ? 'is-engine' : '',
-                  row.san === ply.san ? 'is-played' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ') || undefined}
-                onMouseEnter={() =>
-                  previewRef.current?.({ fen: ply.fen, san: row.san })
-                }
-              >
+            {rows.map((row) => {
+              const played = sanKey(row.san) === sanKey(ply.san)
+              return (
+                <tr
+                  key={row.san}
+                  className={[
+                    row.engine ? 'is-engine' : '',
+                    played ? 'is-played' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ') || undefined}
+                  onMouseEnter={() =>
+                    previewRef.current?.({ fen: ply.fen, san: row.san })
+                  }
+                >
                 <td>
-                  {row.san}
-                  {row.engine ? (
-                    <span
-                      className="analysis-move-table-tag"
-                      title={
-                        row.engineSource
-                          ? engineAdviceLabel(row.engineSource)
-                          : undefined
-                      }
-                    >
-                      engine
-                    </span>
-                  ) : null}
-                  {row.san === ply.san ? (
-                    <span className="analysis-move-table-tag is-played">played</span>
-                  ) : null}
+                  <span className="analysis-move-table-name">
+                    <span>{row.san}</span>
+                    {row.marks.length > 0 ? (
+                      <span className="explorer-move-icons" data-marks={row.marks.join(' ')}>
+                        {row.marks.map((mark) => (
+                          <span
+                            key={mark}
+                            className="explorer-move-icon"
+                            role="img"
+                            aria-label={MOVE_MARK_HINT[mark]}
+                            title={MOVE_MARK_HINT[mark]}
+                          >
+                            {MOVE_MARK_GLYPH[mark]}
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
+                    {row.engine ? (
+                      <span
+                        className="analysis-move-table-tag"
+                        title={
+                          row.engineSource
+                            ? engineAdviceLabel(row.engineSource)
+                            : undefined
+                        }
+                      >
+                        engine
+                      </span>
+                    ) : null}
+                    {played ? (
+                      <span className="analysis-move-table-tag is-played">played</span>
+                    ) : null}
+                  </span>
                 </td>
                 <td>{row.pct != null ? `${row.pct}%` : '—'}</td>
                 <td>{row.games != null ? row.games.toLocaleString() : '—'}</td>
+                <td title={row.engineTip ?? undefined}>{row.engineLabel ?? '—'}</td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       ) : null}

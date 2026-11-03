@@ -60,6 +60,86 @@ export function bestExplorerEngineMove<T extends ScoredMove>(
 }
 
 /**
+ * Saved eval for the side about to move.
+ * The explorer stores White's edge: a positive centipawn is good for White.
+ * On Black's turn the sign is flipped, so a higher number is better for Black
+ * and a printed plus means good for Black.
+ */
+export function sideEngineScore(
+  move: Pick<ExplorerMove, 'engineCp' | 'engineMate'>,
+  side: 'white' | 'black',
+): number | null {
+  const white = whiteEngineScore(move)
+  if (white === null) return null
+  return side === 'black' ? -white : white
+}
+
+/** Printed eval. Same text as the explorer Engine column, from `side`'s point of view. */
+export function sideEngineLabel(
+  move: Pick<ExplorerMove, 'engineCp' | 'engineMate'>,
+  side: 'white' | 'black',
+): string | null {
+  const flip = side === 'black' ? -1 : 1
+  const mate = move.engineMate
+  if (mate !== null && mate !== 0) {
+    const shown = mate * flip
+    const marks = Math.abs(shown)
+    return shown > 0 ? `+M${marks}` : `-M${marks}`
+  }
+  if (move.engineCp === null) return null
+  const shown = move.engineCp * flip
+  const text = (Math.abs(shown) / 100).toFixed(2)
+  if (shown > 0) return `+${text}`
+  if (shown < 0) return `-${text}`
+  return '0.00'
+}
+
+function sanKey(san: string) {
+  return san.replace(/[+#]$/, '')
+}
+
+export type RankedExplorerMove<T> = {
+  move: T
+  /** Higher is better for the side to move. Null when the explorer has no score. */
+  score: number | null
+  /** Plus is good for the side to move. */
+  label: string | null
+}
+
+/**
+ * Top saved explorer-engine moves for the side to move.
+ * Fewer than `limit` when the position has fewer scored moves.
+ * The played move stays on the list when it is outside that top, even with no score.
+ */
+export function rankExplorerEngineMoves<T extends ScoredMove & { san: string }>(
+  moves: readonly T[],
+  side: 'white' | 'black',
+  options?: { limit?: number; playedSan?: string | null },
+): RankedExplorerMove<T>[] {
+  const limit = options?.limit ?? 5
+  const indexed = moves.map((move, index) => ({
+    move,
+    index,
+    score: sideEngineScore(move, side),
+  }))
+  const scored = indexed.filter(
+    (item): item is { move: T; index: number; score: number } => item.score !== null,
+  )
+  scored.sort((a, b) => b.score - a.score || a.index - b.index)
+  const picked: { move: T; index: number; score: number | null }[] = scored.slice(0, limit)
+  const playedSan = options?.playedSan?.trim() ?? ''
+  if (playedSan && !picked.some((item) => sanKey(item.move.san) === sanKey(playedSan))) {
+    const played = indexed.find((item) => sanKey(item.move.san) === sanKey(playedSan))
+    if (played) picked.push(played)
+  }
+  return picked.map((item) => ({
+    move: item.move,
+    score: item.score,
+    label: sideEngineLabel(item.move, side),
+  }))
+}
+
+/**
  * The single worst saved score for White, and only when White is to move.
  * Equal scores are not "worst". The best move is never also marked worst.
  */

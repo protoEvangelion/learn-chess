@@ -2106,6 +2106,8 @@ body.is-review-coach-resizing canvas {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .analysis-move-detail-row {
@@ -2142,12 +2144,27 @@ body.is-review-coach-resizing canvas {
   padding: 0.1rem 0.35rem 0.28rem;
 }
 
-.analysis-move-table th:nth-child(2),
-.analysis-move-table th:nth-child(3),
-.analysis-move-table td:nth-child(2),
-.analysis-move-table td:nth-child(3) {
+.analysis-move-table th:nth-child(n + 2),
+.analysis-move-table td:nth-child(n + 2) {
+  width: 1%;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-left: 0.2rem;
+  padding-right: 0.2rem;
+}
+
+.analysis-move-table td:first-child {
+  min-width: 0;
+}
+
+.analysis-move-table-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem 0.25rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .analysis-move-table td {
