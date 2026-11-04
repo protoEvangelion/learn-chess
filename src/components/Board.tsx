@@ -20,8 +20,6 @@ import { isRook } from '@logic/pieces/rook'
 import { MeshWrapper } from '@models/index'
 import { PieceModel } from '@models/PieceModel'
 import { TileComponent } from '@models/Tile'
-import { FrequencyArrows } from '@models/FrequencyArrows'
-import type { FrequencyArrow } from '@/lib/replyArrows'
 import { CaptureBurst } from '@models/CaptureBurst'
 import { animated, useSpring } from '@react-spring/three'
 import { OrbitControls } from '@react-three/drei'
@@ -82,12 +80,10 @@ export const BoardComponent: FC<{
   showMoveIndicators?: boolean
   /** When true, ignore piece clicks / engine animation (imported review). */
   readOnly?: boolean
-  /** Analysis: drag whichever side is to move, not only your color. */
+  /** Browse modes: drag whichever side is to move, not only your color. */
   playBothSides?: boolean
   /** Return false to reject a player move attempt (e.g. drill mode). */
   validateMove?: (move: Move) => boolean
-  /** Opening-tree arrows: more frequent moves are more opaque. */
-  frequencyArrows?: FrequencyArrow[]
   /**
    * Analysis scrub. Pass the clicked move so both of its squares light up.
    * `null` means the start position (no move). Omit it during live play.
@@ -118,7 +114,6 @@ export const BoardComponent: FC<{
   readOnly = false,
   playBothSides = false,
   validateMove,
-  frequencyArrows = [],
   highlightMove,
 }) => {
   const [lastSelected, setLastSelected] = useState<Tile | null>(null)
@@ -787,7 +782,6 @@ export const BoardComponent: FC<{
           active
         />
       )}
-      <FrequencyArrows arrows={frequencyArrows} />
       {board.map((row, i) =>
         row.map((tile, j) => {
           const bg = `${(i + j) % 2 === 0 ? `white` : `black`}`

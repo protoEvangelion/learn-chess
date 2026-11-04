@@ -31,7 +31,6 @@ import { BootScreen } from '@/components/BootScreen'
 import { SettingsDrawer } from '@/components/SettingsDrawer'
 import { Chess } from 'chess.js'
 import { Hammer, Joystick } from 'lucide-react'
-import type { FrequencyArrow } from '@/lib/replyArrows'
 import { Border } from '@models/Border'
 import { BoardSurface, preloadBoard } from '@models/BoardSurface'
 import { EvalPillar } from '@models/EvalPillar'
@@ -141,6 +140,11 @@ import {
   saveDrillProgress,
 } from '@/lib/drills/progress'
 import { fetchOpeningCard, type OpeningCard } from '@/lib/openingCard'
+import {
+  computerShouldReply,
+  pgnLoadsAsPlayableLine,
+  userMovesEitherSide,
+} from '@/lib/playMode'
 import './App.css'
 
 const STRENGTH_KEY = 'chess-3d:strength'
@@ -337,7 +341,17 @@ function computeBoot(): BootState {
   const pgn = readPgnFromUrl()
   if (pgn) {
     const fromPgn = bootFromPgn(pgn)
-    if (fromPgn) return fromPgn
+    if (fromPgn) {
+      // Explore / Analysis / Drill: the PGN is a position to play on.
+      // My Games keeps it as a locked review.
+      if (
+        fromPgn.imported &&
+        pgnLoadsAsPlayableLine(readPanelFromUrl())
+      ) {
+        return { ...fromPgn, imported: null }
+      }
+      return fromPgn
+    }
   }
   const fen = readFenFromUrl()
   if (fen) {
@@ -455,7 +469,6 @@ export default function App() {
   const [importBusy, setImportBusy] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
   const [importStatus, setImportStatus] = useState<string | null>(null)
-  const [frequencyArrows, setFrequencyArrows] = useState<FrequencyArrow[]>([])
   const [opponentThinking, setOpponentThinking] = useState(false)
   const [pendingEngineMove, setPendingEngineMove] = useState<Move | null>(null)
   const [heldEngineMove, setHeldEngineMove] = useState<Move | null>(null)
@@ -892,6 +905,15 @@ export default function App() {
     !!reviewImport && scrubIndex < reviewImport.history.length
   const terminalOver = !!gameOver && !scrubbingImport
   const drillActive = drillStatus === 'playing' || drillStatus === 'complete'
+  const reviewing = !!reviewImport
+  // Computer answers only in a live game. Browse and review leave the move to you.
+  const computerReplies = computerShouldReply({
+    panel,
+    reviewing,
+    drillActive,
+    gameOver: !!gameOver,
+  })
+  const playBothSides = userMovesEitherSide({ panel, reviewing })
 
   // Best-move search runs for whoever is to move. It uses its own Stockfish
   // instance so the opponent's reply is not stuck behind this deeper search.
@@ -959,19 +981,11 @@ export default function App() {
     reviewAbortRef.current?.abort()
   }, [fen, coachReviewMode, reviewImport])
 
-  // Opponent Stockfish replies
+  // Opponent Stockfish replies — live games only. See computerShouldReply.
   useEffect(() => {
-    if (
-      analysisOpen ||
-      reviewImport ||
-      drillActive ||
-      drillOpen ||
-      gameOver ||
-      movingTo ||
-      pendingEngineMove
-    ) {
-      // Studying a line: drop a queued free-play reply. A drill book reply
-      // stays queued so Explorer keeps the same position as the drill.
+    if (!computerReplies || movingTo || pendingEngineMove) {
+      // Studying a line: drop a queued free-play reply. A drill preview
+      // stays queued so the danger line can still play itself.
       if (analysisOpen && pendingEngineMove && !drillActive && !drillOpen) {
         setPendingEngineMove(null)
       }
@@ -1050,6 +1064,7 @@ export default function App() {
     drillOpen,
     analysisOpen,
     showBestMove,
+    computerReplies,
   ])
 
   // Play the held reply once the green recommendation is on the board.
@@ -1133,25 +1148,24 @@ export default function App() {
     if (drillMistake || drillPreview) return
     if (history.length !== drillPlyIndex + 1) return
 
-    // Player just moved — Chessreps-style: land wrong moves, then coach + try again.
-    if (isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) {
-      const expected = expectedSan(drillLine, drillPlyIndex)
-      const last = history[history.length - 1]
-      if (
-        expected &&
-        last &&
-        !historyItemMatchesSan(last, history.slice(0, -1), expected)
-      ) {
-        drillFutureRef.current = []
-        setDrillFutureCount(0)
-        setDrillMistakes(true)
-        setDrillMistake({
-          from: last.from,
-          to: last.to,
-          expectedSan: expected,
-        })
-        return
-      }
+    // Either side just moved. The book move is required; a wrong one lands,
+    // then the coach asks to try again. The computer does not play Black.
+    const expected = expectedSan(drillLine, drillPlyIndex)
+    const last = history[history.length - 1]
+    if (
+      expected &&
+      last &&
+      !historyItemMatchesSan(last, history.slice(0, -1), expected)
+    ) {
+      drillFutureRef.current = []
+      setDrillFutureCount(0)
+      setDrillMistakes(true)
+      setDrillMistake({
+        from: last.from,
+        to: last.to,
+        expectedSan: expected,
+      })
+      return
     }
 
     // New play (not scrub-forward) clears the redo buffer.
@@ -1200,34 +1214,8 @@ export default function App() {
     movingTo,
     turn,
   ])
-  // Auto-play Black replies from the drill line
-  useEffect(() => {
-    if (!drillLine || drillStatus !== 'playing') return
-    if (drillMistake || drillPreview) return
-    // Scrubbing through undone plies — don't re-fire book moves.
-    if (drillFutureCount > 0) return
-    if (movingTo || pendingEngineMove) return
-    if (isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) return
-    if (history.length !== drillPlyIndex) return
-    const san = expectedSan(drillLine, drillPlyIndex)
-    if (!san) return
-    const move = sanToBoardMove(board, history, turn, san)
-    if (move) setPendingEngineMove(move)
-  }, [
-    board,
-    drillLine,
-    drillPlyIndex,
-    drillMistake,
-    drillPreview,
-    drillFutureCount,
-    drillStatus,
-    history,
-    movingTo,
-    pendingEngineMove,
-    turn,
-  ])
-
-  // Auto-play danger/idea preview SANs on the board (1s between plies)
+  // Danger/idea preview plays its own short line. That is a button the
+  // person pressed, not Black answering a game.
   useEffect(() => {
     if (!drillPreview) return
     if (movingTo || pendingEngineMove) return
@@ -1246,11 +1234,11 @@ export default function App() {
     (_move: Move) => {
       if (!drillLine || drillStatus !== 'playing') return true
       if (drillMistake || drillPreview) return false
-      if (!isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) return false
-      // Allow any legal move — wrong book moves land, then coach asks to try again.
+      // Either color may move on its turn. A wrong book move lands, then
+      // the coach asks to try again.
       return true
     },
-    [drillLine, drillMistake, drillPreview, drillPlyIndex, drillStatus],
+    [drillLine, drillMistake, drillPreview, drillStatus],
   )
 
   function startDrillPreview() {
@@ -2013,7 +2001,13 @@ export default function App() {
         return true
       }
       const named = /\[(?:White|Black)\s+"/i.test(raw)
-      if (named || readPanelFromUrl() === 'analysis' || readPanelFromUrl() === 'my-games') {
+      const panelNow = readPanelFromUrl()
+      // Explore, Analysis, and Drill stay playable even when the PGN names
+      // the players (including "?"). My Games and a named game link stay locked.
+      if (
+        !pgnLoadsAsPlayableLine(panelNow) &&
+        (named || panelNow === 'my-games')
+      ) {
         applyImportedGame(imported)
         return true
       }
@@ -2548,7 +2542,6 @@ export default function App() {
         panelWidth={panelWidth}
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
-        onFrequencyArrows={setFrequencyArrows}
         onPreviewMove={previewReviewMove}
         onPlaySan={playExploreLine}
         playedSans={playedSans}
@@ -2926,11 +2919,10 @@ export default function App() {
                   !!drillMistake ||
                   !!drillPreview
                 }
-                playBothSides={analysisOpen && !drillOpen}
+                playBothSides={playBothSides}
                 validateMove={
                   drillStatus === 'playing' ? validateDrillMove : undefined
                 }
-                frequencyArrows={frequencyArrows}
                 highlightMove={reviewHighlight}
               />
             </group>

@@ -32,7 +32,6 @@ import {
   type ReviewPly,
 } from '@/lib/gameReview'
 import { Chess } from 'chess.js'
-import { type FrequencyArrow } from '@/lib/replyArrows'
 import { START_FEN } from '@/lib/fenBridge'
 import { ExploreOpenings } from '@/components/ExploreOpenings'
 import {
@@ -98,7 +97,6 @@ type Props = {
   panelWidth: number
   onPanelWidthChange: (width: number) => void
   onPanelResizeEnd?: (width: number) => void
-  onFrequencyArrows?: (arrows: FrequencyArrow[]) => void
   /** Hover in the move table. `null` puts the played move back. */
   onPreviewMove?: (move: { fen: string; san: string } | null) => void
   onPlaySan?: (sans: string[], play?: string) => void
@@ -679,19 +677,6 @@ function positionForReplies(
   }
 }
 
-function arrowsForCommonReplies(moves: CommonReply[]): FrequencyArrow[] {
-  if (moves.length === 0) return []
-  const max = Math.max(...moves.map((move) => move.games), 1)
-  return moves
-    .filter((move) => move.uci.length >= 4)
-    .map((move) => ({
-      from: move.uci.slice(0, 2),
-      to: move.uci.slice(2, 4),
-      opacity: 0.22 + 0.73 * (move.games / max),
-    }))
-    .sort((a, b) => a.opacity - b.opacity)
-}
-
 function groupMoves(plies: ReviewPly[]) {
   const rows: Array<{
     moveNo: number
@@ -742,7 +727,6 @@ export const AnalysisDialog: FC<Props> = ({
   panelWidth,
   onPanelWidthChange,
   onPanelResizeEnd,
-  onFrequencyArrows,
   onPreviewMove,
   onPlaySan,
   playedSans = [],
@@ -805,8 +789,6 @@ export const AnalysisDialog: FC<Props> = ({
     'idle',
   )
   const [commonError, setCommonError] = useState<string | null>(null)
-  const onFrequencyArrowsRef = useRef(onFrequencyArrows)
-  onFrequencyArrowsRef.current = onFrequencyArrows
   const coachQuestionCount = useMemo(
     () => coachChat.filter((message) => message.role === 'user').length,
     [coachChat],
@@ -868,10 +850,7 @@ export const AnalysisDialog: FC<Props> = ({
   }, [open])
 
   useEffect(() => {
-    if (!open || tab !== 'games' || !replyPosition) {
-      onFrequencyArrowsRef.current?.([])
-      return
-    }
+    if (!open || tab !== 'games' || !replyPosition) return
     const controller = new AbortController()
     const fen = replyPosition.fen
     const color = replyPosition.color
@@ -906,7 +885,6 @@ export const AnalysisDialog: FC<Props> = ({
             .slice(0, 8)
           setCommon({ fen, moves })
           setCommonStatus('idle')
-          onFrequencyArrowsRef.current?.(arrowsForCommonReplies(moves))
         })
         .catch((err: unknown) => {
           if (err instanceof DOMException && err.name === 'AbortError') return
@@ -914,7 +892,6 @@ export const AnalysisDialog: FC<Props> = ({
           setCommonError(
             err instanceof Error ? err.message : 'Couldn’t read the explorer.',
           )
-          onFrequencyArrowsRef.current?.([])
         })
     }, 250)
     return () => {
