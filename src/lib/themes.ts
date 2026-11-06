@@ -554,6 +554,14 @@ export const ROOM_THEMES: RoomTheme[] = [
   },
 ]
 
+export const BOARD_VIEW_KEY = 'chess-3d:boardView'
+export type BoardView = '2d' | '3d'
+
+/** Flat board is opt-in. Missing or unknown values stay on the 3D board. */
+export function loadBoardView(): BoardView {
+  return localStorage.getItem(BOARD_VIEW_KEY) === '2d' ? '2d' : '3d'
+}
+
 export const BOARD_KEY = 'chess-3d:boardId'
 export const PIECE_KEY = 'chess-3d:pieceSetId'
 export const ROOM_KEY = 'chess-3d:roomId'

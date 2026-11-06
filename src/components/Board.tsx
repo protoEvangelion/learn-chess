@@ -1,22 +1,9 @@
 import type { Dispatch, FC, SetStateAction } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Board, Position, Tile } from '@logic/board'
-import { checkIfPositionsMatch, copyBoard } from '@logic/board'
-import type { Color, GameOverType, Move, Piece } from '@logic/pieces'
-import {
-  checkIfSelectedPieceCanMoveHere,
-  createId,
-  detectGameOver,
-  findKingPosition,
-  getTile,
-  isKingInCheck,
-  movesForPiece,
-  oppositeColor,
-  shouldPromotePawn,
-} from '@logic/pieces'
-import { isPawn } from '@logic/pieces/pawn'
-import { isKing } from '@logic/pieces/king'
-import { isRook } from '@logic/pieces/rook'
+import { checkIfPositionsMatch } from '@logic/board'
+import type { Color, Move, Piece } from '@logic/pieces'
+import { checkIfSelectedPieceCanMoveHere, createId } from '@logic/pieces'
 import { MeshWrapper } from '@models/index'
 import { PieceModel } from '@models/PieceModel'
 import { TileComponent } from '@models/Tile'
@@ -26,31 +13,18 @@ import { OrbitControls } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { useGameState } from '@/state/game'
 import type { BoardTheme, PieceSetTheme, RoomTheme } from '@/lib/themes'
-import { playSfx } from '@/lib/sfx'
 import { setLiveView } from '@/lib/viewDebug'
-import type { MovePreview } from '@/logic/movePreview'
-import {
-  applyMoveOnCopy,
-  pieceSafetyMap,
-  positionKey,
-  previewByDestination,
-  tooltipLinesForPreview,
-} from '@/logic/movePreview'
+import { positionKey } from '@/logic/movePreview'
+import { useBoardPlay, type GameOver } from '@/components/useBoardPlay'
+
+export type { GameOver }
 
 const ZERO_OFFSET: [number, number, number] = [0, 0, 0]
 
 type ThreePointerEvent = {
   stopPropagation: () => void
   nativeEvent: PointerEvent
-}
-
-export type GameOver = {
-  /** checkmate/stalemate from live play; resign/draw from imported PGN. */
-  type: GameOverType | 'resign' | 'draw'
-  /** Null only for drawn imported games. */
-  winner: Color | null
 }
 
 export const BoardComponent: FC<{
@@ -64,7 +38,6 @@ export const BoardComponent: FC<{
   playerColor: Color
   tipFrom?: Position | null
   tipTo?: Position | null
-  /** Chessreps-style wrong drill attempt (from/to). */
   wrongFrom?: Position | null
   wrongTo?: Position | null
   pendingEngineMove?: Move | null
@@ -116,180 +89,62 @@ export const BoardComponent: FC<{
   validateMove,
   highlightMove,
 }) => {
-  const [lastSelected, setLastSelected] = useState<Tile | null>(null)
-  const turn = useGameState((s) => s.turn)
-  const setTurn = useGameState((s) => s.setTurn)
-  const movingTo = useGameState((s) => s.movingTo)
-  const setMovingTo = useGameState((s) => s.setMovingTo)
-  const history = useGameState((s) => s.history)
-  const addHistory = useGameState((s) => s.addHistory)
-  const sfxPlayedForMove = useRef<string | null>(null)
-  const [premove, setPremove] = useState<{
-    pieceId: string
-    from: Position
-    to: Position
-  } | null>(null)
-
-  // Live play marks the opponent's last reply. Analysis passes the clicked
-  // move instead — including your own moves, and not a later move in the game.
-  const lastMoveSquares =
-    highlightMove !== undefined
-      ? highlightMove
-      : (() => {
-          for (let i = history.length - 1; i >= 0; i--) {
-            if (history[i].piece.color !== playerColor) return history[i]
-          }
-          return null
-        })()
-
-  const [redLightPosition, setRedLightPosition] = useState<Position>({
-    x: 0,
-    y: 0,
+  const {
+    movingTo,
+    premove,
+    lastSelected,
+    lastMoveSquares,
+    redLightPosition,
+    dragging,
+    draggingRef,
+    dragPieceId,
+    movePreviews,
+    safetyBySquare,
+    setHoveredDestKey,
+    handlePreviewHover,
+    checkedKingPos,
+    oppKingPos,
+    showOppCheckRing,
+    captureBurst,
+    startPieceDrag,
+    endDrag: endDragMove,
+    cancelDrag,
+    finishMovingPiece,
+  } = useBoardPlay({
+    selected,
+    setSelected,
+    board,
+    setBoard,
+    moves,
+    setMoves,
+    setGameOver,
+    playerColor,
+    pendingEngineMove,
+    onEngineMoveConsumed,
+    showMoveIndicators,
+    readOnly,
+    playBothSides,
+    validateMove,
+    highlightMove,
   })
-  const [previewTip, setPreviewTip] = useState<{
-    lines: string[]
-    x: number
-    y: number
-  } | null>(null)
-  /** Legal dest under pointer while a piece is selected — drives after-move rings. */
-  const [hoveredDestKey, setHoveredDestKey] = useState<string | null>(null)
-
-  const movePreviews = useMemo(
-    () =>
-      showMoveIndicators && selected && moves.length
-        ? previewByDestination(board, moves)
-        : null,
-    [board, moves, selected, showMoveIndicators],
-  )
-
-  const safetyBySquare = useMemo(() => {
-    if (!showMoveIndicators) return null
-    let viewBoard = board
-    if (selected && hoveredDestKey) {
-      const move = moves.find(
-        (m) => positionKey(m.newPosition) === hoveredDestKey,
-      )
-      if (move) viewBoard = applyMoveOnCopy(board, move)
-    }
-    return pieceSafetyMap(viewBoard, playBothSides ? turn : playerColor)
-  }, [board, hoveredDestKey, moves, playBothSides, playerColor, selected, showMoveIndicators, turn])
-
-  useEffect(() => {
-    if (!selected || !showMoveIndicators) {
-      setPreviewTip(null)
-      setHoveredDestKey(null)
-    }
-  }, [selected, showMoveIndicators])
-
-  useEffect(() => {
-    const id = 'move-preview-tooltip'
-    if (!previewTip) {
-      document.getElementById(id)?.remove()
-      return
-    }
-    let el = document.getElementById(id)
-    if (!el) {
-      el = document.createElement('div')
-      el.id = id
-      el.className = 'move-preview-tooltip'
-      el.setAttribute('role', 'tooltip')
-      document.body.appendChild(el)
-    }
-    el.style.left = `${previewTip.x + 14}px`
-    el.style.top = `${previewTip.y + 14}px`
-    el.replaceChildren(
-      ...previewTip.lines.map((line) => {
-        const row = document.createElement('div')
-        row.textContent = line
-        return row
-      }),
-    )
-  }, [previewTip])
-
-  useEffect(() => {
-    return () => {
-      document.getElementById('move-preview-tooltip')?.remove()
-    }
-  }, [])
-
-  const handlePreviewHover = (
-    preview: MovePreview | null,
-    clientX: number,
-    clientY: number,
-    destKey: string | null = null,
-  ) => {
-    if (!preview) {
-      setPreviewTip(null)
-      setHoveredDestKey(null)
-      return
-    }
-    if (destKey != null) setHoveredDestKey(destKey)
-    setPreviewTip({
-      lines: tooltipLinesForPreview(preview),
-      x: clientX,
-      y: clientY,
-    })
-  }
-
-  const selectThisPiece = (tile: Tile | null) => {
-    if (readOnly) return
-    if (!tile?.piece?.type && !selected) {
-      setPremove(null)
-      return
-    }
-    if (!tile?.piece) {
-      setSelected(null)
-      setMoves([])
-      setPremove(null)
-      return
-    }
-    const sideToMove = playBothSides ? turn : playerColor
-    if (tile.piece.color !== sideToMove) return
-    // Keep an in-flight opponent move animating — don't cancel it to pick up.
-    if (!movingTo) setMovingTo(null)
-    setMoves(
-      movesForPiece({ piece: tile.piece, board, propagateDetectCheck: true }),
-    )
-    setSelected(tile.piece)
-    setLastSelected(tile)
-    setRedLightPosition(tile.position)
-  }
 
   const controlsRef = useRef<OrbitControlsImpl>(null)
   const boardGroupRef = useRef<THREE.Group>(null)
-  const [dragging, setDragging] = useState(false)
-  const draggingRef = useRef(false)
-  const dragPieceIdRef = useRef<string | null>(null)
-  const [dragPieceId, setDragPieceId] = useState<string | null>(null)
   const dragBoardRef = useRef<{ x: number; z: number } | null>(null)
   const lastDragSquareRef = useRef<Position | null>(null)
-  const selectedRef = useRef(selected)
-  selectedRef.current = selected
-  const movesRef = useRef(moves)
-  movesRef.current = moves
-  const boardRef = useRef(board)
-  boardRef.current = board
-  const turnRef = useRef(turn)
-  turnRef.current = turn
-  const playerColorRef = useRef(playerColor)
-  playerColorRef.current = playerColor
-  const playBothSidesRef = useRef(playBothSides)
-  playBothSidesRef.current = playBothSides
-  const movingToRef = useRef(movingTo)
-  movingToRef.current = movingTo
-  const validateMoveRef = useRef(validateMove)
-  validateMoveRef.current = validateMove
   const endDragRef = useRef<() => void>(() => {})
   const dragListenersRef = useRef<{
     onUp: () => void
     onCancel: () => void
   } | null>(null)
+  const movesRef = useRef(moves)
+  movesRef.current = moves
 
   const { camera, pointer, raycaster } = useThree()
-  const hitPoint = useMemo(() => new THREE.Vector3(), [])
-  const planeNormal = useMemo(() => new THREE.Vector3(0, 1, 0), [])
-  const planePoint = useMemo(() => new THREE.Vector3(), [])
-  const dragPlane = useMemo(() => new THREE.Plane(), [])
+  const hitPoint = useRef(new THREE.Vector3()).current
+  const planeNormal = useRef(new THREE.Vector3(0, 1, 0)).current
+  const planePoint = useRef(new THREE.Vector3()).current
+  const dragPlane = useRef(new THREE.Plane()).current
 
   const squareFromLocal = useCallback((local: THREE.Vector3): Position | null => {
     const file = Math.round(local.x)
@@ -325,14 +180,6 @@ export const BoardComponent: FC<{
     setHoveredDestKey((prev) => (prev === key ? prev : key))
   })
 
-  const clearSelection = useCallback(() => {
-    setSelected(null)
-    setMoves([])
-    setLastSelected(null)
-    // Never clear movingTo here — that would abort an in-flight opponent
-    // (or own) piece animation when queueing a premove / deselecting.
-  }, [setMoves, setSelected])
-
   const detachDragListeners = useCallback(() => {
     const listeners = dragListenersRef.current
     if (!listeners) return
@@ -344,296 +191,20 @@ export const BoardComponent: FC<{
   const endDrag = useCallback(() => {
     if (!draggingRef.current) return
     detachDragListeners()
-    draggingRef.current = false
-    setDragging(false)
-    dragPieceIdRef.current = null
-    setDragPieceId(null)
-    dragBoardRef.current = null
-    if (controlsRef.current) controlsRef.current.enabled = true
-
     // Prefer the square tracked while dragging — R3F pointer can be stale on window pointerup.
     const local = raycastBoardLocal()
     const sq = lastDragSquareRef.current ?? (local ? squareFromLocal(local) : null)
     lastDragSquareRef.current = null
-    const piece = selectedRef.current
-    const legalMoves = movesRef.current
-
-    if (!piece || !sq) {
-      clearSelection()
-      setHoveredDestKey(null)
-      return
-    }
-
-    // Dropped back on origin — cancel (also clears a queued premove).
-    if (sq.x === piece.position.x && sq.y === piece.position.y) {
-      setPremove(null)
-      clearSelection()
-      setHoveredDestKey(null)
-      return
-    }
-
-    const move = legalMoves.find(
-      (m) => m.newPosition.x === sq.x && m.newPosition.y === sq.y,
-    )
-    if (!move) {
-      setPremove(null)
-      clearSelection()
-      setHoveredDestKey(null)
-      return
-    }
-
-    const destTile = getTile(boardRef.current, sq)
-    if (!destTile) {
-      clearSelection()
-      return
-    }
-
-    const validate = validateMoveRef.current
-    if (validate && !validate(move)) {
-      playSfx('check')
-      clearSelection()
-      return
-    }
-
-    // Opponent's turn (or their piece still settling) → queue a premove.
-    // Also queue if an opponent move is still animating even if turn already
-    // flipped (shouldn't normally happen, but keep the animation alive).
-    const sideToMove = playBothSidesRef.current
-      ? turnRef.current
-      : playerColorRef.current
-    const opponentMoving =
-      !!movingToRef.current &&
-      movingToRef.current.move.piece.color !== sideToMove
-    if (turnRef.current !== sideToMove || opponentMoving) {
-      setPremove({
-        pieceId: piece.getId(),
-        from: { ...piece.position },
-        to: { ...sq },
-      })
-      clearSelection()
-      setHoveredDestKey(null)
-      return
-    }
-
-    setPremove(null)
-    setMovingTo({ move, tile: destTile })
-    setHoveredDestKey(null)
-  }, [
-    clearSelection,
-    detachDragListeners,
-    raycastBoardLocal,
-    setMovingTo,
-    squareFromLocal,
-  ])
+    dragBoardRef.current = null
+    if (controlsRef.current) controlsRef.current.enabled = true
+    endDragMove(sq)
+  }, [detachDragListeners, endDragMove, raycastBoardLocal, squareFromLocal])
 
   endDragRef.current = endDrag
 
-  // Still apply scripted moves while readOnly (e.g. drill danger preview).
-  useEffect(() => {
-    if (!pendingEngineMove || movingTo) return
-    const target = getTile(board, pendingEngineMove.newPosition)
-    if (!target) {
-      onEngineMoveConsumed?.()
-      return
-    }
-    setMovingTo({ move: pendingEngineMove, tile: target })
-    onEngineMoveConsumed?.()
-  }, [pendingEngineMove, movingTo, board, onEngineMoveConsumed, setMovingTo])
-
-  // Fire queued premove as soon as it's our turn and the board is idle.
-  useEffect(() => {
-    if (readOnly || !premove || movingTo || pendingEngineMove) return
-    if (turn !== playerColor) return
-
-    let pieceTile: Tile | null = null
-    for (const row of board) {
-      for (const t of row) {
-        if (t.piece?.getId() === premove.pieceId) {
-          pieceTile = t
-          break
-        }
-      }
-      if (pieceTile) break
-    }
-    if (!pieceTile?.piece) {
-      setPremove(null)
-      return
-    }
-
-    const legal = movesForPiece({
-      piece: pieceTile.piece,
-      board,
-      propagateDetectCheck: true,
-    })
-    const match = legal.find(
-      (m) =>
-        m.newPosition.x === premove.to.x && m.newPosition.y === premove.to.y,
-    )
-    const dest = match ? getTile(board, premove.to) : null
-    if (!match || !dest) {
-      setPremove(null)
-      return
-    }
-    if (validateMove && !validateMove(match)) {
-      setPremove(null)
-      return
-    }
-
-    setPremove(null)
-    setMovingTo({ move: match, tile: dest })
-  }, [
-    readOnly,
-    premove,
-    movingTo,
-    pendingEngineMove,
-    turn,
-    playerColor,
-    board,
-    validateMove,
-    setMovingTo,
-  ])
-
-  // SFX when a move animation starts
-  useEffect(() => {
-    if (!movingTo) {
-      sfxPlayedForMove.current = null
-      return
-    }
-    const key = `${movingTo.move.piece.getId()}-${movingTo.move.newPosition.x}-${movingTo.move.newPosition.y}`
-    if (sfxPlayedForMove.current === key) return
-    sfxPlayedForMove.current = key
-    const isCapture =
-      movingTo.move.type === 'capture' ||
-      movingTo.move.type === 'captureEnPassant' ||
-      movingTo.move.type === 'captureKing'
-    playSfx(isCapture ? 'capture' : 'move')
-  }, [movingTo])
-
-  const finishMovingPiece = (tile: Tile | null) => {
-    if (!tile || !movingTo) return
-    addHistory({
-      board: copyBoard(board),
-      to: movingTo.move.newPosition,
-      from: movingTo.move.piece.position,
-      steps: movingTo.move.steps,
-      capture: movingTo.move.capture,
-      type: movingTo.move.type,
-      piece: movingTo.move.piece,
-    })
-
-    const newBoard = copyBoard(board)
-    if (!movingTo.move.piece) return
-    const fromTile = getTile(newBoard, movingTo.move.piece.position)
-    const tileToMoveTo = getTile(newBoard, tile.position)
-    if (!fromTile || !tileToMoveTo) return
-
-    if (
-      isPawn(fromTile.piece) ||
-      isKing(fromTile.piece) ||
-      isRook(fromTile.piece)
-    ) {
-      fromTile.piece = { ...fromTile.piece, hasMoved: true }
-    }
-    if (isPawn(fromTile.piece) && shouldPromotePawn({ tile })) {
-      fromTile.piece.type = `queen`
-      fromTile.piece.id = fromTile.piece.id + 1
-    }
-
-    if (
-      isPawn(fromTile.piece) &&
-      movingTo.move.type === `captureEnPassant`
-    ) {
-      const latestMove = history[history.length - 1]
-      if (latestMove) {
-        const enPassantTile = newBoard[latestMove.to.y][latestMove.to.x]
-        enPassantTile.piece = null
-      }
-    }
-
-    if (movingTo.move.castling) {
-      const { rook, rookNewPosition } = movingTo.move.castling
-      const rookTile = newBoard[rook.position.y][rook.position.x]
-      const rookTileToMoveTo = newBoard[rookNewPosition.y][rookNewPosition.x]
-      if (!isRook(rookTile.piece)) return
-      rookTileToMoveTo.piece = {
-        ...rookTile.piece,
-        hasMoved: true,
-        position: rookTileToMoveTo.position,
-      }
-      rookTile.piece = null
-    }
-
-    tileToMoveTo.piece = fromTile.piece
-      ? { ...fromTile.piece, position: tile.position }
-      : null
-    fromTile.piece = null
-
-    setBoard(newBoard)
-    setTurn()
-    setMovingTo(null)
-
-    // Keep a held piece in-hand across the opponent's (or own) move settle.
-    const heldId = draggingRef.current ? dragPieceIdRef.current : null
-    if (heldId) {
-      for (const row of newBoard) {
-        for (const t of row) {
-          if (t.piece?.getId() !== heldId) continue
-          setSelected(t.piece)
-          setLastSelected(t)
-          setRedLightPosition(t.position)
-          setMoves(
-            movesForPiece({
-              piece: t.piece,
-              board: newBoard,
-              propagateDetectCheck: true,
-            }),
-          )
-          return
-        }
-      }
-    }
-
-    setMoves([])
-    setSelected(null)
-    setLastSelected(null)
-  }
-
-  const prevCheckRef = useRef(false)
-  const gameOverSfxRef = useRef(false)
-
-  useEffect(() => {
-    const gameOverType = detectGameOver(board, turn)
-    if (gameOverType) {
-      setGameOver({ type: gameOverType, winner: oppositeColor(turn) })
-      if (!gameOverSfxRef.current) {
-        gameOverSfxRef.current = true
-        playSfx('gameOver')
-      }
-      return
-    }
-    gameOverSfxRef.current = false
-    const inCheck = isKingInCheck(board, turn)
-    if (inCheck && !prevCheckRef.current) playSfx('check')
-    prevCheckRef.current = inCheck
-  }, [board, turn, setGameOver])
-
   const beginDrag = (e: ThreePointerEvent, tile: Tile) => {
     e.stopPropagation()
-    if (readOnly) return
-    const sideToMove = playBothSides ? turn : playerColor
-    if (!tile.piece || tile.piece.color !== sideToMove) return
-    // Don't grab a piece that is currently animating a move.
-    if (
-      movingTo &&
-      movingTo.move.piece.getId() === tile.piece.getId()
-    ) {
-      return
-    }
-    selectThisPiece(tile)
-    draggingRef.current = true
-    dragPieceIdRef.current = tile.piece.getId()
-    setDragPieceId(tile.piece.getId())
-    setDragging(true)
+    if (!startPieceDrag(tile)) return
     lastDragSquareRef.current = {
       x: tile.position.x,
       y: tile.position.y,
@@ -649,13 +220,9 @@ export const BoardComponent: FC<{
     const onUp = () => endDragRef.current()
     const onCancel = () => {
       detachDragListeners()
-      draggingRef.current = false
-      setDragging(false)
-      dragPieceIdRef.current = null
-      setDragPieceId(null)
-      dragBoardRef.current = null
       lastDragSquareRef.current = null
-      clearSelection()
+      dragBoardRef.current = null
+      cancelDrag()
       if (controlsRef.current) controlsRef.current.enabled = true
     }
     dragListenersRef.current = { onUp, onCancel }
@@ -667,30 +234,6 @@ export const BoardComponent: FC<{
     intensity: selected ? 0.35 : 0,
     config: { tension: 400, friction: 28 },
   })
-
-  const kingInCheck = isKingInCheck(board, turn)
-  const checkedKingPos = kingInCheck ? findKingPosition(board, turn) : null
-  const oppKingPos = findKingPosition(
-    board,
-    oppositeColor(playBothSides ? turn : playerColor),
-  )
-  const hoveredPreview =
-    hoveredDestKey && movePreviews
-      ? (movePreviews.get(hoveredDestKey) ?? null)
-      : null
-  const showOppCheckRing = !!hoveredPreview?.givesCheck
-
-  const captureBurst =
-    movingTo?.move.capture != null
-      ? {
-          key: createId(movingTo.move.capture),
-          position: [
-            movingTo.move.capture.position.x,
-            0.5,
-            movingTo.move.capture.position.y,
-          ] as [number, number, number],
-        }
-      : null
 
   const s = pieceSet.wrapperScale
   const materialVariant =

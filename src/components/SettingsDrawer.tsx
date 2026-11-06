@@ -2,6 +2,7 @@ import type { FC } from 'react'
 import {
   BOARD_KEY,
   BOARD_THEMES,
+  BOARD_VIEW_KEY,
   BEST_MOVE_DELAY_KEY,
   BEST_MOVE_KEY,
   FPS_KEY,
@@ -10,6 +11,7 @@ import {
   PIECE_SETS,
   ROOM_KEY,
   ROOM_THEMES,
+  type BoardView,
 } from '@/lib/themes'
 import { setMuted, setVolume, unlockSfx } from '@/lib/sfx'
 import {
@@ -29,6 +31,7 @@ type Props = {
   open: boolean
   onClose: () => void
   boardId: string
+  boardView: BoardView
   pieceSetId: string
   roomId: string
   muted: boolean
@@ -41,6 +44,7 @@ type Props = {
   showFps: boolean
   showMoveIndicators: boolean
   onBoardChange: (id: string) => void
+  onBoardViewChange: (view: BoardView) => void
   onPieceSetChange: (id: string) => void
   onRoomChange: (id: string) => void
   onMutedChange: (muted: boolean) => void
@@ -114,6 +118,7 @@ export const SettingsDrawer: FC<Props> = ({
   open,
   onClose,
   boardId,
+  boardView,
   pieceSetId,
   roomId,
   muted,
@@ -126,6 +131,7 @@ export const SettingsDrawer: FC<Props> = ({
   showFps,
   showMoveIndicators,
   onBoardChange,
+  onBoardViewChange,
   onPieceSetChange,
   onRoomChange,
   onMutedChange,
@@ -170,6 +176,35 @@ export const SettingsDrawer: FC<Props> = ({
             Close
           </PixelButton>
         </header>
+
+        <section className="settings-section">
+          <h3>Board view</h3>
+          <div
+            className="board-view-switch"
+            role="radiogroup"
+            aria-label="Board view"
+          >
+            {(['3d', '2d'] as const).map((view) => (
+              <button
+                key={view}
+                type="button"
+                role="radio"
+                aria-checked={boardView === view}
+                className={`board-view-option${boardView === view ? ' active' : ''}`}
+                onClick={() => {
+                  localStorage.setItem(BOARD_VIEW_KEY, view)
+                  onBoardViewChange(view)
+                }}
+              >
+                {view === '3d' ? '3D' : '2D'}
+              </button>
+            ))}
+          </div>
+          <p className="settings-import-status">
+            2D is a flat green and cream board. 3D keeps the room. Switching
+            leaves the position where it is.
+          </p>
+        </section>
 
         <section className="settings-section">
           <h3>Opponent</h3>

@@ -14,6 +14,7 @@ import type { Board } from '@logic/board'
 import type { Color, Move, Piece } from '@logic/pieces'
 import { detectGameOver, getTile, movesForPiece } from '@logic/pieces'
 import { BoardComponent, type GameOver } from '@/components/Board'
+import { Board2D } from '@/components/Board2D'
 import { GamePanel } from '@/components/GamePanel'
 import { NewGameDialog } from '@/components/NewGameDialog'
 import type { CoachChatMessage } from '@/components/CoachPane'
@@ -91,6 +92,7 @@ import {
   getPieceSet,
   getRoomTheme,
   loadBoardId,
+  loadBoardView,
   loadMuted,
   loadPieceSetId,
   loadRoomId,
@@ -475,6 +477,7 @@ export default function App() {
   const heldEngineMoveRef = useRef<Move | null>(null)
   const [gameId, setGameId] = useState<string | null>(() => readGameIdFromUrl())
   const [boardId, setBoardId] = useState(loadBoardId)
+  const [boardView, setBoardView] = useState(loadBoardView)
   const [pieceSetId, setPieceSetId] = useState(loadPieceSetId)
   const [roomId, setRoomId] = useState(loadRoomId)
   const [muted, setMutedState] = useState(loadMuted)
@@ -2447,7 +2450,7 @@ export default function App() {
 
   return (
     <div className="app" onPointerDown={() => unlockSfx()}>
-      <BootScreen />
+      <BootScreen enabled={boardView === '3d'} />
       {endOutcome && !endgameDismissed && !drillOpen && (
         <EndGameOverlay
           outcome={endOutcome}
@@ -2474,6 +2477,7 @@ export default function App() {
         open={settingsOpen}
         onClose={() => openPanel(null)}
         boardId={boardId}
+        boardView={boardView}
         pieceSetId={pieceSetId}
         roomId={roomId}
         muted={muted}
@@ -2486,6 +2490,7 @@ export default function App() {
         showFps={showFps}
         showMoveIndicators={showMoveIndicators}
         onBoardChange={setBoardId}
+        onBoardViewChange={setBoardView}
         onPieceSetChange={setPieceSetId}
         onRoomChange={setRoomId}
         onMutedChange={setMutedState}
@@ -2636,6 +2641,8 @@ export default function App() {
           <section
           className="stage"
           data-board-seat={viewSeat}
+          data-board-view={boardView}
+          data-panel-open={rightPanelOpen ? 'true' : 'false'}
           data-fen={fen}
         >
           <header className="hud">
@@ -2743,7 +2750,7 @@ export default function App() {
                       window.setTimeout(() => setSeatSpinning(false), 560)
                     },
                   },
-                ]}
+                ].filter((item) => boardView === '3d' || item.id === 'seat')}
               />
             </div>
             <div className="hud-actions">
@@ -2837,6 +2844,37 @@ export default function App() {
             </div>
           </header>
 
+          {boardView === '2d' ? (
+            <Board2D
+              selected={selected}
+              setSelected={setSelected}
+              board={board}
+              setBoard={setBoard}
+              moves={moves}
+              setMoves={setMoves}
+              setGameOver={setGameOver}
+              playerColor={playerColor}
+              seat={viewSeat}
+              tipFrom={tipFrom}
+              tipTo={tipTo}
+              wrongFrom={drillMistake?.from ?? null}
+              wrongTo={drillMistake?.to ?? null}
+              pendingEngineMove={pendingEngineMove}
+              onEngineMoveConsumed={onEngineMoveConsumed}
+              showMoveIndicators={showMoveIndicators}
+              readOnly={
+                !!reviewImport ||
+                drillStatus === 'complete' ||
+                !!drillMistake ||
+                !!drillPreview
+              }
+              playBothSides={playBothSides}
+              validateMove={
+                drillStatus === 'playing' ? validateDrillMove : undefined
+              }
+              highlightMove={reviewHighlight}
+            />
+          ) : (
           <Canvas
             shadows={{ type: THREE.PCFShadowMap }}
             dpr={[1, 1.5]}
@@ -2927,6 +2965,7 @@ export default function App() {
               />
             </group>
           </Canvas>
+          )}
         </section>
       </div>
     </div>

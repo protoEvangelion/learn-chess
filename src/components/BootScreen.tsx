@@ -20,7 +20,7 @@ function bootLine(item: string): string {
 }
 
 /** Arcade cabinet splash. Stays up until the 3D files finish, then powers off. */
-export function BootScreen() {
+export function BootScreen({ enabled = true }: { enabled?: boolean }) {
   const { active, progress, item } = useProgress()
   const started = useRef(Date.now())
   const [seenLoad, setSeenLoad] = useState(false)
@@ -31,6 +31,11 @@ export function BootScreen() {
   useEffect(() => {
     if (active || progress > 0) setSeenLoad(true)
   }, [active, progress])
+
+  useEffect(() => {
+    if (enabled) return
+    setGone(true)
+  }, [enabled])
 
   useEffect(() => {
     if (seenLoad) return
