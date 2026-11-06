@@ -17,15 +17,55 @@ type Baseline = {
 
 const BOARD_HALF = 4.2
 
-function boardCorners(origin: THREE.Vector3): THREE.Vector3[] {
+function boardCorners(
+  origin: THREE.Vector3,
+  half = BOARD_HALF,
+  sink = 0,
+): THREE.Vector3[] {
   const pts: THREE.Vector3[] = []
-  for (const x of [-BOARD_HALF, BOARD_HALF]) {
-    for (const z of [-BOARD_HALF, BOARD_HALF]) {
+  for (const x of [-half, half]) {
+    for (const z of [-half, half]) {
       pts.push(new THREE.Vector3(origin.x + x, origin.y, origin.z + z))
       pts.push(new THREE.Vector3(origin.x + x, origin.y + 1.2, origin.z + z))
+      if (sink) {
+        pts.push(new THREE.Vector3(origin.x + x, origin.y - sink, origin.z + z))
+      }
     }
   }
   return pts
+}
+
+/** Largest camera.zoom that keeps the board, rim labels, and eval bar on screen. */
+function zoomThatFits(
+  cam: THREE.PerspectiveCamera,
+  scale: number,
+  width: number,
+  height: number,
+  origin: THREE.Vector3,
+) {
+  const prev = cam.zoom
+  cam.zoom = 1
+  cam.updateProjectionMatrix()
+  cam.updateMatrixWorld(true)
+  // 4.45 reaches the coordinate rim. The sink includes the front lip, which
+  // perspective pushes below the top-surface corners.
+  const b = projectBounds(cam, boardCorners(origin, 4.45, 0.85), width, height)
+  cam.zoom = prev
+  const cx = width / 2
+  const cy = height / 2
+  const limits: number[] = []
+  const consider = (edge: number, value: number, center: number) => {
+    const denom = value - center
+    if (Math.abs(denom) < 0.5) return
+    const z = (edge - center) / denom
+    if (z > 0.15 && z < 6) limits.push(z)
+  }
+  consider(16, b.minX, cx)
+  consider(width - 16, b.maxX, cx)
+  consider(72, b.minY, cy)
+  consider(height - 28, b.maxY, cy)
+  const maxZoom = limits.length ? Math.min(...limits) * 0.98 : scale
+  return THREE.MathUtils.clamp(scale, 0.55, maxZoom)
 }
 
 function seatOffset(offset: THREE.Vector3, seatYaw: number) {
@@ -86,6 +126,7 @@ export function PanelViewFit({
   sceneKey,
   roomId,
   seatYaw = 0,
+  boardScale = 1,
 }: {
   active: boolean
   panelWidth: number
@@ -96,18 +137,36 @@ export function PanelViewFit({
   roomId: string
   /** Radians around the board center. π seats the camera on Black's side. */
   seatYaw?: number
+  /** Saved board size. 1 is the original framing. */
+  boardScale?: number
 }) {
   const { camera, controls, size, invalidate, gl } = useThree()
   const baseline = useRef<Baseline | null>(null)
   const lastSceneKey = useRef(sceneKey)
+  const framingKeyRef = useRef('')
 
   useLayoutEffect(() => {
     const cam = camera as THREE.PerspectiveCamera
     const orbit = controls as OrbitLike | null
     if (!cam?.isPerspectiveCamera) return
 
+    const framingKey = [
+      active ? '1' : '0',
+      panelWidth,
+      sceneKey,
+      roomId,
+      seatYaw,
+      size.width,
+      size.height,
+      fitEpoch,
+    ].join('|')
+    const framingChanged = framingKeyRef.current !== framingKey
+    framingKeyRef.current = framingKey
+    // Size clicks must not yank an orbited camera back to the saved angle.
+    if ((!active || panelWidth <= 0) && !framingChanged) return
+
     cam.clearViewOffset()
-    cam.zoom = 1
+    if (active && panelWidth > 0) cam.zoom = 1
 
     const fullW = Math.max(1, size.width)
     const fullH = Math.max(1, size.height)
@@ -210,8 +269,10 @@ export function PanelViewFit({
     )
 
     cam.clearViewOffset()
-    const targetW = freeAvailW * 0.92
-    const targetH = freeAvailH * 0.9
+    // Grow toward the free strip, but stop before the board slides under the drawer.
+    const fit = THREE.MathUtils.clamp(boardScale, 0.55, 1.08)
+    const targetW = Math.min(freeAvailW * 0.98, freeAvailW * 0.92 * fit)
+    const targetH = Math.min(freeAvailH * 0.96, freeAvailH * 0.9 * fit)
     for (let i = 0; i < 18; i++) {
       cam.position.copy(origin).add(offset)
       cam.lookAt(origin)
@@ -270,12 +331,43 @@ export function PanelViewFit({
     sceneKey,
     roomId,
     seatYaw,
+    boardScale,
     camera,
     controls,
     size.width,
     size.height,
     invalidate,
     gl,
+  ])
+
+  // Panel-closed size is camera zoom, clamped so the rim stays inside the stage.
+  // The open-panel path above bakes the same scale into distance and leaves zoom at 1.
+  useLayoutEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera
+    if (!cam?.isPerspectiveCamera) return
+    if (active && panelWidth > 0) return
+    const next = zoomThatFits(
+      cam,
+      boardScale,
+      Math.max(1, size.width),
+      Math.max(1, size.height),
+      new THREE.Vector3(...boardOrigin),
+    )
+    if (Math.abs(cam.zoom - next) < 0.001) return
+    cam.zoom = next
+    cam.updateProjectionMatrix()
+    invalidate()
+  }, [
+    active,
+    panelWidth,
+    boardScale,
+    boardOrigin,
+    seatYaw,
+    fitEpoch,
+    camera,
+    size.width,
+    size.height,
+    invalidate,
   ])
 
   return null

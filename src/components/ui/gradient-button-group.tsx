@@ -209,32 +209,40 @@ export function CoachBotIcon() {
   )
 }
 
-/** Knight glyph for the seat-flip control — same stroke as the orbit SVGs. */
-export function SeatKnightIcon({
+/**
+ * Side mark for the seat-flip control. A filled king in that side's color,
+ * with a contrasting rim so both read on the dark toolbar.
+ */
+export function SeatKingIcon({
   color,
   spinning = false,
 }: {
   color: 'white' | 'black'
   spinning?: boolean
 }) {
+  const white = color === 'white'
   return (
     <svg
       width="18"
       height="18"
       viewBox="0 0 24 24"
-      fill={color === 'black' ? 'currentColor' : 'none'}
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={['hud-seat-knight', spinning ? 'is-spinning' : '']
+      className={['hud-seat-mark', spinning ? 'is-spinning' : '']
         .filter(Boolean)
         .join(' ')}
       aria-hidden="true"
     >
-      <path d="M7 20h10" />
-      <path d="M9 20v-6l-2.5-2.5.8-4L11 6l1-3h2.5L16 5.5 19 7v2.5L16.5 12V20" />
-      <circle cx="11.25" cy="8.25" r="0.35" fill="currentColor" stroke="none" />
+      <path
+        fill={white ? '#f6f3ec' : '#140e1c'}
+        stroke={white ? '#241536' : '#f6f3ec'}
+        strokeWidth={white ? 0.9 : 1.15}
+        strokeLinejoin="round"
+        d="M10.6 1.1h2.8v2.2h3.3v2.8h-3.3v2.3h-2.8V6.1H7.3V3.3h3.3z
+           M8.4 10.7c0-.6 1.6-.85 3.6-.85s3.6.25 3.6.6v1.15H8.4z
+           M6.9 11.2h10.2l.55 1.25H6.35z
+           M7.3 12.7h9.4l1.35 4.7H5.95z
+           M4.4 17.65h15.2v1.85H4.4z
+           M5.7 19.75h12.6v1.85H5.7z"
+      />
     </svg>
   )
 }

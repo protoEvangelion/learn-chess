@@ -562,6 +562,39 @@ export function loadBoardView(): BoardView {
   return localStorage.getItem(BOARD_VIEW_KEY) === '2d' ? '2d' : '3d'
 }
 
+/**
+ * How big the board is drawn. Stored as the scale itself (`"1"` is today's
+ * size), not a pixel width, so 2D and 3D share one setting.
+ */
+export const BOARD_SCALE_KEY = 'chess-3d:boardScale'
+
+/** Smallest → largest. Index 3 (`1`) matches the original framing. */
+export const BOARD_SCALE_STEPS = [0.7, 0.82, 0.91, 1, 1.12, 1.24, 1.36] as const
+
+const BOARD_SCALE_DEFAULT_INDEX = 3
+
+export function loadBoardScaleIndex(): number {
+  const stored = localStorage.getItem(BOARD_SCALE_KEY)
+  if (stored == null || stored === '') return BOARD_SCALE_DEFAULT_INDEX
+  const raw = Number(stored)
+  if (!Number.isFinite(raw)) return BOARD_SCALE_DEFAULT_INDEX
+  let best = BOARD_SCALE_DEFAULT_INDEX
+  let bestDist = Infinity
+  BOARD_SCALE_STEPS.forEach((step, index) => {
+    const dist = Math.abs(step - raw)
+    if (dist < bestDist) {
+      best = index
+      bestDist = dist
+    }
+  })
+  return best
+}
+
+export function boardScaleAt(index: number): number {
+  const i = Math.max(0, Math.min(BOARD_SCALE_STEPS.length - 1, index))
+  return BOARD_SCALE_STEPS[i]
+}
+
 export const BOARD_KEY = 'chess-3d:boardId'
 export const PIECE_KEY = 'chess-3d:pieceSetId'
 export const ROOM_KEY = 'chess-3d:roomId'

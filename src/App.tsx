@@ -24,7 +24,7 @@ import { PanelResizeHandle } from '@/components/PanelResizeHandle'
 import { PanelViewFit } from '@/components/PanelViewFit'
 import {
   GradientButtonGroup,
-  SeatKnightIcon,
+  SeatKingIcon,
 } from '@/components/ui/gradient-button-group'
 import { HudEval } from '@/components/HudEval'
 import { BrandMark } from '@/components/BrandMark'
@@ -91,7 +91,11 @@ import {
   getBoardTheme,
   getPieceSet,
   getRoomTheme,
+  BOARD_SCALE_KEY,
+  BOARD_SCALE_STEPS,
+  boardScaleAt,
   loadBoardId,
+  loadBoardScaleIndex,
   loadBoardView,
   loadMuted,
   loadPieceSetId,
@@ -478,6 +482,13 @@ export default function App() {
   const [gameId, setGameId] = useState<string | null>(() => readGameIdFromUrl())
   const [boardId, setBoardId] = useState(loadBoardId)
   const [boardView, setBoardView] = useState(loadBoardView)
+  const [boardScaleIndex, setBoardScaleIndexState] = useState(loadBoardScaleIndex)
+  const boardScale = boardScaleAt(boardScaleIndex)
+  const setBoardScaleIndex = (next: number) => {
+    const clamped = Math.max(0, Math.min(BOARD_SCALE_STEPS.length - 1, next))
+    setBoardScaleIndexState(clamped)
+    localStorage.setItem(BOARD_SCALE_KEY, String(boardScaleAt(clamped)))
+  }
   const [pieceSetId, setPieceSetId] = useState(loadPieceSetId)
   const [roomId, setRoomId] = useState(loadRoomId)
   const [muted, setMutedState] = useState(loadMuted)
@@ -693,7 +704,6 @@ export default function App() {
     setViewSeat(preferredSeat)
   }, [preferredSeat])
   const seatYaw = viewSeat === 'black' ? Math.PI : 0
-  const seatKnightColor: Color = turn === 'white' ? 'black' : 'white'
   const analysisReadyForFen =
     analysisStatus === 'idle' &&
     !!analysis &&
@@ -2642,8 +2652,10 @@ export default function App() {
           className="stage"
           data-board-seat={viewSeat}
           data-board-view={boardView}
+          data-board-scale={boardScale}
           data-panel-open={rightPanelOpen ? 'true' : 'false'}
           data-fen={fen}
+          style={{ ['--board-scale' as string]: String(boardScale) }}
         >
           <header className="hud">
             <div className="hud-cluster">
@@ -2732,14 +2744,34 @@ export default function App() {
                     onClick: () => setOrbitDragMode('pan'),
                   },
                   {
+                    id: 'board-smaller',
+                    label: 'Smaller board',
+                    disabled: boardScaleIndex <= 0,
+                    icon: (
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M5 12h14" />
+                      </svg>
+                    ),
+                    onClick: () => setBoardScaleIndex(boardScaleIndex - 1),
+                  },
+                  {
                     id: 'seat',
                     label:
                       viewSeat === 'white'
                         ? 'View from Black'
                         : 'View from White',
                     icon: (
-                      <SeatKnightIcon
-                        color={seatKnightColor}
+                      <SeatKingIcon
+                        color={viewSeat}
                         spinning={seatSpinning}
                       />
                     ),
@@ -2750,7 +2782,34 @@ export default function App() {
                       window.setTimeout(() => setSeatSpinning(false), 560)
                     },
                   },
-                ].filter((item) => boardView === '3d' || item.id === 'seat')}
+                  {
+                    id: 'board-larger',
+                    label: 'Larger board',
+                    disabled: boardScaleIndex >= BOARD_SCALE_STEPS.length - 1,
+                    icon: (
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 5v14" />
+                        <path d="M5 12h14" />
+                      </svg>
+                    ),
+                    onClick: () => setBoardScaleIndex(boardScaleIndex + 1),
+                  },
+                ].filter(
+                  (item) =>
+                    boardView === '3d' ||
+                    item.id === 'seat' ||
+                    item.id === 'board-smaller' ||
+                    item.id === 'board-larger',
+                )}
               />
             </div>
             <div className="hud-actions">
@@ -2904,6 +2963,7 @@ export default function App() {
               sceneKey={`${roomId}:${boardId}:${pieceSetId}:${drillOpen ? 'drill' : 'play'}`}
               roomId={roomId}
               seatYaw={seatYaw}
+              boardScale={boardScale}
             />
             <color attach="background" args={[roomTheme.background]} />
             <Environment files={roomTheme.hdr} environmentIntensity={0.6} />

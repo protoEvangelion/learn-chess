@@ -331,13 +331,16 @@ body,
   align-items: center;
   justify-content: center;
   padding: 4.75rem 1.25rem 1.25rem;
+  container-type: size;
   background:
     radial-gradient(ellipse at center, #3c3834 0%, #262421 70%);
 }
 
 .board-2d {
   --sq: min(11.5vh, 11.5vw, 84px);
-  width: min(92vmin, calc(100vh - 7.5rem), calc(100vw - 2.5rem), 720px);
+  /* `--board-scale` is the saved step. 100cqi/100cqb keep the square inside the padded stage. */
+  --board-fit: min(92vmin, 720px);
+  width: min(calc(var(--board-fit) * var(--board-scale, 1)), 100cqi, 100cqb);
   aspect-ratio: 1;
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -735,13 +738,13 @@ body,
   line-height: 0;
 }
 
-.hud-seat-knight {
+.hud-seat-mark {
   display: block;
   transform-origin: center;
   flex-shrink: 0;
 }
 
-.hud-seat-knight.is-spinning {
+.hud-seat-mark.is-spinning {
   animation: hud-seat-spin 0.55s ease-in-out;
 }
 
