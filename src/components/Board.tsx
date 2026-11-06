@@ -140,7 +140,7 @@ export const BoardComponent: FC<{
   const movesRef = useRef(moves)
   movesRef.current = moves
 
-  const { camera, pointer, raycaster } = useThree()
+  const { camera, pointer, raycaster, gl } = useThree()
   const hitPoint = useRef(new THREE.Vector3()).current
   const planeNormal = useRef(new THREE.Vector3(0, 1, 0)).current
   const planePoint = useRef(new THREE.Vector3()).current
@@ -202,16 +202,77 @@ export const BoardComponent: FC<{
 
   endDragRef.current = endDrag
 
+  // Board-local height of each piece's grab point. The mesh in front (the
+  // king standing closer to the camera) can cover a pawn's body, so a drag
+  // aimed at the pawn used to start on the king and then go nowhere.
+  const GRAB_Y: Record<string, number> = {
+    pawn: 0.95,
+    knight: 1.2,
+    bishop: 1.4,
+    rook: 1.15,
+    queen: 1.75,
+    king: 1.9,
+  }
+
+  const pieceClosestToPointer = (clientX: number, clientY: number): Tile | null => {
+    const group = boardGroupRef.current
+    if (!group) return null
+    const rect = gl.domElement.getBoundingClientRect()
+    const x = clientX - rect.left
+    const y = clientY - rect.top
+    group.updateWorldMatrix(true, true)
+    camera.updateMatrixWorld()
+    const v = new THREE.Vector3()
+    const projectAt = (file: number, rank: number, gy: number) => {
+      v.set(file, gy, rank)
+      group.localToWorld(v)
+      v.project(camera)
+      return {
+        x: (v.x * 0.5 + 0.5) * rect.width,
+        y: (-v.y * 0.5 + 0.5) * rect.height,
+      }
+    }
+    let best: { tile: Tile; d2: number; gy: number } | null = null
+    for (const row of board) {
+      for (const tile of row) {
+        const piece = tile.piece
+        if (!piece) continue
+        const gy = GRAB_Y[piece.type] ?? 1
+        const p = projectAt(tile.position.x, tile.position.y, gy)
+        const d2 = (p.x - x) ** 2 + (p.y - y) ** 2
+        if (!best || d2 < best.d2) best = { tile, d2, gy }
+      }
+    }
+    if (!best?.tile.piece) return null
+    const here = projectAt(best.tile.position.x, best.tile.position.y, best.gy)
+    const step = best.tile.position.x < 7 ? 1 : -1
+    const beside = projectAt(
+      best.tile.position.x + step,
+      best.tile.position.y,
+      best.gy,
+    )
+    const square = Math.hypot(beside.x - here.x, beside.y - here.y)
+    const limit = Math.max(16, square * 0.62)
+    if (best.d2 > limit * limit) return null
+    return best.tile
+  }
+
   const beginDrag = (e: ThreePointerEvent, tile: Tile) => {
     e.stopPropagation()
-    if (!startPieceDrag(tile)) return
+    let picked =
+      pieceClosestToPointer(e.nativeEvent.clientX, e.nativeEvent.clientY) ??
+      tile
+    if (!startPieceDrag(picked)) {
+      if (picked === tile || !startPieceDrag(tile)) return
+      picked = tile
+    }
     lastDragSquareRef.current = {
-      x: tile.position.x,
-      y: tile.position.y,
+      x: picked.position.x,
+      y: picked.position.y,
     }
     dragBoardRef.current = {
-      x: tile.position.x,
-      z: tile.position.y,
+      x: picked.position.x,
+      z: picked.position.y,
     }
     if (controlsRef.current) controlsRef.current.enabled = false
 

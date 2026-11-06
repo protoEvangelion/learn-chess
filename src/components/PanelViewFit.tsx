@@ -51,6 +51,10 @@ function zoomThatFits(
   // perspective pushes below the top-surface corners.
   const b = projectBounds(cam, boardCorners(origin, 4.45, 0.85), width, height)
   cam.zoom = prev
+  // Measuring forced zoom 1. Put the projection back before returning — an
+  // unchanged size step used to leave this matrix at zoom 1, so the picture
+  // snapped small and the click ray no longer matched the piece on screen.
+  cam.updateProjectionMatrix()
   const cx = width / 2
   const cy = height / 2
   const limits: number[] = []
