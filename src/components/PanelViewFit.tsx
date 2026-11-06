@@ -17,59 +17,15 @@ type Baseline = {
 
 const BOARD_HALF = 4.2
 
-function boardCorners(
-  origin: THREE.Vector3,
-  half = BOARD_HALF,
-  sink = 0,
-): THREE.Vector3[] {
+function boardCorners(origin: THREE.Vector3): THREE.Vector3[] {
   const pts: THREE.Vector3[] = []
-  for (const x of [-half, half]) {
-    for (const z of [-half, half]) {
+  for (const x of [-BOARD_HALF, BOARD_HALF]) {
+    for (const z of [-BOARD_HALF, BOARD_HALF]) {
       pts.push(new THREE.Vector3(origin.x + x, origin.y, origin.z + z))
       pts.push(new THREE.Vector3(origin.x + x, origin.y + 1.2, origin.z + z))
-      if (sink) {
-        pts.push(new THREE.Vector3(origin.x + x, origin.y - sink, origin.z + z))
-      }
     }
   }
   return pts
-}
-
-/** Largest camera.zoom that keeps the board, rim labels, and eval bar on screen. */
-function zoomThatFits(
-  cam: THREE.PerspectiveCamera,
-  scale: number,
-  width: number,
-  height: number,
-  origin: THREE.Vector3,
-) {
-  const prev = cam.zoom
-  cam.zoom = 1
-  cam.updateProjectionMatrix()
-  cam.updateMatrixWorld(true)
-  // 4.45 reaches the coordinate rim. The sink includes the front lip, which
-  // perspective pushes below the top-surface corners.
-  const b = projectBounds(cam, boardCorners(origin, 4.45, 0.85), width, height)
-  cam.zoom = prev
-  // Measuring forced zoom 1. Put the projection back before returning — an
-  // unchanged size step used to leave this matrix at zoom 1, so the picture
-  // snapped small and the click ray no longer matched the piece on screen.
-  cam.updateProjectionMatrix()
-  const cx = width / 2
-  const cy = height / 2
-  const limits: number[] = []
-  const consider = (edge: number, value: number, center: number) => {
-    const denom = value - center
-    if (Math.abs(denom) < 0.5) return
-    const z = (edge - center) / denom
-    if (z > 0.15 && z < 6) limits.push(z)
-  }
-  consider(16, b.minX, cx)
-  consider(width - 16, b.maxX, cx)
-  consider(72, b.minY, cy)
-  consider(height - 28, b.maxY, cy)
-  const maxZoom = limits.length ? Math.min(...limits) * 0.98 : scale
-  return THREE.MathUtils.clamp(scale, 0.55, maxZoom)
 }
 
 function seatOffset(offset: THREE.Vector3, seatYaw: number) {
@@ -273,10 +229,11 @@ export function PanelViewFit({
     )
 
     cam.clearViewOffset()
-    // Grow toward the free strip, but stop before the board slides under the drawer.
-    const fit = THREE.MathUtils.clamp(boardScale, 0.55, 1.08)
-    const targetW = Math.min(freeAvailW * 0.98, freeAvailW * 0.92 * fit)
-    const targetH = Math.min(freeAvailH * 0.96, freeAvailH * 0.9 * fit)
+    // Scale 1 is the original free-strip framing. Larger steps move the
+    // camera closer (the board may meet the drawer). A fit clamp used to
+    // pin 1.12, 1.24, and 1.36 to the same distance.
+    const targetW = freeAvailW * 0.92 * boardScale
+    const targetH = freeAvailH * 0.9 * boardScale
     for (let i = 0; i < 18; i++) {
       cam.position.copy(origin).add(offset)
       cam.lookAt(origin)
@@ -344,35 +301,20 @@ export function PanelViewFit({
     gl,
   ])
 
-  // Panel-closed size is camera zoom, clamped so the rim stays inside the stage.
+  // Panel-closed size is camera.zoom. 1 is the original framing, and the
+  // saved step is the zoom itself so 0.7 through 1.36 each change the picture.
+  // A "largest zoom that still fits" clamp used to pin the bigger steps (and
+  // every step on a narrow stage) to one zoom, so the buttons looked dead.
   // The open-panel path above bakes the same scale into distance and leaves zoom at 1.
   useLayoutEffect(() => {
     const cam = camera as THREE.PerspectiveCamera
     if (!cam?.isPerspectiveCamera) return
     if (active && panelWidth > 0) return
-    const next = zoomThatFits(
-      cam,
-      boardScale,
-      Math.max(1, size.width),
-      Math.max(1, size.height),
-      new THREE.Vector3(...boardOrigin),
-    )
-    if (Math.abs(cam.zoom - next) < 0.001) return
-    cam.zoom = next
+    if (Math.abs(cam.zoom - boardScale) < 0.001) return
+    cam.zoom = boardScale
     cam.updateProjectionMatrix()
     invalidate()
-  }, [
-    active,
-    panelWidth,
-    boardScale,
-    boardOrigin,
-    seatYaw,
-    fitEpoch,
-    camera,
-    size.width,
-    size.height,
-    invalidate,
-  ])
+  }, [active, panelWidth, boardScale, camera, invalidate])
 
   return null
 }

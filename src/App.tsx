@@ -484,10 +484,13 @@ export default function App() {
   const [boardView, setBoardView] = useState(loadBoardView)
   const [boardScaleIndex, setBoardScaleIndexState] = useState(loadBoardScaleIndex)
   const boardScale = boardScaleAt(boardScaleIndex)
-  const setBoardScaleIndex = (next: number) => {
-    const clamped = Math.max(0, Math.min(BOARD_SCALE_STEPS.length - 1, next))
-    setBoardScaleIndexState(clamped)
-    localStorage.setItem(BOARD_SCALE_KEY, String(boardScaleAt(clamped)))
+  const setBoardScaleIndex = (next: number | ((current: number) => number)) => {
+    setBoardScaleIndexState((current) => {
+      const resolved = typeof next === 'function' ? next(current) : next
+      const clamped = Math.max(0, Math.min(BOARD_SCALE_STEPS.length - 1, resolved))
+      localStorage.setItem(BOARD_SCALE_KEY, String(boardScaleAt(clamped)))
+      return clamped
+    })
   }
   const [pieceSetId, setPieceSetId] = useState(loadPieceSetId)
   const [roomId, setRoomId] = useState(loadRoomId)
@@ -2761,7 +2764,7 @@ export default function App() {
                         <path d="M5 12h14" />
                       </svg>
                     ),
-                    onClick: () => setBoardScaleIndex(boardScaleIndex - 1),
+                    onClick: () => setBoardScaleIndex((current) => current - 1),
                   },
                   {
                     id: 'seat',
@@ -2801,7 +2804,7 @@ export default function App() {
                         <path d="M5 12h14" />
                       </svg>
                     ),
-                    onClick: () => setBoardScaleIndex(boardScaleIndex + 1),
+                    onClick: () => setBoardScaleIndex((current) => current + 1),
                   },
                 ].filter(
                   (item) =>

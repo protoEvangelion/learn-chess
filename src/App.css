@@ -338,9 +338,13 @@ body,
 
 .board-2d {
   --sq: min(11.5vh, 11.5vw, 84px);
-  /* `--board-scale` is the saved step. 100cqi/100cqb keep the square inside the padded stage. */
-  --board-fit: min(92vmin, 720px);
-  width: min(calc(var(--board-fit) * var(--board-scale, 1)), 100cqi, 100cqb);
+  /* Scale 1 is the size that fits the stage. The step multiplies that width.
+     A min() cap used to freeze every step once the square hit the container,
+     so + and − looked dead. flex-shrink stays 0 so a larger step is not
+     squeezed back down to the same used width. */
+  --board-fit: min(92vmin, 720px, 100cqi, 100cqb);
+  width: calc(var(--board-fit) * var(--board-scale, 1));
+  flex-shrink: 0;
   aspect-ratio: 1;
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -492,12 +496,13 @@ body,
 }
 
 .stage[data-panel-open='true'] .board-2d {
-  width: min(
+  --board-fit: min(
     92vmin,
     calc(100vh - 7.5rem),
     calc(100vw - var(--coach-panel-width, 440px) - 2.5rem),
     720px
   );
+  width: calc(var(--board-fit) * var(--board-scale, 1));
 }
 
 .hud {
