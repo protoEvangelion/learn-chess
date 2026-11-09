@@ -568,8 +568,14 @@ export function loadBoardView(): BoardView {
  */
 export const BOARD_SCALE_KEY = 'chess-3d:boardScale'
 
-/** Smallest → largest. Index 3 (`1`) matches the original framing. */
-export const BOARD_SCALE_STEPS = [0.7, 0.82, 0.91, 1, 1.12, 1.24, 1.36] as const
+/**
+ * Smallest → largest. Index 3 (`1`) matches the original framing.
+ * The top steps let the flat board grow past the stage (it scrolls);
+ * in 3D the camera simply moves closer.
+ */
+export const BOARD_SCALE_STEPS = [
+  0.7, 0.82, 0.91, 1, 1.12, 1.24, 1.36, 1.6, 2, 2.5,
+] as const
 
 const BOARD_SCALE_DEFAULT_INDEX = 3
 

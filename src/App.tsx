@@ -31,7 +31,7 @@ import { BrandMark } from '@/components/BrandMark'
 import { BootScreen } from '@/components/BootScreen'
 import { SettingsDrawer } from '@/components/SettingsDrawer'
 import { Chess } from 'chess.js'
-import { Hammer, Joystick } from 'lucide-react'
+import { Hammer, Joystick, Maximize2, Minimize2 } from 'lucide-react'
 import { Border } from '@models/Border'
 import { BoardSurface, preloadBoard } from '@models/BoardSurface'
 import { EvalPillar } from '@models/EvalPillar'
@@ -482,6 +482,8 @@ export default function App() {
   const [gameId, setGameId] = useState<string | null>(() => readGameIdFromUrl())
   const [boardId, setBoardId] = useState(loadBoardId)
   const [boardView, setBoardView] = useState(loadBoardView)
+  /** Flat board can drop its stage margins and fill the whole viewport. */
+  const [boardExpanded, setBoardExpanded] = useState(false)
   const [boardScaleIndex, setBoardScaleIndexState] = useState(loadBoardScaleIndex)
   const boardScale = boardScaleAt(boardScaleIndex)
   const setBoardScaleIndex = (next: number | ((current: number) => number)) => {
@@ -2656,6 +2658,9 @@ export default function App() {
           data-board-seat={viewSeat}
           data-board-view={boardView}
           data-board-scale={boardScale}
+          data-board-expand={
+            boardView === '2d' && boardExpanded ? 'true' : 'false'
+          }
           data-panel-open={rightPanelOpen ? 'true' : 'false'}
           data-fen={fen}
           style={{ ['--board-scale' as string]: String(boardScale) }}
@@ -2747,6 +2752,18 @@ export default function App() {
                     onClick: () => setOrbitDragMode('pan'),
                   },
                   {
+                    id: 'board-expand',
+                    label: boardExpanded
+                      ? 'Exit full screen'
+                      : 'Full-screen board',
+                    icon: boardExpanded ? (
+                      <Minimize2 size={18} strokeWidth={1.75} aria-hidden="true" />
+                    ) : (
+                      <Maximize2 size={18} strokeWidth={1.75} aria-hidden="true" />
+                    ),
+                    onClick: () => setBoardExpanded((open) => !open),
+                  },
+                  {
                     id: 'board-smaller',
                     label: 'Smaller board',
                     disabled: boardScaleIndex <= 0,
@@ -2808,10 +2825,12 @@ export default function App() {
                   },
                 ].filter(
                   (item) =>
-                    boardView === '3d' ||
                     item.id === 'seat' ||
                     item.id === 'board-smaller' ||
-                    item.id === 'board-larger',
+                    item.id === 'board-larger' ||
+                    (boardView === '2d'
+                      ? item.id === 'board-expand'
+                      : item.id !== 'board-expand'),
                 )}
               />
             </div>

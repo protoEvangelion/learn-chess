@@ -328,8 +328,11 @@ body,
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
+  /* Steps above 1 can exceed the stage; scroll instead of clipping the
+     top-left corner (plain `center` clips the start of an overflow). */
+  overflow: auto;
   padding: 4.75rem 1.25rem 1.25rem;
   container-type: size;
   background:
@@ -338,11 +341,10 @@ body,
 
 .board-2d {
   --sq: min(11.5vh, 11.5vw, 84px);
-  /* Scale 1 is the size that fits the stage. The step multiplies that width.
-     A min() cap used to freeze every step once the square hit the container,
-     so + and − looked dead. flex-shrink stays 0 so a larger step is not
-     squeezed back down to the same used width. */
-  --board-fit: min(92vmin, 720px, 100cqi, 100cqb);
+  /* cqw/cqh are the wrap's CONTENT box, so the wrap padding is already
+     excluded — subtracting it again shrank the board. Scale 1 fills that
+     box; larger steps grow past the stage and the wrap scrolls. */
+  --board-fit: min(100cqw, 100cqh);
   width: calc(var(--board-fit) * var(--board-scale, 1));
   flex-shrink: 0;
   aspect-ratio: 1;
@@ -495,13 +497,35 @@ body,
   padding-right: calc(var(--coach-panel-width, 440px) + 0.75rem);
 }
 
+/* Full-screen: drop every margin so the board can use the whole viewport.
+   The HUD fades back and returns on hover/focus so moves stay reachable. */
+.stage[data-board-expand='true'] .board-2d-wrap {
+  padding: 0;
+  background: #1c1a18;
+}
+
+.stage[data-board-expand='true'][data-panel-open='true'] .board-2d-wrap {
+  padding-right: var(--coach-panel-width, 440px);
+}
+
+.stage[data-board-expand='true'] .board-2d {
+  --board-fit: min(100cqw, 100cqh);
+  width: calc(var(--board-fit) * var(--board-scale, 1));
+  box-shadow: none;
+}
+
+.stage[data-board-view='2d'][data-board-expand='true'] .hud {
+  opacity: 0.12;
+  transition: opacity 160ms ease;
+}
+
+.stage[data-board-view='2d'][data-board-expand='true'] .hud:hover,
+.stage[data-board-view='2d'][data-board-expand='true'] .hud:focus-within {
+  opacity: 1;
+}
+
 .stage[data-panel-open='true'] .board-2d {
-  --board-fit: min(
-    92vmin,
-    calc(100vh - 7.5rem),
-    calc(100vw - var(--coach-panel-width, 440px) - 2.5rem),
-    720px
-  );
+  --board-fit: min(100cqw, 100cqh);
   width: calc(var(--board-fit) * var(--board-scale, 1));
 }
 
