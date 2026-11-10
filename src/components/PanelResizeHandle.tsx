@@ -67,6 +67,12 @@ export const PanelResizeHandle: FC<Props> = ({
       aria-label="Resize panel"
       onPointerDown={onPointerDown}
       onClick={(e) => e.stopPropagation()}
-    />
+    >
+      <span className="panel-resize-thumb" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+    </div>
   )
 }

@@ -62,6 +62,13 @@ import {
   evalGraphY,
   seriesPawnValue,
 } from '@/lib/evalGraphScale'
+import {
+  MAX_REVIEW_COACH_FRACTION,
+  MIN_REVIEW_COACH_FRACTION,
+  clampReviewCoachFraction,
+  loadReviewCoachFraction,
+  saveReviewCoachFraction,
+} from '@/lib/coachHeight'
 
 type TabId = 'explore' | 'games'
 
@@ -113,10 +120,6 @@ type Props = {
   pgn?: string
 }
 
-const DEFAULT_REVIEW_COACH_FRACTION = 0.42
-const EXPANDED_REVIEW_COACH_FRACTION = 2 / 3
-const MIN_REVIEW_COACH_FRACTION = 0.28
-const MAX_REVIEW_COACH_FRACTION = 0.8
 
 async function writeClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
@@ -139,21 +142,16 @@ async function writeClipboard(text: string) {
   return ok
 }
 
-function clampReviewCoachFraction(fraction: number) {
-  return Math.min(
-    MAX_REVIEW_COACH_FRACTION,
-    Math.max(MIN_REVIEW_COACH_FRACTION, fraction),
-  )
-}
-
 function ReviewCoachResizeHandle({
   fraction,
   containerRef,
   onFractionChange,
+  onCommit,
 }: {
   fraction: number
   containerRef: React.RefObject<HTMLDivElement | null>
   onFractionChange: (fraction: number) => void
+  onCommit?: (fraction: number) => void
 }) {
   const dragging = useRef(false)
   const startY = useRef(0)
@@ -186,13 +184,16 @@ function ReviewCoachResizeHandle({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
+    onCommit?.(fraction)
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
     event.preventDefault()
     const delta = event.key === 'ArrowUp' ? 0.05 : -0.05
-    onFractionChange(clampReviewCoachFraction(fraction + delta))
+    const next = clampReviewCoachFraction(fraction + delta)
+    onFractionChange(next)
+    onCommit?.(next)
   }
 
   return (
@@ -211,7 +212,13 @@ function ReviewCoachResizeHandle({
       onPointerCancel={stopDragging}
       onLostPointerCapture={stopDragging}
       onKeyDown={onKeyDown}
-    />
+    >
+      <span className="analysis-coach-resize-thumb" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+    </div>
   )
 }
 
@@ -759,7 +766,7 @@ export const AnalysisDialog: FC<Props> = ({
     return () => window.clearTimeout(id)
   }, [pgnCopied])
   const [reviewCoachFraction, setReviewCoachFraction] = useState(
-    DEFAULT_REVIEW_COACH_FRACTION,
+    loadReviewCoachFraction,
   )
   const reviewReportRef = useRef<HTMLDivElement>(null)
   const previousCoachQuestionCount = useRef(0)
@@ -797,11 +804,8 @@ export const AnalysisDialog: FC<Props> = ({
   useEffect(() => {
     if (coachQuestionCount === 0) {
       previousCoachQuestionCount.current = 0
-      setReviewCoachFraction(DEFAULT_REVIEW_COACH_FRACTION)
+      setReviewCoachFraction(loadReviewCoachFraction())
       return
-    }
-    if (previousCoachQuestionCount.current === 0) {
-      setReviewCoachFraction(EXPANDED_REVIEW_COACH_FRACTION)
     }
     previousCoachQuestionCount.current = coachQuestionCount
   }, [coachQuestionCount])
@@ -1159,6 +1163,7 @@ export const AnalysisDialog: FC<Props> = ({
                     fraction={reviewCoachFraction}
                     containerRef={reviewReportRef}
                     onFractionChange={setReviewCoachFraction}
+                    onCommit={saveReviewCoachFraction}
                   />
                   <div className="analysis-coach-embed">
                     <CoachPane
