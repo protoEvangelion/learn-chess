@@ -73,28 +73,49 @@ export const CoachPane: FC<Props> = ({
   }
 
   if (compact) {
+    // Review dock: the recap is the first chat message, above the input.
+    const showRecap = reviewMode && (explanation || askBusy)
     return (
-      <form className="coach-chat-form" onSubmit={submitChat}>
-        <input
-          type="text"
-          className="coach-chat-input"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={
-            chatReady ? 'Ask the coach…' : 'Waiting for your turn…'
-          }
-          disabled={!chatReady || chatBusy}
-          aria-label="Question for the coach"
-          autoComplete="off"
-        />
-        <PixelButton
-          type="submit"
-          disabled={!chatReady || chatBusy || !draft.trim()}
-          aria-label="Send"
-        >
-          Send
-        </PixelButton>
-      </form>
+      <div className="coach-pane is-compact">
+        {coachError ? <p className="error">{coachError}</p> : null}
+        {showRecap ? (
+          <div className="coach-chat-thread is-dock-thread" ref={threadRef}>
+            {explanation ? (
+              <div className="coach-chat-bubble is-assistant is-recap">
+                {explanation}
+              </div>
+            ) : (
+              <div
+                className="coach-chat-bubble is-assistant is-recap is-loading"
+                aria-busy="true"
+              >
+                Writing recap…
+              </div>
+            )}
+          </div>
+        ) : null}
+        <form className="coach-chat-form" onSubmit={submitChat}>
+          <input
+            type="text"
+            className="coach-chat-input"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={
+              chatReady ? 'Ask the coach…' : 'Waiting for your turn…'
+            }
+            disabled={!chatReady || chatBusy}
+            aria-label="Question for the coach"
+            autoComplete="off"
+          />
+          <PixelButton
+            type="submit"
+            disabled={!chatReady || chatBusy || !draft.trim()}
+            aria-label="Send"
+          >
+            Send
+          </PixelButton>
+        </form>
+      </div>
     )
   }
 
@@ -108,7 +129,7 @@ export const CoachPane: FC<Props> = ({
         </p>
       )}
 
-      {askBusy && !explanation && (
+      {askBusy && !explanation && !reviewMode && (
         <BorderBeam
           className="coach-panel-beam"
           size="pulse-inner"
@@ -139,25 +160,39 @@ export const CoachPane: FC<Props> = ({
         </BorderBeam>
       )}
 
-      {explanation && (
+      {/* Live tips stay a card; the post-game recap is the first chat message. */}
+      {explanation && !reviewMode && (
         <div className="coach-panel coach-explain-card">
-          <p className="coach-loading-label">
-            {reviewMode ? 'Game review' : 'Coach'}
-          </p>
+          <p className="coach-loading-label">Coach</p>
           <p className="coach-explain-body">{explanation}</p>
         </div>
       )}
 
       <section className="coach-chat" aria-label="Ask the coach">
         <div className="coach-chat-thread" ref={threadRef}>
-          {chatMessages.length === 0 && emptyHint !== '' && (
-            <p className="coach-chat-empty">
-              {emptyHint ??
-                (chatReady
-                  ? 'e.g. “Why this piece?” or “What if they take?”'
-                  : 'Waiting for your turn…')}
-            </p>
-          )}
+          {reviewMode && explanation ? (
+            <div className="coach-chat-bubble is-assistant is-recap">
+              {explanation}
+            </div>
+          ) : null}
+          {reviewMode && askBusy && !explanation ? (
+            <div
+              className="coach-chat-bubble is-assistant is-recap is-loading"
+              aria-busy="true"
+            >
+              Writing recap…
+            </div>
+          ) : null}
+          {chatMessages.length === 0 &&
+            !(reviewMode && (explanation || askBusy)) &&
+            emptyHint !== '' && (
+              <p className="coach-chat-empty">
+                {emptyHint ??
+                  (chatReady
+                    ? 'e.g. “Why this piece?” or “What if they take?”'
+                    : 'Waiting for your turn…')}
+              </p>
+            )}
           {chatMessages.map((m) => (
             <div
               key={m.id}

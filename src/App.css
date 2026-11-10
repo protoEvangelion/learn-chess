@@ -1564,6 +1564,22 @@ body.is-review-coach-resizing canvas {
   padding-top: 0.15rem;
 }
 
+/* Recap sits in the thread above the input, not as a pinned card. */
+.coach-pane.is-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.coach-chat-thread.is-dock-thread {
+  max-height: 9.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-right: 0.15rem;
+}
+
 .analysis-status {
   margin: 0.35rem 0;
   font-size: 0.88rem;
@@ -3634,6 +3650,18 @@ body.is-review-coach-resizing canvas {
   background: rgba(18, 8, 36, 0.7);
   border: 1px solid var(--sw-border);
   color: var(--sw-text);
+}
+
+/* Post-game recap reads as the opening message, not a pinned card. */
+.coach-chat-bubble.is-recap {
+  max-width: 100%;
+  border-color: color-mix(in srgb, var(--sw-teal) 35%, var(--sw-border));
+  background: color-mix(in srgb, var(--sw-teal) 8%, rgba(18, 8, 36, 0.7));
+}
+
+.coach-chat-bubble.is-recap.is-loading {
+  color: var(--sw-muted);
+  font-style: italic;
 }
 
 .coach-chat-form {
