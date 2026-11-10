@@ -1068,6 +1068,14 @@ export const AnalysisDialog: FC<Props> = ({
                       >
                         {ply.tag && <TagGlyph tag={ply.tag} />}
                         <span>{ply.san}</span>
+                        {ply.stats ? (
+                          <span
+                            className="analysis-move-win"
+                            title={`Opener: played ${(ply.stats.playRate * 100).toFixed(1)}% of ${ply.stats.games} games · wins ${(ply.stats.winRate * 100).toFixed(1)}%`}
+                          >
+                            {(ply.stats.winRate * 100).toFixed(0)}%
+                          </span>
+                        ) : null}
                         {ply.bestSan && (
                           <span
                             className={[

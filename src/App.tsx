@@ -71,6 +71,7 @@ import { EndGameOverlay, outcomeFromResult } from '@/EndGameOverlay'
 import { parseCoachExplain } from '@/lib/coachTips'
 import {
   analyzeGamePlies,
+  attachExplorerStats,
   buildPlyTimeline,
   buildReportSummary,
   formatReviewBriefForCoach,
@@ -1904,9 +1905,12 @@ export default function App() {
           controller.signal,
         )
 
-        const summary = buildReportSummary(tagged)
+        setReviewProgress('Reading opener stats…')
+        const withStats = await attachExplorerStats(tagged, controller.signal)
+
+        const summary = buildReportSummary(withStats)
         const report: AnalysisReport = {
-          plies: tagged,
+          plies: withStats,
           summary,
           whiteName,
           blackName,
@@ -1941,7 +1945,7 @@ export default function App() {
               ),
               playerElo:
                 color === 'white' ? session.whiteElo : session.blackElo,
-              plies: pliesForCoachApi(tagged),
+              plies: pliesForCoachApi(withStats),
             }),
           })
           const explanation = await readCoachExplanation(res)

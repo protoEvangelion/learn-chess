@@ -4,6 +4,8 @@ import { isPawn } from '@logic/pieces/pawn'
 import type { HistoryItem } from '@/state/game'
 import { boardToFen, positionToSquare } from '@/lib/fenBridge'
 import { mateLeadPawns } from '@/lib/evalGraphScale'
+import { loadExplorerRatings, loadExplorerSpeeds } from '@/lib/explorerFilterPrefs'
+import { fetchLichessExplorer } from '@/lib/lichessExplorer'
 import {
   REVIEW_ANALYSIS,
   stockfishOpponent,
@@ -62,12 +64,26 @@ const TAG_ACCURACY: Record<MoveQualityTag, number> = {
 const THEORY_PLY_CAP = 8
 const THEORY_MAX_LOSS_CP = 15
 
+/** Opener numbers for the move that was actually played. */
+export type PlyExplorerStats = {
+  /** Share of games in this position that played this move (0–1). */
+  playRate: number
+  /** Win rate for the side that played it (0–1). */
+  winRate: number
+  /** Games in the opener that played this move. */
+  games: number
+}
+
 export type ReviewPly = {
   ply: number
+  /** Full-move number (1 for both 1.e4 and 1…e5). */
+  moveNo: number
   fen: string
   san: string
   by: 'player' | 'opponent'
   color: Color
+  /** Opener popularity / win rate for this exact move. */
+  stats?: PlyExplorerStats
   tag?: MoveQualityTag
   /** Centipawn loss for the side that moved (0 = best). */
   lossCp?: number
@@ -210,12 +226,72 @@ export function buildPlyTimeline(
     const fen = boardToFen(item.board, turn, history.slice(0, i))
     return {
       ply: i + 1,
+      moveNo: Math.floor(i / 2) + 1,
       fen,
       san: sanForMove(fen, item),
       by: turn === playerColor ? 'player' : 'opponent',
       color: turn,
     }
   })
+}
+
+/**
+ * Opener popularity + win rate for every played move, using the same
+ * rating/speed filters as the Explore tab. Missing positions stay undefined
+ * (the move list shows a dash instead of inventing numbers).
+ */
+export async function attachExplorerStats(
+  plies: ReviewPly[],
+  signal?: AbortSignal,
+): Promise<ReviewPly[]> {
+  const ratings = loadExplorerRatings()
+  const speeds = loadExplorerSpeeds()
+  const out: ReviewPly[] = plies.slice()
+  // The opener only knows book positions; stop asking once it is clearly
+  // out of book (or offline) instead of firing a request per late ply.
+  const MAX_PLIES = 40
+  const MAX_MISSES = 6
+  let misses = 0
+  let next = 0
+
+  const worker = async () => {
+    while (next < Math.min(out.length, MAX_PLIES)) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      if (misses >= MAX_MISSES) return
+      const index = next++
+      const ply = out[index]
+      try {
+        const position = await fetchLichessExplorer(
+          ply.fen,
+          ratings,
+          signal ?? new AbortController().signal,
+          { speeds },
+        )
+        const move = position.moves.find((item) => item.san === ply.san)
+        const parent = position.white + position.draws + position.black
+        if (!move || parent <= 0) {
+          misses += 1
+          continue
+        }
+        const games = move.white + move.draws + move.black
+        const wins = ply.color === 'white' ? move.white : move.black
+        out[index] = {
+          ...ply,
+          stats: {
+            playRate: games / parent,
+            winRate: games > 0 ? wins / games : 0,
+            games,
+          },
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') throw err
+        misses += 1
+      }
+    }
+  }
+
+  await Promise.all([worker(), worker(), worker(), worker()])
+  return out
 }
 
 async function evalFen(
@@ -368,6 +444,7 @@ export async function analyzePlayerPlies(
       ? p
       : {
           ply: p.ply,
+          moveNo: p.moveNo,
           fen: p.fen,
           san: p.san,
           by: p.by,
@@ -376,26 +453,40 @@ export async function analyzePlayerPlies(
   )
 }
 
-/** Map full report plies to coach API shape (collapse tags). */
+/**
+ * Map full report plies to coach API shape. Both sides keep their tag and
+ * engine move so the coach can talk about the whole move order, not just
+ * the human's plies.
+ */
 export function pliesForCoachApi(plies: ReviewPly[]): Array<{
   ply: number
+  moveNo: number
   fen: string
   san: string
   by: 'player' | 'opponent'
-  tag?: CoachMoveQualityTag
+  color: Color
+  tag?: MoveQualityTag
   playedEval?: string
   bestSan?: string
   bestEval?: string
+  winRate?: number
+  playRate?: number
+  games?: number
 }> {
   return plies.map((p) => ({
     ply: p.ply,
+    moveNo: p.moveNo,
     fen: p.fen,
     san: p.san,
     by: p.by,
-    tag: p.by === 'player' ? toCoachTag(p.tag) : undefined,
-    playedEval: p.by === 'player' ? p.playedEval : undefined,
-    bestSan: p.by === 'player' ? p.bestSan : undefined,
-    bestEval: p.by === 'player' ? p.bestEval : undefined,
+    color: p.color,
+    tag: p.tag,
+    playedEval: p.playedEval,
+    bestSan: p.bestSan,
+    bestEval: p.bestEval,
+    winRate: p.stats?.winRate,
+    playRate: p.stats?.playRate,
+    games: p.stats?.games,
   }))
 }
 
@@ -410,6 +501,27 @@ export function formatReviewBriefForCoach(report: AnalysisReport): string {
     report.summary.blackAccuracy != null
       ? `${report.summary.blackAccuracy}%`
       : 'n/a'
+  const pct = (value: number | undefined) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? `${(value * 100).toFixed(1)}%`
+      : null
+
+  const moveLine = (p: (typeof report.plies)[number]) => {
+    const who = p.by === 'player' ? 'YOU' : 'OPPONENT'
+    const tag = p.tag ? ` [${p.tag}]` : ''
+    const alt =
+      p.bestSan && p.bestSan !== p.san ? ` engine ${p.bestSan}` : ''
+    const played = pct(p.stats?.playRate)
+    const wins = pct(p.stats?.winRate)
+    const stats =
+      played && wins
+        ? ` played ${played}, wins ${wins}`
+        : played
+          ? ` played ${played}`
+          : ''
+    return `${p.moveNo}${p.color === 'black' ? '...' : '.'} ${who} ${p.san}${tag}${alt}${stats}`
+  }
+
   const notable = report.plies
     .filter(
       (p) =>
@@ -421,10 +533,9 @@ export function formatReviewBriefForCoach(report: AnalysisReport): string {
           p.tag === 'blunder'),
     )
     .slice(0, 20)
-    .map((p) => {
-      const alt = p.bestSan ? ` (engine ${p.bestSan})` : ''
-      return `Ply ${p.ply}: YOU ${p.san} [${p.tag}]${alt}`
-    })
+    .map(moveLine)
+
+  const moveOrder = report.plies.map(moveLine)
 
   return [
     `You played as ${you}.`,
@@ -433,5 +544,10 @@ export function formatReviewBriefForCoach(report: AnalysisReport): string {
     notable.length
       ? `Notable player moves:\n${notable.join('\n')}`
       : 'No tagged player moves to highlight.',
-  ].join('\n')
+    moveOrder.length
+      ? `Full move order (move, who, SAN, tag, engine best, opener play/win rate):\n${moveOrder.join('\n')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
 }

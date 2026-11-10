@@ -2319,6 +2319,18 @@ body.is-review-coach-resizing canvas {
   min-height: 1.7rem;
 }
 
+.analysis-move-win {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 650;
+  color: var(--sw-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-move-win + .analysis-move-engine {
+  margin-left: 0.35rem;
+}
+
 .analysis-move-engine {
   margin-left: auto;
   font-size: 0.72rem;

@@ -99,13 +99,23 @@ export type CoachChatRequest = {
 
 export type ReviewPlyPayload = {
   ply: number
+  /** Full-move number, so 1.e4 and 1…e5 share move 1. */
+  moveNo?: number
   fen: string
   san: string
   by: 'player' | 'opponent'
-  tag?: 'best' | 'inaccuracy' | 'mistake' | 'blunder'
+  color?: 'white' | 'black'
+  /** Full visual tag (best / excellent / okay / inaccuracy / mistake / blunder / theory). */
+  tag?: string
   playedEval?: string
   bestSan?: string
   bestEval?: string
+  /** Opener share of games that played this move (0–1). */
+  playRate?: number
+  /** Opener win rate for the side that played it (0–1). */
+  winRate?: number
+  /** Opener games behind those numbers. */
+  games?: number
 }
 
 export type ReviewRequest = {
@@ -459,28 +469,47 @@ async function reviewOpeningFacts(body: ReviewRequest): Promise<string> {
   ].join('\n')
 }
 
+function pct(value: number | undefined): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return `${(value * 100).toFixed(1)}%`
+}
+
 export function buildReviewPrompt(body: ReviewRequest, openingFacts: string): string {
   const you = body.playerColor === 'white' ? 'White' : 'Black'
   const plyLines = body.plies.map((p) => {
     const who = p.by === 'player' ? `YOU (${you})` : 'OPPONENT'
+    const moveNo = p.moveNo ?? Math.ceil(p.ply / 2)
     const tag = p.tag ? ` [${p.tag}]` : ''
     const best =
-      p.bestSan && p.tag && p.tag !== 'best'
-        ? ` best was ${p.bestSan} (${p.bestEval ?? '—'})`
+      p.bestSan && p.bestSan !== p.san
+        ? ` engine best ${p.bestSan}${p.bestEval ? ` (${p.bestEval})` : ''}`
         : ''
     const evals = p.playedEval ? ` eval ${p.playedEval}` : ''
-    return `${p.ply}. ${who} ${p.san}${tag}${evals}${best} | ${p.fen}`
+    const played = pct(p.playRate)
+    const wins = pct(p.winRate)
+    const games =
+      typeof p.games === 'number' && Number.isFinite(p.games)
+        ? ` of ${p.games} games`
+        : ''
+    const stats =
+      played && wins
+        ? ` opener: played ${played}${games}, wins ${wins}`
+        : played
+          ? ` opener: played ${played}${games}`
+          : ''
+    return `${moveNo}${p.color === 'black' ? '...' : '.'} ${who} ${p.san}${tag}${evals}${best}${stats} | ${p.fen}`
   })
 
   return [
     'You are a friendly chess coach helping a beginner–club player review a finished game.',
     reviewCoachVoice(body.playerColor),
     `You are coaching ${you} (the human). “You” means ${you} for this whole review. Describe the opponent as “they”. Do not refuse to say what they did.`,
-    'The move list and FENs below are ground truth for YOU only — do not invent what happened.',
-    'CRITICAL — the player cannot replay move numbers yet. Do NOT cite move numbers, SAN, or UCI',
-    '(no “7.Qe1”, no “1.b3”, no “Nxg6”). Talk in ideas a beginner can picture on the board:',
+    'The move list, tags, engine moves, opener win rates, and FENs below are ground truth — do not invent what happened.',
+    'Each row is one played move: move number, who, SAN, quality tag, eval, engine best, and opener stats.',
+    'You may cite a move number and SAN from that list (for example “7.Qe1” or “the knight on g6”).',
+    'Never invent a move, a tag, or a win rate that is not in the list. If a row has no opener stats, do not quote a percentage for it.',
+    'Talk in ideas a beginner can picture on the board too:',
     'pieces, files, king safety, pawn weaknesses, development, checks, captures, hanging pieces.',
-    'You may say “early on”, “later”, “the finishing blow” — not ply indices.',
     'Write at most 3 short sentences. Never write a fourth. Plain English. No markdown headings or bullet lists.',
     'Sentence 1, say this first: the single biggest room for improvement, and the habit that builds it.',
     'Use the worst tagged mistake or blunder after the opening. Describe what went wrong and the safer habit (checks, captures, hanging pieces, king safety).',
@@ -499,7 +528,7 @@ export function buildReviewPrompt(body: ReviewRequest, openingFacts: string): st
     `You played ${you}.`,
     `Plies: ${body.plies.length}`,
     '',
-    '--- Game (ply, who, SAN, quality tag, evals, FEN before the move) ---',
+    '--- Game (move no, who, SAN, quality tag, eval, engine best, opener play/win rate, FEN before the move) ---',
     ...plyLines,
   ].join('\n')
 }
