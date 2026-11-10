@@ -149,6 +149,7 @@ const COACH_RULES = [
   'Reply with ONLY a single JSON object (no markdown fences, no other text):',
   '{"explanation":"..."}',
   'explanation: 4–8 short sentences, plain English, no markdown headings or bullet lists.',
+  'Do not think out loud inside the JSON. Never write “we need”, “let’s check”, “actually”, or “wait”.',
 ].join('\n')
 
 /** Follow-up Q&A about the position, tips, and recommended move. */
@@ -165,6 +166,8 @@ const COACH_CHAT_RULES = [
   'When he asks what to play on this move, prefer the ENGINE BEST MOVE if that move is in LEGAL MOVES.',
   'Plain English, 2–5 short sentences. No JSON, no markdown fences, no bullet lists unless the player asks for a list.',
   'Do not greet or restate the full tips unless asked.',
+  'Do not think out loud. Never write “we need”, “let’s check”, “actually”, “wait”, or a question to yourself.',
+  'Verify the board silently, then write only the finished answer.',
 ].join('\n')
 
 /** Ground-truth facts so follow-ups don’t rely on stale chat memory. */
@@ -518,6 +521,7 @@ export function buildReviewPrompt(body: ReviewRequest, openingFacts: string): st
     'If the facts say the opponent wins more often, say that in the same sentence and move on. Do not explain why the opening is dubious.',
     'Do not critique the opening. Do not spend sentence 2 on development, the center, or king safety.',
     'Sentence 3 only if the habit still needs one plainer line. Otherwise stop after sentence 2.',
+    'Do not think out loud. Never write “we need”, “let’s check”, “actually”, or “wait”.',
     'Reply with ONLY a single JSON object (no markdown fences): {"explanation":"..."}',
     '',
     openingFacts,

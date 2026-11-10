@@ -18,6 +18,101 @@ function deltaText(part: { text?: unknown; delta?: unknown }): string {
   return ''
 }
 
+/**
+ * Some providers stream their thinking as ordinary text. These openers are
+ * the model talking to itself, not an answer, so they never reach the player.
+ */
+const DELIBERATION_START =
+  /^(we need|we must|we should|let'?s|let us|need (to )?check|need check|actually\b|wait\b|hmm\b|okay,? so\b|i need|i should|reconstruct|check\b|so the answer|first,? (we|i)\b)/i
+
+/** Self-talk that can appear mid-sentence, not just at the start. */
+const DELIBERATION_ANYWHERE =
+  /\b(actually|need check|let'?s reconstruct|let us reconstruct|reconstruct exact|wait,? (no|the)|hmm)\b/i
+
+function isDeliberation(sentence: string): boolean {
+  const text = sentence.trim()
+  if (!text) return true
+  return DELIBERATION_START.test(text) || DELIBERATION_ANYWHERE.test(text)
+}
+
+/**
+ * Emit whole sentences, dropping self-talk that leaks before the real answer.
+ * Buffering one sentence keeps a leaked "Actually…" from flashing on screen.
+ * JSON replies (the explain card) pass through untouched — filtering would
+ * corrupt the object the client parses.
+ */
+export function createAnswerFilter(onDelta: (text: string) => void) {
+  let buffer = ''
+  let answer = ''
+  let mode: 'unknown' | 'json' | 'text' = 'unknown'
+
+  const emit = (sentence: string) => {
+    const text = sentence.trim()
+    if (!text) return
+    // Self-talk can appear anywhere ("Actually f4 is not controlled… Need
+    // check."), so drop those sentences wherever they land.
+    if (isDeliberation(text)) return
+    answer += sentence
+    onDelta(sentence)
+  }
+
+  const drain = (final: boolean) => {
+    for (;;) {
+      // A JSON reply must never be split on the periods inside its string.
+      if (buffer.trimStart().startsWith('{')) {
+        mode = 'json'
+        answer += buffer
+        onDelta(buffer)
+        buffer = ''
+        return
+      }
+      const match = /[.!?](?=\s|$)/.exec(buffer)
+      if (!match) break
+      const end = match.index + 1
+      const sentence = buffer.slice(0, end)
+      buffer = buffer.slice(end).replace(/^\s+/, '')
+      emit(sentence)
+    }
+    if (final && buffer.trim()) {
+      emit(buffer)
+      buffer = ''
+    }
+  }
+
+  return {
+    push(text: string) {
+      if (mode === 'unknown') {
+        const head = (buffer + text).trimStart()
+        if (!head) {
+          buffer += text
+          return
+        }
+        mode = head.startsWith('{') ? 'json' : 'text'
+        if (mode === 'json') {
+          // Flush anything buffered before the object so the JSON stays whole.
+          const chunk = buffer + text
+          buffer = ''
+          answer += chunk
+          onDelta(chunk)
+          return
+        }
+      }
+      if (mode === 'json') {
+        answer += text
+        onDelta(text)
+        return
+      }
+      buffer += text
+      drain(false)
+    },
+    end(): string {
+      if (mode === 'json') return answer.trim()
+      drain(true)
+      return answer.trim()
+    },
+  }
+}
+
 function stripAnsi(value: string): string {
   let out = ''
   for (let i = 0; i < value.length; i += 1) {
@@ -65,23 +160,25 @@ async function readCoachAnswer(
     reasoning: COACH_REASONING,
   })
 
-  let assembled = ''
+  const filter = createAnswerFilter(onDelta)
   for await (const part of result.stream) {
     if (part.type === 'error') throw part.error
+    // Reasoning parts are the model's private scratchpad — never forward them.
     if (part.type !== 'text-delta') continue
     const text = deltaText(part)
     if (!text) continue
-    assembled += text
-    onDelta(text)
+    filter.push(text)
   }
-  if (!assembled.trim()) {
+  let assembled = filter.end()
+  if (!assembled) {
     const full = (await result.text).trim()
     if (full) {
-      assembled = full
-      onDelta(full)
+      const fallback = createAnswerFilter(onDelta)
+      fallback.push(full)
+      assembled = fallback.end()
     }
   }
-  return assembled.trim()
+  return assembled
 }
 
 export function streamCoachAsk(
