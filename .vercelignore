@@ -1,0 +1,6 @@
+# Local explorer build artifacts (multi-GB) — never upload to Vercel.
+.data
+explorer-rs/target
+dist
+node_modules
+*.log
