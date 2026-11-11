@@ -3022,6 +3022,7 @@ export default function App() {
                 !!drillPreview
               }
               playBothSides={playBothSides}
+              pieceYaw={pieceYaw}
               validateMove={
                 drillStatus === 'playing' ? validateDrillMove : undefined
               }

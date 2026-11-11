@@ -50,12 +50,21 @@ export const PieceModel: FC<{
   kind: PieceKind
   pieceSet: PieceSetTheme
   color?: string
-}> = ({ kind, pieceSet, color = 'white' }) => {
+  /** Spin the flat sprite to face the active player (two-player auto flip). */
+  pieceYaw?: number
+}> = ({ kind, pieceSet, color = 'white', pieceYaw = 0 }) => {
   if (pieceSet.kind === 'classic') {
     return <ClassicPiece kind={kind} />
   }
   if (pieceSet.kind === 'flat') {
-    return <FlatPiece kind={kind} pieceSet={pieceSet} color={color} />
+    return (
+      <FlatPiece
+        kind={kind}
+        pieceSet={pieceSet}
+        color={color}
+        pieceYaw={pieceYaw}
+      />
+    )
   }
   if (pieceSet.kind === 'textured') {
     return <TexturedPiece kind={kind} pieceSet={pieceSet} color={color} />
@@ -67,7 +76,8 @@ const FlatPiece: FC<{
   kind: PieceKind
   pieceSet: PieceSetTheme
   color: string
-}> = ({ kind, pieceSet, color }) => {
+  pieceYaw?: number
+}> = ({ kind, pieceSet, color, pieceYaw = 0 }) => {
   const path = resolvePath(pieceSet.paths!, kind, color)
   const texture = useTexture(path)
   texture.colorSpace = THREE.SRGBColorSpace
@@ -97,6 +107,7 @@ const FlatPiece: FC<{
       <Billboard follow lockX={false} lockY={false} lockZ={false}>
         <mesh
           position={[0, size * 0.5, 0]}
+          rotation={[0, 0, pieceYaw]}
           castShadow={false}
           receiveShadow={false}
         >

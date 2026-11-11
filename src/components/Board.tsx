@@ -509,6 +509,7 @@ export const BoardComponent: FC<{
                     kind={tile.piece.type}
                     pieceSet={pieceSet}
                     color={tile.piece.color}
+                    pieceYaw={pieceYaw}
                   />
                 </MeshWrapper>
               )}

@@ -60,6 +60,8 @@ export const Board2D: FC<{
   playBothSides?: boolean
   validateMove?: (move: Move) => boolean
   highlightMove?: { from: Position; to: Position } | null
+  /** Turn the piece sprites to face the active player (two-player auto flip). */
+  pieceYaw?: number
 }> = ({
   selected,
   setSelected,
@@ -81,6 +83,7 @@ export const Board2D: FC<{
   playBothSides = false,
   validateMove,
   highlightMove,
+  pieceYaw = 0,
 }) => {
   const play = useBoardPlay({
     selected,
@@ -334,6 +337,11 @@ export const Board2D: FC<{
                     src={spriteSrc(piece.type, piece.color)}
                     alt=""
                     draggable={false}
+                    style={
+                      pieceYaw
+                        ? { transform: `rotate(${pieceYaw}rad)` }
+                        : undefined
+                    }
                   />
                 )}
                 {preview?.captureTrade && (
@@ -360,6 +368,7 @@ export const Board2D: FC<{
             top: ghost.y,
             width: ghost.size,
             height: ghost.size,
+            transform: pieceYaw ? `rotate(${pieceYaw}rad)` : undefined,
           }}
         />
       )}
