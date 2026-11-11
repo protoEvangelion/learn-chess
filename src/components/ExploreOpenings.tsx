@@ -380,6 +380,14 @@ async function loadChildRows(
       children: [statusRow(row.id, 'No further moves in these filters.')],
     }
   }
+  // Share is against every game in the position after this move, not against
+  // the parent move's own count: transpositions can reach the same position
+  // by another move order, which made the old denominator too small.
+  const parentGames = counts(
+    position.white,
+    position.draws,
+    position.black,
+  ).games
   return {
     children: moves.map((move, index) => {
       const play = row.play ? `${row.play},${move.uci}` : move.uci
@@ -399,7 +407,7 @@ async function loadChildRows(
         engineDepth: move.engineDepth,
         engineMate: move.engineMate,
         games: stats.games,
-        parentGames: row.games,
+        parentGames,
         winRate: stats.winRate,
         play,
         path: [...row.path, move.san],
@@ -481,16 +489,19 @@ function SortHeader({
   label,
   sorted,
   onToggle,
+  title,
 }: {
   label: string
   sorted: false | 'asc' | 'desc'
   onToggle?: (event: unknown) => void
+  title?: string
 }) {
   return (
     <button
       type="button"
       className="inline-flex max-w-full items-center gap-0.5 overflow-hidden text-xs font-medium"
       onClick={onToggle}
+      title={title}
     >
       {label}
       {sorted === 'asc' ? '↑' : sorted === 'desc' ? '↓' : null}
@@ -780,6 +791,7 @@ function MoveTable({
           header: ({ header }) => (
             <SortHeader
               label="Win"
+              title="White's win rate"
               sorted={header.column.getIsSorted()}
               onToggle={header.column.getToggleSortingHandler()}
             />
@@ -797,6 +809,7 @@ function MoveTable({
           header: ({ header }) => (
             <SortHeader
               label="Engine"
+              title="White's edge after the move. Lower is better for Black."
               sorted={header.column.getIsSorted()}
               onToggle={header.column.getToggleSortingHandler()}
             />
