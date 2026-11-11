@@ -23,6 +23,7 @@ import {
   STRENGTH_LEVELS,
   type StrengthLevel,
 } from '@/lib/stockfishOpponent'
+import type { GameMode } from '@/lib/playMode'
 import { AnimatedSwitch } from '@/components/ui/animated-switch'
 import { PixelButton } from '@/components/ui/PixelButton'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
@@ -38,6 +39,7 @@ type Props = {
   volume: number
   musicTrackId: MusicTrackId
   strength: StrengthLevel
+  gameMode: GameMode
   fen: string
   showBestMove: boolean
   bestMoveDelaySec: number
@@ -51,6 +53,7 @@ type Props = {
   onVolumeChange: (volume: number) => void
   onMusicTrackChange: (id: MusicTrackId) => void
   onStrengthChange: (level: StrengthLevel) => void
+  onGameModeChange: (mode: GameMode) => void
   onFenChange: (fen: string) => void
   onFenCommit: () => void
   onDumpView: () => void
@@ -125,6 +128,7 @@ export const SettingsDrawer: FC<Props> = ({
   volume,
   musicTrackId,
   strength,
+  gameMode,
   fen,
   showBestMove,
   bestMoveDelaySec,
@@ -138,6 +142,7 @@ export const SettingsDrawer: FC<Props> = ({
   onVolumeChange,
   onMusicTrackChange,
   onStrengthChange,
+  onGameModeChange,
   onFenChange,
   onFenCommit,
   onDumpView,
@@ -207,28 +212,66 @@ export const SettingsDrawer: FC<Props> = ({
         </section>
 
         <section className="settings-section">
-          <h3>Opponent</h3>
-          <label className="slider-label" htmlFor="settings-strength">
-            Strength — level <strong>{strength}</strong>
-            <span className="elo-hint">({levelCfg.eloHint} Elo)</span>
-          </label>
-          <input
-            id="settings-strength"
-            className="slider"
-            type="range"
-            min={1}
-            max={8}
-            step={1}
-            value={strength}
-            onChange={(e) =>
-              onStrengthChange(Number(e.target.value) as StrengthLevel)
-            }
-          />
-          <div className="slider-ends">
-            <span>1 weak</span>
-            <span>8 strong</span>
+          <h3>Mode</h3>
+          <div
+            className="board-view-switch"
+            role="radiogroup"
+            aria-label="Game mode"
+          >
+            {(
+              [
+                { id: 'computer', label: 'vs Computer' },
+                { id: 'pvp', label: 'Two players' },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                role="radio"
+                aria-checked={gameMode === option.id}
+                className={`board-view-option${gameMode === option.id ? ' active' : ''}`}
+                onClick={() => onGameModeChange(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
-          <div className="settings-row" style={{ marginTop: '0.85rem' }}>
+          <p className="settings-import-status">
+            {gameMode === 'pvp'
+              ? 'Two people share the board. Both colors are played by hand.'
+              : 'You play one color and Stockfish plays the other.'}
+          </p>
+        </section>
+
+        {gameMode === 'computer' && (
+          <section className="settings-section">
+            <h3>Opponent</h3>
+            <label className="slider-label" htmlFor="settings-strength">
+              Strength — level <strong>{strength}</strong>
+              <span className="elo-hint">({levelCfg.eloHint} Elo)</span>
+            </label>
+            <input
+              id="settings-strength"
+              className="slider"
+              type="range"
+              min={1}
+              max={8}
+              step={1}
+              value={strength}
+              onChange={(e) =>
+                onStrengthChange(Number(e.target.value) as StrengthLevel)
+              }
+            />
+            <div className="slider-ends">
+              <span>1 weak</span>
+              <span>8 strong</span>
+            </div>
+          </section>
+        )}
+
+        <section className="settings-section">
+          <h3>Hints</h3>
+          <div className="settings-row">
             <span id="settings-move-indicators-label">Show move indicators</span>
             <AnimatedSwitch
               checked={showMoveIndicators}

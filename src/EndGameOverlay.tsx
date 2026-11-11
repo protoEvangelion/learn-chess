@@ -14,6 +14,9 @@ const MESSAGES: Record<Outcome, string> = {
 
 type Props = {
   outcome: Outcome
+  /** Two people share the board, so name the winner instead of “you”. */
+  pvp?: boolean
+  winner?: 'white' | 'black' | null
   onNewGame: () => void | Promise<void>
   onDismiss: () => void
   onReviewGame?: () => void
@@ -23,8 +26,21 @@ type Props = {
   canReview?: boolean
 }
 
+function titleFor(
+  outcome: Outcome,
+  pvp: boolean,
+  winner: 'white' | 'black' | null,
+): string {
+  if (!pvp) return MESSAGES[outcome]
+  if (outcome === 'draw') return 'Draw'
+  if (outcome === 'over' || !winner) return 'Game over'
+  return winner === 'white' ? 'White wins' : 'Black wins'
+}
+
 function EndGameCard({
   outcome,
+  pvp = false,
+  winner = null,
   onNewGame,
   onDismiss,
   onReviewGame,
@@ -47,7 +63,7 @@ function EndGameCard({
         staggerDelay={40}
         className="endgame-title"
       >
-        {MESSAGES[outcome]}
+        {titleFor(outcome, pvp, winner)}
       </PixelHeading>
       {reviewProgress && (
         <p className="endgame-review-status">{reviewProgress}</p>
@@ -72,6 +88,8 @@ function EndGameCard({
 
 export function EndGameOverlay({
   outcome,
+  pvp = false,
+  winner = null,
   onNewGame,
   onDismiss,
   onReviewGame,
@@ -85,6 +103,8 @@ export function EndGameOverlay({
   const card = (
     <EndGameCard
       outcome={outcome}
+      pvp={pvp}
+      winner={winner}
       onNewGame={() => {
         if (reviewBusy) return
         void onNewGame()
@@ -104,7 +124,7 @@ export function EndGameOverlay({
       className="endgame-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label={MESSAGES[outcome]}
+      aria-label={titleFor(outcome, pvp, winner)}
     >
       {confetti && (
         <div className="confetti" aria-hidden="true">

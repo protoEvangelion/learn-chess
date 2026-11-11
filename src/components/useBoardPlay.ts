@@ -98,6 +98,9 @@ export function useBoardPlay({
     highlightMove !== undefined
       ? highlightMove
       : (() => {
+          // Two-player / free play: both colors are yours, so mark the last
+          // move whoever made it. Against the computer, mark only its reply.
+          if (playBothSides) return history[history.length - 1] ?? null
           for (let i = history.length - 1; i >= 0; i--) {
             if (history[i].piece.color !== playerColor) return history[i]
           }

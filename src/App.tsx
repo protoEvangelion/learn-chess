@@ -151,11 +151,13 @@ import {
   computerShouldReply,
   pgnLoadsAsPlayableLine,
   userMovesEitherSide,
+  type GameMode,
 } from '@/lib/playMode'
 import './App.css'
 
 const STRENGTH_KEY = 'chess-3d:strength'
 const COLOR_KEY = 'chess-3d:playerColor'
+const GAME_MODE_KEY = 'chess-3d:gameMode'
 const CHESSCOM_USER_KEY = 'chess-3d:chessComUsername'
 
 function loadStrength(): StrengthLevel {
@@ -166,6 +168,10 @@ function loadStrength(): StrengthLevel {
 
 function loadPlayerColor(): Color {
   return localStorage.getItem(COLOR_KEY) === 'black' ? 'black' : 'white'
+}
+
+function loadGameMode(): GameMode {
+  return localStorage.getItem(GAME_MODE_KEY) === 'pvp' ? 'pvp' : 'computer'
 }
 
 function loadChessComUsername(): string {
@@ -440,6 +446,7 @@ export default function App() {
     boot.playerColor ?? loadPlayerColor(),
   )
   const [strength, setStrength] = useState<StrengthLevel>(loadStrength)
+  const [gameMode, setGameMode] = useState<GameMode>(loadGameMode)
   const [analysis, setAnalysis] = useState<{
     fen: string
     lines: BestMoveResult[]
@@ -927,12 +934,13 @@ export default function App() {
   const reviewing = !!reviewImport
   // Computer answers only in a live game. Browse and review leave the move to you.
   const computerReplies = computerShouldReply({
+    mode: gameMode,
     panel,
     reviewing,
     drillActive,
     gameOver: !!gameOver,
   })
-  const playBothSides = userMovesEitherSide({ panel, reviewing })
+  const playBothSides = userMovesEitherSide({ mode: gameMode, panel, reviewing })
 
   // Best-move search runs for whoever is to move. It uses its own Stockfish
   // instance so the opponent's reply is not stuck behind this deeper search.
@@ -944,7 +952,8 @@ export default function App() {
       setAnalysisStatus('idle')
       return
     }
-    if (turn !== playerColor && !showBestMove) {
+    // Two-player games have no “your turn”: search for both colors.
+    if (!playBothSides && turn !== playerColor && !showBestMove) {
       setAnalysis(null)
       setMoveOptionIndex(0)
       setAnalysisStatus('idle')
@@ -985,7 +994,16 @@ export default function App() {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [fen, terminalOver, turn, playerColor, drillOpen, reviewImport, showBestMove])
+  }, [
+    fen,
+    terminalOver,
+    turn,
+    playerColor,
+    playBothSides,
+    drillOpen,
+    reviewImport,
+    showBestMove,
+  ])
 
   // Wipe position-specific tips when the board changes (keep chat).
   // Imported review scrubbing / coach review mode must keep the recap.
@@ -1085,6 +1103,15 @@ export default function App() {
     showBestMove,
     computerReplies,
   ])
+
+  // Switching to two players mid-game must drop any queued engine reply.
+  useEffect(() => {
+    if (gameMode !== 'pvp') return
+    heldEngineMoveRef.current = null
+    setHeldEngineMove(null)
+    setPendingEngineMove(null)
+    setOpponentThinking(false)
+  }, [gameMode])
 
   // Play the held reply once the green recommendation is on the board.
   // An explorer engine move counts. Stockfish is only the fallback.
@@ -2217,7 +2244,7 @@ export default function App() {
     reviewGame,
   ])
 
-  async function reset(color: Color = playerColor) {
+  async function reset(color: Color = playerColor, mode: GameMode = gameMode) {
     let id = gameId
     try {
       id = await mintGameId()
@@ -2227,7 +2254,9 @@ export default function App() {
 
     setPlayerColor(color)
     localStorage.setItem(COLOR_KEY, color)
-    startAsBlackRef.current = color === 'black'
+    setGameMode(mode)
+    localStorage.setItem(GAME_MODE_KEY, mode)
+    startAsBlackRef.current = mode === 'computer' && color === 'black'
     skipEngineOnce.current = false
     syncingFromUrlRef.current = true
     urlReadyRef.current = true
@@ -2278,6 +2307,11 @@ export default function App() {
   function onStrengthChange(level: StrengthLevel) {
     setStrength(level)
     localStorage.setItem(STRENGTH_KEY, String(level))
+  }
+
+  function onGameModeChange(mode: GameMode) {
+    setGameMode(mode)
+    localStorage.setItem(GAME_MODE_KEY, mode)
   }
 
   function stepLiveLine(index: number) {
@@ -2473,6 +2507,8 @@ export default function App() {
       {endOutcome && !endgameDismissed && !drillOpen && (
         <EndGameOverlay
           outcome={endOutcome}
+          pvp={gameMode === 'pvp'}
+          winner={gameOver?.winner ?? null}
           onNewGame={() => setNewGameOpen(true)}
           onDismiss={() => setEndgameDismissed(true)}
           onReviewGame={() => void reviewGame()}
@@ -2485,10 +2521,11 @@ export default function App() {
 
       <NewGameDialog
         open={newGameOpen}
+        mode={gameMode}
         onClose={() => setNewGameOpen(false)}
-        onPick={(color) => {
+        onPick={(color, mode) => {
           setNewGameOpen(false)
-          void reset(color)
+          void reset(color, mode)
         }}
       />
 
@@ -2503,6 +2540,7 @@ export default function App() {
         volume={volume}
         musicTrackId={musicTrackId}
         strength={strength}
+        gameMode={gameMode}
         fen={fenDraft}
         showBestMove={showBestMove}
         bestMoveDelaySec={bestMoveDelaySec}
@@ -2516,6 +2554,7 @@ export default function App() {
         onVolumeChange={setVolumeState}
         onMusicTrackChange={setMusicTrackId}
         onStrengthChange={onStrengthChange}
+        onGameModeChange={onGameModeChange}
         onFenChange={onFenChange}
         onFenCommit={onFenCommit}
         onDumpView={dumpView}

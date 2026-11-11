@@ -3905,6 +3905,14 @@ body.is-review-coach-resizing canvas {
   font-weight: 650;
 }
 
+.new-game-mode {
+  margin: 0.85rem 0 1.1rem;
+}
+
+.new-game-card h2 + .new-game-mode + h2 {
+  margin-top: 0;
+}
+
 .new-game-sides {
   display: grid;
   grid-template-columns: 1fr 1fr;
