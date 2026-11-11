@@ -115,11 +115,6 @@ import {
   type AutoFlipMode,
 } from '@/lib/themes'
 import { unlockSfx } from '@/lib/sfx'
-import {
-  initMusicFromStorage,
-  loadMusicTrackId,
-  type MusicTrackId,
-} from '@/lib/music'
 import { formatViewForThemes, getLiveView } from '@/lib/viewDebug'
 import {
   clearDefaultCamera,
@@ -519,7 +514,6 @@ export default function App() {
   const [roomId, setRoomId] = useState(loadRoomId)
   const [muted, setMutedState] = useState(loadMuted)
   const [volume, setVolumeState] = useState(loadVolume)
-  const [musicTrackId, setMusicTrackId] = useState<MusicTrackId>(loadMusicTrackId)
   const [showBestMove, setShowBestMove] = useState(loadShowBestMove)
   const showBestMoveRef = useRef(showBestMove)
   showBestMoveRef.current = showBestMove
@@ -752,10 +746,6 @@ export default function App() {
     lines.length > 0
 
   const [fenDraft, setFenDraft] = useState(fen)
-
-  useEffect(() => {
-    initMusicFromStorage()
-  }, [])
 
   useEffect(() => {
     setFenDraft(fen)
@@ -2574,7 +2564,6 @@ export default function App() {
         roomId={roomId}
         muted={muted}
         volume={volume}
-        musicTrackId={musicTrackId}
         strength={strength}
         gameMode={gameMode}
         autoFlip={autoFlip}
@@ -2589,7 +2578,6 @@ export default function App() {
         onRoomChange={setRoomId}
         onMutedChange={setMutedState}
         onVolumeChange={setVolumeState}
-        onMusicTrackChange={setMusicTrackId}
         onStrengthChange={onStrengthChange}
         onGameModeChange={onGameModeChange}
         onAutoFlipChange={onAutoFlipChange}

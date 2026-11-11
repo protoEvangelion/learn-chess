@@ -16,11 +16,6 @@ import {
 } from '@/lib/themes'
 import { setMuted, setVolume, unlockSfx } from '@/lib/sfx'
 import {
-  MUSIC_TRACKS,
-  type MusicTrackId,
-  setMusicTrack,
-} from '@/lib/music'
-import {
   STRENGTH_LEVELS,
   type StrengthLevel,
 } from '@/lib/stockfishOpponent'
@@ -38,7 +33,6 @@ type Props = {
   roomId: string
   muted: boolean
   volume: number
-  musicTrackId: MusicTrackId
   strength: StrengthLevel
   gameMode: GameMode
   autoFlip: AutoFlipMode
@@ -53,7 +47,6 @@ type Props = {
   onRoomChange: (id: string) => void
   onMutedChange: (muted: boolean) => void
   onVolumeChange: (volume: number) => void
-  onMusicTrackChange: (id: MusicTrackId) => void
   onStrengthChange: (level: StrengthLevel) => void
   onGameModeChange: (mode: GameMode) => void
   onAutoFlipChange: (mode: AutoFlipMode) => void
@@ -129,7 +122,6 @@ export const SettingsDrawer: FC<Props> = ({
   roomId,
   muted,
   volume,
-  musicTrackId,
   strength,
   gameMode,
   autoFlip,
@@ -144,7 +136,6 @@ export const SettingsDrawer: FC<Props> = ({
   onRoomChange,
   onMutedChange,
   onVolumeChange,
-  onMusicTrackChange,
   onStrengthChange,
   onGameModeChange,
   onAutoFlipChange,
@@ -166,7 +157,6 @@ export const SettingsDrawer: FC<Props> = ({
   if (!open) return null
 
   const levelCfg = STRENGTH_LEVELS[strength]
-  const musicCredit = MUSIC_TRACKS.find((t) => t.id === musicTrackId)?.credit
 
   return (
     <div className="settings-backdrop" role="presentation">
@@ -404,13 +394,14 @@ export const SettingsDrawer: FC<Props> = ({
         <section className="settings-section">
           <h3>Sound</h3>
           <div className="settings-row">
-            <span id="settings-mute-label">Mute</span>
+            <span id="settings-mute-label">Sound effects</span>
             <AnimatedSwitch
-              checked={muted}
+              checked={!muted}
               aria-labelledby="settings-mute-label"
               onCheckedChange={(next) => {
-                setMuted(next)
-                onMutedChange(next)
+                const nextMuted = !next
+                setMuted(nextMuted)
+                onMutedChange(nextMuted)
               }}
             />
           </div>
@@ -432,44 +423,6 @@ export const SettingsDrawer: FC<Props> = ({
               }}
             />
           </label>
-          <label className="slider-label" htmlFor="settings-music">
-            Music
-          </label>
-          <select
-            id="settings-music"
-            className="settings-select"
-            value={musicTrackId}
-            disabled={muted}
-            onChange={(e) => {
-              unlockSfx()
-              const id = e.target.value as MusicTrackId
-              setMusicTrack(id)
-              onMusicTrackChange(id)
-            }}
-          >
-            {MUSIC_TRACKS.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.id === 'off'
-                  ? 'Off'
-                  : t.tag
-                    ? `${t.name} (${t.tag})`
-                    : t.name}
-              </option>
-            ))}
-          </select>
-          {musicCredit ? (
-            <p className="settings-music-credit">
-              {musicCredit} ·{' '}
-              <a
-                href="https://incompetech.com"
-                target="_blank"
-                rel="noreferrer"
-              >
-                incompetech.com
-              </a>{' '}
-              (CC BY 3.0)
-            </p>
-          ) : null}
         </section>
 
         <section className="settings-section">
@@ -569,10 +522,6 @@ export const SettingsDrawer: FC<Props> = ({
             rel="noreferrer"
           >
             Low Poly chess set
-          </a>
-          {' · '}
-          <a href="https://incompetech.com" target="_blank" rel="noreferrer">
-            Music by Kevin MacLeod
           </a>
           {' · '}
           <a

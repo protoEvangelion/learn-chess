@@ -4723,3 +4723,83 @@ body.is-review-coach-resizing canvas {
     opacity: 0;
   }
 }
+/* Clerk gate */
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  overflow: auto;
+  background:
+    radial-gradient(120% 80% at 10% 0%, rgba(168, 85, 247, 0.18), transparent 55%),
+    radial-gradient(90% 60% at 90% 10%, rgba(45, 212, 191, 0.12), transparent 50%),
+    var(--sw-bg0);
+  color: var(--sw-text);
+}
+
+.auth-card {
+  width: min(100%, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 1.5rem;
+  border: 1px solid var(--sw-border);
+  border-radius: 14px;
+  background: var(--sw-panel);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 650;
+}
+
+.auth-card p {
+  margin: 0;
+  color: var(--sw-muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.auth-eyebrow {
+  margin: 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sw-teal);
+  font-weight: 700;
+}
+
+.auth-note {
+  color: var(--sw-muted);
+}
+
+.auth-button {
+  margin-top: 0.6rem;
+  align-self: flex-start;
+  border: 1px solid var(--sw-border);
+  border-radius: 9px;
+  padding: 0.55rem 0.9rem;
+  background: var(--sw-panel-2);
+  color: var(--sw-text);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.auth-button:hover {
+  border-color: var(--sw-teal);
+}
+
+.auth-card-signin {
+  gap: 0.6rem;
+}
+
+.auth-card-signin .cl-rootBox,
+.auth-card-signin .cl-cardBox,
+.auth-card-signin .cl-card {
+  width: 100%;
+}
