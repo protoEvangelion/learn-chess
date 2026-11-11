@@ -998,10 +998,11 @@ body,
 }
 
 .panel-resize-thumb {
-  position: absolute;
-  top: 50%;
-  left: 1px;
-  transform: translateY(-50%);
+  /* Fixed so the drawer's overflow cannot clip the half that sits outside. */
+  position: fixed;
+  top: calc(50% + var(--hud-clearance, 4.75rem) / 2);
+  left: max(0px, calc(100% - var(--coach-panel-width, 440px)));
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1426,6 +1427,19 @@ body.is-panel-resizing canvas {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* The resize handle draws the divider, so the table does not need its own. */
+.explore-with-coach .rating-band {
+  border-bottom: none;
+}
+
+.explore-with-coach .drill-coach-embed {
+  flex: 0 0 calc(var(--review-coach-fraction, 0.5) * 100%);
+  min-height: 0;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .explorer-table-scroll {

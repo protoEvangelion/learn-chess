@@ -685,6 +685,7 @@ export const AnalysisDialog: FC<Props> = ({
     loadReviewCoachFraction,
   )
   const reviewReportRef = useRef<HTMLDivElement>(null)
+  const exploreCoachRef = useRef<HTMLDivElement>(null)
   const onScrubToRef = useRef(onScrubTo)
   onScrubToRef.current = onScrubTo
   const moveRows = useMemo(
@@ -876,7 +877,15 @@ export const AnalysisDialog: FC<Props> = ({
 
         <div className="analysis-dialog-body">
           {tab === 'explore' && open ? (
-            <div className="explore-with-coach">
+            <div
+              className="explore-with-coach"
+              ref={exploreCoachRef}
+              style={
+                {
+                  '--review-coach-fraction': reviewCoachFraction,
+                } as CSSProperties
+              }
+            >
               <ExploreOpenings
                 onPlaySan={onPlaySan}
                 playedSans={playedSans}
@@ -884,22 +893,30 @@ export const AnalysisDialog: FC<Props> = ({
                 worstUci={worstUci}
               />
               {onSendCoachChat ? (
-                <div className="drill-coach-embed">
-                  <CoachPane
-                    explanation={coachExplanation}
-                    coachStatus={coachStatus}
-                    coachError={coachError}
-                    chatMessages={coachChat}
-                    chatStatus={coachChatStatus}
-                    chatError={coachChatError}
-                    onSendChat={onSendCoachChat}
-                    isPlayerTurn
-                    drillMode
-                    emptyHint=""
-                    draft={coachDraft}
-                    onDraftChange={onCoachDraftChange}
+                <>
+                  <CoachResizeHandle
+                    fraction={reviewCoachFraction}
+                    containerRef={exploreCoachRef}
+                    onFractionChange={setReviewCoachFraction}
+                    onCommit={saveReviewCoachFraction}
                   />
-                </div>
+                  <div className="drill-coach-embed">
+                    <CoachPane
+                      explanation={coachExplanation}
+                      coachStatus={coachStatus}
+                      coachError={coachError}
+                      chatMessages={coachChat}
+                      chatStatus={coachChatStatus}
+                      chatError={coachChatError}
+                      onSendChat={onSendCoachChat}
+                      isPlayerTurn
+                      drillMode
+                      emptyHint=""
+                      draft={coachDraft}
+                      onDraftChange={onCoachDraftChange}
+                    />
+                  </div>
+                </>
               ) : null}
             </div>
           ) : null}
