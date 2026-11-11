@@ -498,7 +498,9 @@ export const BoardComponent: FC<{
                         : null
                   }
                   pieceIsBeingReplaced={!!pieceIsBeingReplaced}
-                  rotationY={pieceYaw}
+                  // Flat sprites spin their own plane; rotating the wrapper
+                  // too would flip their near-edge offset.
+                  rotationY={pieceSet.kind === 'flat' ? 0 : pieceYaw}
                   finishMovingPiece={() =>
                     isBeingCastled
                       ? null
