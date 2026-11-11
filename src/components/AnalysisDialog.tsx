@@ -5,8 +5,6 @@ import {
   useState,
   type CSSProperties,
   type FC,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { PixelButton } from '@/components/ui/PixelButton'
 import {
@@ -20,6 +18,7 @@ import {
   SkipForward,
 } from 'lucide-react'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
+import { CoachResizeHandle } from '@/components/CoachResizeHandle'
 import {
   CoachPane,
   type CoachChatMessage,
@@ -63,9 +62,6 @@ import {
   seriesPawnValue,
 } from '@/lib/evalGraphScale'
 import {
-  MAX_REVIEW_COACH_FRACTION,
-  MIN_REVIEW_COACH_FRACTION,
-  clampReviewCoachFraction,
   loadReviewCoachFraction,
   saveReviewCoachFraction,
 } from '@/lib/coachHeight'
@@ -140,86 +136,6 @@ async function writeClipboard(text: string) {
   const ok = document.execCommand('copy')
   area.remove()
   return ok
-}
-
-function ReviewCoachResizeHandle({
-  fraction,
-  containerRef,
-  onFractionChange,
-  onCommit,
-}: {
-  fraction: number
-  containerRef: React.RefObject<HTMLDivElement | null>
-  onFractionChange: (fraction: number) => void
-  onCommit?: (fraction: number) => void
-}) {
-  const dragging = useRef(false)
-  const startY = useRef(0)
-  const startFraction = useRef(fraction)
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    dragging.current = true
-    startY.current = event.clientY
-    startFraction.current = fraction
-    document.body.classList.add('is-review-coach-resizing')
-    event.currentTarget.focus()
-    event.currentTarget.setPointerCapture(event.pointerId)
-  }
-
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return
-    event.preventDefault()
-    const height = containerRef.current?.getBoundingClientRect().height ?? 0
-    if (height <= 0) return
-    const delta = startY.current - event.clientY
-    onFractionChange(
-      clampReviewCoachFraction(startFraction.current + delta / height),
-    )
-  }
-
-  const stopDragging = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return
-    dragging.current = false
-    document.body.classList.remove('is-review-coach-resizing')
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-    onCommit?.(fraction)
-  }
-
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-    event.preventDefault()
-    const delta = event.key === 'ArrowUp' ? 0.05 : -0.05
-    const next = clampReviewCoachFraction(fraction + delta)
-    onFractionChange(next)
-    onCommit?.(next)
-  }
-
-  return (
-    <div
-      className="analysis-coach-resize-handle"
-      role="separator"
-      tabIndex={0}
-      aria-label="Resize coach area"
-      aria-orientation="horizontal"
-      aria-valuemin={Math.round(MIN_REVIEW_COACH_FRACTION * 100)}
-      aria-valuemax={Math.round(MAX_REVIEW_COACH_FRACTION * 100)}
-      aria-valuenow={Math.round(fraction * 100)}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={stopDragging}
-      onPointerCancel={stopDragging}
-      onLostPointerCapture={stopDragging}
-      onKeyDown={onKeyDown}
-    >
-      <span className="analysis-coach-resize-thumb" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </span>
-    </div>
-  )
 }
 
 function TagGlyph({ tag }: { tag: MoveQualityTag }) {
@@ -769,7 +685,6 @@ export const AnalysisDialog: FC<Props> = ({
     loadReviewCoachFraction,
   )
   const reviewReportRef = useRef<HTMLDivElement>(null)
-  const previousCoachQuestionCount = useRef(0)
   const onScrubToRef = useRef(onScrubTo)
   onScrubToRef.current = onScrubTo
   const moveRows = useMemo(
@@ -801,13 +716,12 @@ export const AnalysisDialog: FC<Props> = ({
     [coachChat],
   )
 
+  // A fresh review starts from the saved coach height. Dragging the handle
+  // updates the live fraction without this effect fighting it.
   useEffect(() => {
     if (coachQuestionCount === 0) {
-      previousCoachQuestionCount.current = 0
       setReviewCoachFraction(loadReviewCoachFraction())
-      return
     }
-    previousCoachQuestionCount.current = coachQuestionCount
   }, [coachQuestionCount])
 
   useEffect(() => {
@@ -1157,9 +1071,9 @@ export const AnalysisDialog: FC<Props> = ({
                 </section>
               </div>
 
-              {onSendCoachChat && coachQuestionCount > 0 && (
+              {onSendCoachChat && (
                 <>
-                  <ReviewCoachResizeHandle
+                  <CoachResizeHandle
                     fraction={reviewCoachFraction}
                     containerRef={reviewReportRef}
                     onFractionChange={setReviewCoachFraction}
@@ -1182,24 +1096,6 @@ export const AnalysisDialog: FC<Props> = ({
                     />
                   </div>
                 </>
-              )}
-              {onSendCoachChat && coachQuestionCount === 0 && (
-                <div className="analysis-coach-dock">
-                  <CoachPane
-                    explanation={coachExplanation}
-                    coachStatus={coachStatus}
-                    coachError={coachError}
-                    chatMessages={coachChat}
-                    chatStatus={coachChatStatus}
-                    chatError={coachChatError}
-                    onSendChat={onSendCoachChat}
-                    isPlayerTurn
-                    reviewMode
-                    compact
-                    draft={coachDraft}
-                    onDraftChange={onCoachDraftChange}
-                  />
-                </div>
               )}
             </div>
           )}

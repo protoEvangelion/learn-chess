@@ -18,6 +18,10 @@ import { Board2D } from '@/components/Board2D'
 import { GamePanel } from '@/components/GamePanel'
 import { NewGameDialog } from '@/components/NewGameDialog'
 import type { CoachChatMessage } from '@/components/CoachPane'
+import {
+  loadReviewCoachFraction,
+  saveReviewCoachFraction,
+} from '@/lib/coachHeight'
 import { AnalysisDialog } from '@/components/AnalysisDialog'
 import { DrillDialog } from '@/components/DrillDialog'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
@@ -468,6 +472,9 @@ export default function App() {
   )
   const [coachError, setCoachError] = useState<string | null>(null)
   const [coachChat, setCoachChat] = useState<CoachChatMessage[]>([])
+  const [gameCoachFraction, setGameCoachFraction] = useState(
+    loadReviewCoachFraction,
+  )
   const [coachDraft, setCoachDraft] = useState('')
   const [coachChatStatus, setCoachChatStatus] = useState<
     'idle' | 'loading' | 'error'
@@ -1709,6 +1716,7 @@ export default function App() {
       const analysisCoach = analysisOpen && !!analysisReport
       const exploreStudy = panel === 'explore' || panel === 'analysis'
       if (
+        gameMode !== 'pvp' &&
         !coachReviewMode &&
         !drillOpen &&
         !exploreStudy &&
@@ -1861,6 +1869,7 @@ export default function App() {
       analysisReport,
       best,
       coachChatStatus,
+      gameMode,
       coachChat,
       coachExplanation,
       coachReviewMode,
@@ -2722,6 +2731,24 @@ export default function App() {
         panelWidth={panelWidth}
         onPanelWidthChange={onPanelWidthChange}
         onPanelResizeEnd={onPanelResizeEnd}
+        coachExplanation={coachExplanation}
+        coachStatus={coachStatus}
+        coachError={coachError}
+        coachChat={coachChat}
+        coachChatStatus={coachChatStatus}
+        coachChatError={coachChatError}
+        coachDraft={coachDraft}
+        onCoachDraftChange={setCoachDraft}
+        onSendCoachChat={sendCoachChat}
+        coachChatReady={
+          gameMode === 'pvp' ||
+          turn === playerColor ||
+          !!reviewImport ||
+          coachReviewMode
+        }
+        coachFraction={gameCoachFraction}
+        onCoachFractionChange={setGameCoachFraction}
+        onCoachFractionCommit={saveReviewCoachFraction}
       />
 
       <div className="layout">

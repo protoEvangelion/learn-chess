@@ -1,7 +1,9 @@
-import { useMemo, type FC } from 'react'
+import { useMemo, useRef, type CSSProperties, type FC } from 'react'
 import { BgAnimateButton } from '@/components/ui/BgAnimateButton'
 import { PixelButton } from '@/components/ui/PixelButton'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
+import { CoachResizeHandle } from '@/components/CoachResizeHandle'
+import { CoachPane, type CoachChatMessage } from '@/components/CoachPane'
 import { buildPlyTimeline } from '@/lib/gameReview'
 import type { Color } from '@logic/pieces'
 import type { HistoryItem } from '@/state/game'
@@ -16,6 +18,20 @@ type Props = {
   panelWidth: number
   onPanelWidthChange: (width: number) => void
   onPanelResizeEnd?: (width: number) => void
+  coachExplanation: string | null
+  coachStatus: 'idle' | 'loading' | 'error'
+  coachError: string | null
+  coachChat: CoachChatMessage[]
+  coachChatStatus: 'idle' | 'loading' | 'error'
+  coachChatError: string | null
+  coachDraft: string
+  onCoachDraftChange: (value: string) => void
+  onSendCoachChat: (question: string) => void
+  /** Chat is allowed on the player's turn (or either turn in two-player). */
+  coachChatReady: boolean
+  coachFraction: number
+  onCoachFractionChange: (fraction: number) => void
+  onCoachFractionCommit: (fraction: number) => void
 }
 
 function groupSans(
@@ -48,11 +64,25 @@ export const GamePanel: FC<Props> = ({
   panelWidth,
   onPanelWidthChange,
   onPanelResizeEnd,
+  coachExplanation,
+  coachStatus,
+  coachError,
+  coachChat,
+  coachChatStatus,
+  coachChatError,
+  coachDraft,
+  onCoachDraftChange,
+  onSendCoachChat,
+  coachChatReady,
+  coachFraction,
+  onCoachFractionChange,
+  onCoachFractionCommit,
 }) => {
   const moveRows = useMemo(
     () => groupSans(history, playerColor),
     [history, playerColor],
   )
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   return (
     <div
@@ -95,7 +125,15 @@ export const GamePanel: FC<Props> = ({
           </div>
         </header>
 
-        <div className="game-dialog-body">
+        <div
+          className="game-dialog-body"
+          ref={bodyRef}
+          style={
+            {
+              '--game-coach-fraction': coachFraction,
+            } as CSSProperties
+          }
+        >
           <div className="game-moves" aria-label="Move list">
             {moveRows.length === 0 ? (
               <p className="game-moves-empty">
@@ -112,6 +150,28 @@ export const GamePanel: FC<Props> = ({
                 ))}
               </ol>
             )}
+          </div>
+
+          <CoachResizeHandle
+            fraction={coachFraction}
+            containerRef={bodyRef}
+            onFractionChange={onCoachFractionChange}
+            onCommit={onCoachFractionCommit}
+          />
+          <div className="game-coach-embed">
+            <CoachPane
+              explanation={coachExplanation}
+              coachStatus={coachStatus}
+              coachError={coachError}
+              chatMessages={coachChat}
+              chatStatus={coachChatStatus}
+              chatError={coachChatError}
+              onSendChat={onSendCoachChat}
+              isPlayerTurn={coachChatReady}
+              emptyHint=""
+              draft={coachDraft}
+              onDraftChange={onCoachDraftChange}
+            />
           </div>
         </div>
       </aside>
