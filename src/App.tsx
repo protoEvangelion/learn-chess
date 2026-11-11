@@ -106,6 +106,9 @@ import {
   loadShowFps,
   loadShowMoveIndicators,
   loadVolume,
+  loadAutoFlip,
+  AUTO_FLIP_KEY,
+  type AutoFlipMode,
 } from '@/lib/themes'
 import { unlockSfx } from '@/lib/sfx'
 import {
@@ -149,7 +152,7 @@ import {
 import { fetchOpeningCard, type OpeningCard } from '@/lib/openingCard'
 import {
   computerShouldReply,
-  pgnLoadsAsPlayableLine,
+  pgnIsReviewGame,
   userMovesEitherSide,
   type GameMode,
 } from '@/lib/playMode'
@@ -350,20 +353,22 @@ function computeBoot(): BootState {
     playerColor: null,
   }
   if (typeof window === 'undefined') return empty
-  if (readPanelFromUrl() === 'drill') return empty
+  const panel = readPanelFromUrl()
+  if (panel === 'drill') return empty
   const pgn = readPgnFromUrl()
   if (pgn) {
     const fromPgn = bootFromPgn(pgn)
     if (fromPgn) {
-      // Explore / Analysis / Drill: the PGN is a position to play on.
-      // My Games keeps it as a locked review.
-      if (
-        fromPgn.imported &&
-        pgnLoadsAsPlayableLine(readPanelFromUrl())
-      ) {
-        return { ...fromPgn, imported: null }
+      // A real imported game (or My Games) stays a locked review. Our own
+      // live-game PGNs only have "?" names, so a refresh keeps them playable.
+      if (fromPgn.imported && pgnIsReviewGame(pgn, panel)) return fromPgn
+      // Live game: keep the saved color instead of the PGN's White fallback.
+      const hasColorHeader = /\[PlayerColor\s+"/i.test(pgn)
+      return {
+        ...fromPgn,
+        imported: null,
+        playerColor: hasColorHeader ? fromPgn.playerColor : null,
       }
-      return fromPgn
     }
   }
   const fen = readFenFromUrl()
@@ -447,6 +452,7 @@ export default function App() {
   )
   const [strength, setStrength] = useState<StrengthLevel>(loadStrength)
   const [gameMode, setGameMode] = useState<GameMode>(loadGameMode)
+  const [autoFlip, setAutoFlip] = useState<AutoFlipMode>(loadAutoFlip)
   const [analysis, setAnalysis] = useState<{
     fen: string
     lines: BestMoveResult[]
@@ -708,7 +714,14 @@ export default function App() {
     lines.length === 0 ? 0 : Math.min(moveOptionIndex, lines.length - 1)
   const best = lines[clampedOptionIndex] ?? null
   const advantage = useMemo(() => advantageFromBest(best), [best])
+  // Two-player auto flip: turn the whole view to whoever is to move. The
+  // "pieces" variant keeps the view still and turns the piece models instead.
+  const autoFlipBoardSeat: Color | null =
+    autoFlip === 'board' && gameMode === 'pvp' && !reviewImport && !drillOpen
+      ? turn
+      : null
   const preferredSeat: Color =
+    autoFlipBoardSeat ??
     reviewImport?.playerColor ??
     (drillOpen && drillLine?.side ? drillLine.side : playerColor)
   const [viewSeat, setViewSeat] = useState<Color>(preferredSeat)
@@ -717,6 +730,14 @@ export default function App() {
     setViewSeat(preferredSeat)
   }, [preferredSeat])
   const seatYaw = viewSeat === 'black' ? Math.PI : 0
+  const pieceYaw =
+    autoFlip === 'pieces' &&
+    gameMode === 'pvp' &&
+    !reviewImport &&
+    !drillOpen &&
+    turn !== viewSeat
+      ? Math.PI
+      : 0
   const analysisReadyForFen =
     analysisStatus === 'idle' &&
     !!analysis &&
@@ -2054,14 +2075,10 @@ export default function App() {
         applyFen(imported.finalFen)
         return true
       }
-      const named = /\[(?:White|Black)\s+"/i.test(raw)
       const panelNow = readPanelFromUrl()
-      // Explore, Analysis, and Drill stay playable even when the PGN names
-      // the players (including "?"). My Games and a named game link stay locked.
-      if (
-        !pgnLoadsAsPlayableLine(panelNow) &&
-        (named || panelNow === 'my-games')
-      ) {
+      // Explore, Analysis, and Drill stay playable. My Games and a real
+      // imported game (named players / PlayerColor header) stay locked.
+      if (pgnIsReviewGame(raw, panelNow)) {
         applyImportedGame(imported)
         return true
       }
@@ -2319,6 +2336,11 @@ export default function App() {
     localStorage.setItem(GAME_MODE_KEY, mode)
   }
 
+  function onAutoFlipChange(mode: AutoFlipMode) {
+    setAutoFlip(mode)
+    localStorage.setItem(AUTO_FLIP_KEY, mode)
+  }
+
   function stepLiveLine(index: number) {
     if (movingTo || reviewImport) return
     const future = exploreFutureRef.current
@@ -2546,6 +2568,7 @@ export default function App() {
         musicTrackId={musicTrackId}
         strength={strength}
         gameMode={gameMode}
+        autoFlip={autoFlip}
         fen={fenDraft}
         showBestMove={showBestMove}
         bestMoveDelaySec={bestMoveDelaySec}
@@ -2560,6 +2583,7 @@ export default function App() {
         onMusicTrackChange={setMusicTrackId}
         onStrengthChange={onStrengthChange}
         onGameModeChange={onGameModeChange}
+        onAutoFlipChange={onAutoFlipChange}
         onFenChange={onFenChange}
         onFenCommit={onFenCommit}
         onDumpView={dumpView}
@@ -3088,6 +3112,7 @@ export default function App() {
                   !!drillPreview
                 }
                 playBothSides={playBothSides}
+                pieceYaw={pieceYaw}
                 validateMove={
                   drillStatus === 'playing' ? validateDrillMove : undefined
                 }

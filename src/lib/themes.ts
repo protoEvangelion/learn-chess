@@ -611,6 +611,18 @@ export const BEST_MOVE_DELAY_KEY = 'chess-3d:bestMoveDelaySec'
 export const FPS_KEY = 'chess-3d:showFps'
 export const MOVE_INDICATORS_KEY = 'chess-3d:showMoveIndicators'
 
+export const AUTO_FLIP_KEY = 'chess-3d:autoFlip'
+/**
+ * Two-player board sharing. `board` turns the whole view to the side to move;
+ * `pieces` keeps the view still and turns the piece models instead.
+ */
+export type AutoFlipMode = 'off' | 'board' | 'pieces'
+
+export function loadAutoFlip(): AutoFlipMode {
+  const raw = localStorage.getItem(AUTO_FLIP_KEY)
+  return raw === 'board' || raw === 'pieces' ? raw : 'off'
+}
+
 export function loadBoardId(): string {
   const id = localStorage.getItem(BOARD_KEY)
   return BOARD_THEMES.some((t) => t.id === id) ? (id as string) : 'procedural'

@@ -49,6 +49,23 @@ export function pgnLoadsAsPlayableLine(panel: PanelId | null): boolean {
   return panel === 'explore' || panel === 'analysis' || panel === 'drill'
 }
 
+/**
+ * Is a PGN in the URL a locked review, or a live game we saved?
+ *
+ * Our live-game PGNs only carry `[White "?"]` / `[Black "?"]` headers, so a
+ * refresh must keep them playable. A real imported game has player names or a
+ * saved `PlayerColor` header, and My Games is always a review.
+ */
+export function pgnIsReviewGame(pgn: string, panel: PanelId | null): boolean {
+  if (pgnLoadsAsPlayableLine(panel)) return false
+  if (panel === 'my-games') return true
+  if (/\[PlayerColor\s+"/i.test(pgn)) return true
+  const names = [...pgn.matchAll(/\[(?:White|Black)\s+"([^"]*)"/gi)]
+    .map((match) => match[1].trim())
+    .filter((name) => name && name !== '?')
+  return names.length > 0
+}
+
 function isBrowsePanel(panel: PanelId | null): boolean {
   return (
     panel === 'analysis' ||

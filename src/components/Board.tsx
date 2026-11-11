@@ -62,6 +62,8 @@ export const BoardComponent: FC<{
    * `null` means the start position (no move). Omit it during live play.
    */
   highlightMove?: { from: Position; to: Position } | null
+  /** Rotate every piece model to face the active player (two-player auto flip). */
+  pieceYaw?: number
 }> = ({
   selected,
   setSelected,
@@ -88,6 +90,7 @@ export const BoardComponent: FC<{
   playBothSides = false,
   validateMove,
   highlightMove,
+  pieceYaw = 0,
 }) => {
   const {
     movingTo,
@@ -495,6 +498,7 @@ export const BoardComponent: FC<{
                         : null
                   }
                   pieceIsBeingReplaced={!!pieceIsBeingReplaced}
+                  rotationY={pieceYaw}
                   finishMovingPiece={() =>
                     isBeingCastled
                       ? null

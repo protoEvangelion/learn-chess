@@ -11,6 +11,7 @@ import {
   PIECE_SETS,
   ROOM_KEY,
   ROOM_THEMES,
+  type AutoFlipMode,
   type BoardView,
 } from '@/lib/themes'
 import { setMuted, setVolume, unlockSfx } from '@/lib/sfx'
@@ -40,6 +41,7 @@ type Props = {
   musicTrackId: MusicTrackId
   strength: StrengthLevel
   gameMode: GameMode
+  autoFlip: AutoFlipMode
   fen: string
   showBestMove: boolean
   bestMoveDelaySec: number
@@ -54,6 +56,7 @@ type Props = {
   onMusicTrackChange: (id: MusicTrackId) => void
   onStrengthChange: (level: StrengthLevel) => void
   onGameModeChange: (mode: GameMode) => void
+  onAutoFlipChange: (mode: AutoFlipMode) => void
   onFenChange: (fen: string) => void
   onFenCommit: () => void
   onDumpView: () => void
@@ -129,6 +132,7 @@ export const SettingsDrawer: FC<Props> = ({
   musicTrackId,
   strength,
   gameMode,
+  autoFlip,
   fen,
   showBestMove,
   bestMoveDelaySec,
@@ -143,6 +147,7 @@ export const SettingsDrawer: FC<Props> = ({
   onMusicTrackChange,
   onStrengthChange,
   onGameModeChange,
+  onAutoFlipChange,
   onFenChange,
   onFenCommit,
   onDumpView,
@@ -242,6 +247,43 @@ export const SettingsDrawer: FC<Props> = ({
               : 'You play one color and Stockfish plays the other.'}
           </p>
         </section>
+
+        {gameMode === 'pvp' && (
+          <section className="settings-section">
+            <h3>Auto flip</h3>
+            <div
+              className="board-view-switch auto-flip-switch"
+              role="radiogroup"
+              aria-label="Auto flip"
+            >
+              {(
+                [
+                  { id: 'off', label: 'Off' },
+                  { id: 'board', label: 'Flip board' },
+                  { id: 'pieces', label: 'Flip pieces' },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={autoFlip === option.id}
+                  className={`board-view-option${autoFlip === option.id ? ' active' : ''}`}
+                  onClick={() => onAutoFlipChange(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="settings-import-status">
+              {autoFlip === 'board'
+                ? 'The whole board turns to whoever is to move.'
+                : autoFlip === 'pieces'
+                  ? 'The board stays still; the 3D pieces turn to whoever is to move.'
+                  : 'The board stays put all game.'}
+            </p>
+          </section>
+        )}
 
         {gameMode === 'computer' && (
           <section className="settings-section">

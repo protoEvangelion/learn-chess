@@ -324,6 +324,10 @@ body,
   box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.45);
 }
 
+.auto-flip-switch {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .board-2d-wrap {
   position: absolute;
   inset: 0;

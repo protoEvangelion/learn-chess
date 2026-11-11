@@ -70,6 +70,8 @@ export type ModelProps = {
   /** Home square in board-local file/rank (MeshWrapper x/z). */
   homeSquare?: { x: number; z: number }
   isDragging?: boolean
+  /** Turn the model to face the active player (two-player auto flip). */
+  rotationY?: number
 }
 
 const SELECT_LIFT = 0.35
@@ -110,6 +112,7 @@ export const MeshWrapper: FC<ModelProps> = ({
   dragBoardRef,
   homeSquare,
   isDragging = false,
+  rotationY = 0,
 }) => {
   const pieceRef = useRef<Group>(null)
   const finishRef = useRef(finishMovingPiece)
@@ -255,19 +258,21 @@ export const MeshWrapper: FC<ModelProps> = ({
       }}
     >
       <group ref={pieceRef}>
-        {materialVariant === 'textured' ? (
-          <group visible={!pieceIsBeingReplaced}>{children}</group>
-        ) : (
-          <mesh scale={meshScale} castShadow={!pieceIsBeingReplaced}>
-            {children}
-            <PieceMaterial
-              color={color}
-              pieceIsBeingReplaced={pieceIsBeingReplaced}
-              isSelected={isSelected}
-              variant={materialVariant === 'wood' ? 'wood' : 'metal'}
-            />
-          </mesh>
-        )}
+        <group rotation={[0, rotationY, 0]}>
+          {materialVariant === 'textured' ? (
+            <group visible={!pieceIsBeingReplaced}>{children}</group>
+          ) : (
+            <mesh scale={meshScale} castShadow={!pieceIsBeingReplaced}>
+              {children}
+              <PieceMaterial
+                color={color}
+                pieceIsBeingReplaced={pieceIsBeingReplaced}
+                isSelected={isSelected}
+                variant={materialVariant === 'wood' ? 'wood' : 'metal'}
+              />
+            </mesh>
+          )}
+        </group>
       </group>
     </group>
   )
