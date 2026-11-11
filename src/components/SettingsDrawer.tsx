@@ -283,7 +283,7 @@ export const SettingsDrawer: FC<Props> = ({
             />
           </div>
           <div className="settings-row">
-            <span id="settings-best-move-label">Show Stockfish best move</span>
+            <span id="settings-best-move-label">Show best move</span>
             <AnimatedSwitch
               checked={showBestMove}
               aria-labelledby="settings-best-move-label"

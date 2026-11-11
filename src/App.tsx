@@ -919,7 +919,12 @@ export default function App() {
   const fallbackSquares = explorerReady
     ? (drillHintSquares ?? reviewArrow ?? stockfishSquares)
     : null
-  const recommendationSquares = explorerSquares ?? fallbackSquares
+  // The setting hides every green recommendation rectangle. The explorer
+  // engine move owns them in live play; the drill book and review arrow are
+  // study aids, so they stay visible even when the setting is off.
+  const recommendationSquares = showBestMove
+    ? (explorerSquares ?? fallbackSquares)
+    : (drillHintSquares ?? reviewArrow ?? null)
   const tipFrom = previewArrow?.from ?? recommendationSquares?.from ?? null
   const tipTo = previewArrow?.to ?? recommendationSquares?.to ?? null
   // ★ is the saved explorer-engine move. Green squares still fall back to
