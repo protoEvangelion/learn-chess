@@ -4803,3 +4803,234 @@ body.is-review-coach-resizing canvas {
 .auth-card-signin .cl-card {
   width: 100%;
 }
+
+/* Review edit board */
+.edit-board-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(7, 4, 15, 0.78);
+  backdrop-filter: blur(6px);
+}
+
+.edit-board-card {
+  width: min(100%, 720px);
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.1rem;
+  border: 1px solid var(--sw-border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--sw-panel) 0%, var(--sw-bg0) 100%);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.edit-board-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.edit-board-eyebrow {
+  margin: 0 0 0.15rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sw-teal);
+  font-weight: 700;
+}
+
+.edit-board-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 650;
+}
+
+.edit-board-body {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.edit-board-main {
+  flex: 0 0 auto;
+}
+
+.edit-board-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  width: min(52vw, 360px);
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--sw-border);
+}
+
+.edit-square {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  background: #eeeed2;
+  cursor: pointer;
+}
+
+.edit-square.is-dark {
+  background: #769656;
+}
+
+.edit-square.is-erasing:hover {
+  box-shadow: inset 0 0 0 3px #f87171;
+}
+
+.edit-square img {
+  width: 82%;
+  height: 82%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.edit-file,
+.edit-rank {
+  position: absolute;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: rgba(20, 20, 20, 0.55);
+  pointer-events: none;
+}
+
+.edit-file {
+  right: 2px;
+  bottom: 1px;
+}
+
+.edit-rank {
+  left: 2px;
+  top: 1px;
+}
+
+.edit-board-side {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.edit-board-side h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sw-muted);
+  font-weight: 700;
+}
+
+.edit-palette {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.3rem;
+  margin-bottom: 0.3rem;
+}
+
+.edit-palette-btn {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 1px solid var(--sw-border);
+  border-radius: 8px;
+  background: var(--sw-bg0);
+  cursor: pointer;
+  padding: 0.15rem;
+}
+
+.edit-palette-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.edit-palette-btn.is-active {
+  border-color: var(--sw-teal);
+  box-shadow: 0 0 0 1px var(--sw-teal);
+  background: color-mix(in srgb, var(--sw-teal) 14%, var(--sw-bg0));
+}
+
+.edit-palette-btn.is-trash {
+  width: 2.2rem;
+  height: 2.2rem;
+  aspect-ratio: auto;
+  color: var(--sw-muted);
+}
+
+.edit-side-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem;
+}
+
+.edit-side-btn {
+  border: 1px solid var(--sw-border);
+  border-radius: 8px;
+  padding: 0.45rem;
+  background: var(--sw-bg0);
+  color: var(--sw-muted);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.edit-side-btn.is-active {
+  color: var(--sw-text);
+  border-color: var(--sw-teal);
+  background: color-mix(in srgb, var(--sw-teal) 14%, var(--sw-bg0));
+}
+
+.edit-board-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.edit-board-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--sw-muted);
+}
+
+.edit-board-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--sw-border);
+  padding-top: 0.75rem;
+}
+
+.edit-board-fen {
+  min-width: 0;
+  flex: 1 1 220px;
+  font-size: 0.68rem;
+  color: var(--sw-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .edit-board-body {
+    flex-direction: column;
+  }
+  .edit-board-grid {
+    width: min(100%, 360px);
+  }
+}

@@ -815,6 +815,14 @@ export default function App() {
     setMoveOptionIndex(0)
     setReviewImport(null)
     setScrubIndex(0)
+    setAnalysisReport(null)
+    setCoachExplanation(null)
+    setCoachStatus('idle')
+    setCoachError(null)
+    setCoachChat([])
+    setCoachChatStatus('idle')
+    setCoachChatError(null)
+    setCoachReviewMode(false)
     skipEngineOnce.current = false
     return true
   }, [])
@@ -2600,6 +2608,7 @@ export default function App() {
       <AnalysisDialog
         open={analysisOpen}
         onClose={() => openPanel(null)}
+        onApplyFen={(nextFen) => applyFen(nextFen)}
         report={analysisReport}
         scrubIndex={scrubIndex}
         onScrubTo={scrubTo}

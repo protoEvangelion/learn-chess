@@ -13,12 +13,14 @@ import {
   ChevronRight,
   Copy,
   Pause,
+  Pencil,
   Play,
   SkipBack,
   SkipForward,
 } from 'lucide-react'
 import { PanelResizeHandle } from '@/components/PanelResizeHandle'
 import { CoachResizeHandle } from '@/components/CoachResizeHandle'
+import { EditBoardDialog } from '@/components/EditBoardDialog'
 import {
   CoachPane,
   type CoachChatMessage,
@@ -114,6 +116,8 @@ type Props = {
   tab?: TabId
   onTabChange?: (tab: TabId) => void
   pgn?: string
+  /** Apply an edited position to the main board. */
+  onApplyFen?: (fen: string) => void
 }
 
 
@@ -661,6 +665,7 @@ export const AnalysisDialog: FC<Props> = ({
   tab: tabProp,
   onTabChange,
   pgn = '',
+  onApplyFen,
 }) => {
   const [tabState, setTabState] = useState<TabId>(() =>
     new URLSearchParams(window.location.search).get('panel') === 'my-games'
@@ -673,6 +678,7 @@ export const AnalysisDialog: FC<Props> = ({
     onTabChange?.(next)
   }
   const [importOpen, setImportOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const importWasBusy = useRef(false)
   const [playing, setPlaying] = useState(false)
   const [pgnCopied, setPgnCopied] = useState(false)
@@ -700,6 +706,7 @@ export const AnalysisDialog: FC<Props> = ({
     () => (report ? positionForReplies(report, scrubIndex) : null),
     [report, scrubIndex],
   )
+  const reviewFen = replyPosition?.fen ?? START_FEN
   const playedNext =
     report && scrubIndex < report.plies.length
       ? report.plies[scrubIndex].san
@@ -1264,6 +1271,17 @@ export const AnalysisDialog: FC<Props> = ({
               <SkipForward size={16} strokeWidth={1.75} aria-hidden="true" />
             </PixelButton>
           </div>
+          {report && onApplyFen ? (
+            <PixelButton
+              ghost
+              icon
+              aria-label="Edit board"
+              title="Edit board"
+              onClick={() => setEditOpen(true)}
+            >
+              <Pencil size={16} strokeWidth={1.75} aria-hidden="true" />
+            </PixelButton>
+          ) : null}
           <PixelButton
             ghost
             icon
@@ -1285,6 +1303,16 @@ export const AnalysisDialog: FC<Props> = ({
             )}
           </PixelButton>
         </footer>
+
+        <EditBoardDialog
+          open={editOpen}
+          fen={reviewFen}
+          onClose={() => setEditOpen(false)}
+          onApply={(fen) => {
+            onApplyFen?.(fen)
+            onClose()
+          }}
+        />
       </aside>
     </div>
   )
