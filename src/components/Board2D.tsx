@@ -11,6 +11,7 @@ import {
   washColorForPreview,
 } from '@/logic/movePreview'
 import { useBoardPlay, type GameOver } from '@/components/useBoardPlay'
+import { EvalBar2D } from '@/components/EvalBar2D'
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
 const DARK = '#769656'
@@ -62,6 +63,10 @@ export const Board2D: FC<{
   highlightMove?: { from: Position; to: Position } | null
   /** Turn the piece sprites to face the active player (two-player auto flip). */
   pieceYaw?: number
+  /** 0–100, White's share for the eval bar beside the board. */
+  evalWhitePercent?: number
+  /** Short eval label, e.g. "+0.20" or "mate in 3". */
+  evalLabel?: string
 }> = ({
   selected,
   setSelected,
@@ -84,6 +89,8 @@ export const Board2D: FC<{
   validateMove,
   highlightMove,
   pieceYaw = 0,
+  evalWhitePercent = 50,
+  evalLabel = '—',
 }) => {
   const play = useBoardPlay({
     selected,
@@ -208,9 +215,11 @@ export const Board2D: FC<{
 
   return (
     <div className="board-2d-wrap">
-      <div
-        ref={boardRef}
-        className="board-2d"
+      <div className="board-2d-figure">
+        <EvalBar2D whitePercent={evalWhitePercent} label={evalLabel} />
+        <div
+          ref={boardRef}
+          className="board-2d"
         role="grid"
         aria-label={
           flipped
@@ -356,6 +365,7 @@ export const Board2D: FC<{
             )
           }),
         )}
+        </div>
       </div>
       {ghost && (
         <img

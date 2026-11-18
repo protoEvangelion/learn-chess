@@ -3049,6 +3049,12 @@ export default function App() {
               }
               playBothSides={playBothSides}
               pieceYaw={pieceYaw}
+              evalWhitePercent={advantage?.whitePercent ?? 50}
+              evalLabel={
+                advantage
+                  ? advantage.detail.replace('mate in ', 'M')
+                  : '—'
+              }
               validateMove={
                 drillStatus === 'playing' ? validateDrillMove : undefined
               }

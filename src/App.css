@@ -347,8 +347,9 @@ body,
   --sq: min(11.5vh, 11.5vw, 84px);
   /* cqw/cqh are the wrap's CONTENT box, so the wrap padding is already
      excluded — subtracting it again shrank the board. Scale 1 fills that
-     box; larger steps grow past the stage and the wrap scrolls. */
-  --board-fit: min(100cqw, 100cqh);
+     box; larger steps grow past the stage and the wrap scrolls. The 2rem
+     reserve leaves room for the eval bar beside the board. */
+  --board-fit: min(calc(100cqw - 2rem), 100cqh);
   width: calc(var(--board-fit) * var(--board-scale, 1));
   flex-shrink: 0;
   aspect-ratio: 1;
@@ -5033,4 +5034,51 @@ body.is-review-coach-resizing canvas {
   .edit-board-grid {
     width: min(100%, 360px);
   }
+}
+
+/* Flat-board eval bar */
+.board-2d-figure {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.board-2d-eval {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.board-2d-eval-track {
+  position: relative;
+  width: 0.55rem;
+  flex: 1 1 auto;
+  min-height: 2rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #14121c;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.board-2d-eval-white {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, #f6f1e8 0%, #d8d0c2 100%);
+  transition: height 0.28s ease;
+}
+
+.board-2d-eval-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--sw-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
