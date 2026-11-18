@@ -684,18 +684,6 @@ export default function App() {
     () => boardToFen(board, turn, fenHistory),
     [board, turn, fenHistory],
   )
-  const explorerTip = useExplorerEngineMove(fen)
-  const explorerReady =
-    explorerTip.fen === fen && explorerTip.status !== 'loading'
-  const explorerSquares = useMemo(() => {
-    if (!explorerReady || !explorerTip.bestUci) return null
-    const squares = uciToSquares(explorerTip.bestUci)
-    if (!squares) return null
-    return {
-      from: squareToPosition(squares.from),
-      to: squareToPosition(squares.to),
-    }
-  }, [explorerReady, explorerTip.bestUci])
   const sharePgn = useMemo(() => {
     if (reviewImport?.pgn) return reviewImport.pgn
     return historyToPgn(history) || fenToSetupPgn(fen)
@@ -739,6 +727,18 @@ export default function App() {
     turn !== viewSeat
       ? Math.PI
       : 0
+  const explorerTip = useExplorerEngineMove(fen, viewSeat)
+  const explorerReady =
+    explorerTip.fen === fen && explorerTip.status !== 'loading'
+  const explorerSquares = useMemo(() => {
+    if (!explorerReady || !explorerTip.bestUci) return null
+    const squares = uciToSquares(explorerTip.bestUci)
+    if (!squares) return null
+    return {
+      from: squareToPosition(squares.from),
+      to: squareToPosition(squares.to),
+    }
+  }, [explorerReady, explorerTip.bestUci])
   const analysisReadyForFen =
     analysisStatus === 'idle' &&
     !!analysis &&
@@ -955,7 +955,8 @@ export default function App() {
   const tipTo = previewArrow?.to ?? recommendationSquares?.to ?? null
   // ★ is the saved explorer-engine move. Green squares still fall back to
   // the book, the review arrow, or Stockfish when that score is missing.
-  const recommendedUci = explorerReady ? explorerTip.bestUci : null
+  // The explorer table follows the side the board is viewed from.
+  const recommendedUci = explorerReady ? explorerTip.perspectiveBestUci : null
 
   const endOutcome = outcomeFromResult(gameOver, playerColor)
   const scrubbingImport =
@@ -2644,7 +2645,8 @@ export default function App() {
         onPlaySan={playExploreLine}
         playedSans={playedSans}
         recommendedUci={recommendedUci}
-        worstUci={explorerReady ? explorerTip.worstUci : null}
+        worstUci={explorerReady ? explorerTip.perspectiveWorstUci : null}
+        perspective={viewSeat}
         linePly={history.length}
         lineLength={history.length + exploreFutureCount}
         onLineStep={stepLiveLine}

@@ -140,6 +140,34 @@ export function rankExplorerEngineMoves<T extends ScoredMove & { san: string }>(
 }
 
 /**
+ * The weakest saved score for `side`. Used when the explorer table is viewed
+ * from Black: the same moves, but the worst row for Black is the best for White.
+ */
+export function worstExplorerMove<T extends ScoredMove>(
+  moves: readonly T[],
+  side: 'white' | 'black',
+): T | null {
+  let best: T | null = null
+  let bestScore = 0
+  let worst: T | null = null
+  let worstScore = 0
+  for (const move of moves) {
+    const score = sideEngineScore(move, side)
+    if (score === null) continue
+    if (!best || score > bestScore) {
+      best = move
+      bestScore = score
+    }
+    if (!worst || score < worstScore) {
+      worst = move
+      worstScore = score
+    }
+  }
+  if (!best || !worst || bestScore === worstScore) return null
+  return worst
+}
+
+/**
  * The single worst saved score for White, and only when White is to move.
  * Equal scores are not "worst". The best move is never also marked worst.
  */

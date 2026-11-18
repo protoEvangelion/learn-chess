@@ -8,6 +8,7 @@ import {
 } from '@/lib/explorerFilterPrefs'
 import {
   bestExplorerEngineMove,
+  worstExplorerMove,
   worstWhiteExplorerMove,
 } from '@/lib/explorerEngineMove'
 import {
@@ -27,6 +28,10 @@ export type ExplorerEngineTip = {
   bestUci: string | null
   /** UCI of White's worst explorer-engine move. Null on Black's turn. */
   worstUci: string | null
+  /** Best move for the side the board is viewed from (the seat). */
+  perspectiveBestUci: string | null
+  /** Worst move for the side the board is viewed from (the seat). */
+  perspectiveWorstUci: string | null
 }
 
 const EMPTY: ExplorerEngineTip = {
@@ -34,6 +39,8 @@ const EMPTY: ExplorerEngineTip = {
   status: 'loading',
   bestUci: null,
   worstUci: null,
+  perspectiveBestUci: null,
+  perspectiveWorstUci: null,
 }
 
 let monthsPromise: Promise<ExplorerMonth[]> | null = null
@@ -103,7 +110,10 @@ function sideToMove(fen: string): 'white' | 'black' {
  * Explorer engine recommendation for the current board.
  * While `status` is `loading`, callers should not fall back to Stockfish.
  */
-export function useExplorerEngineMove(fen: string): ExplorerEngineTip {
+export function useExplorerEngineMove(
+  fen: string,
+  perspective: 'white' | 'black' = 'white',
+): ExplorerEngineTip {
   const [filterTick, setFilterTick] = useState(0)
   const [tip, setTip] = useState<ExplorerEngineTip>(EMPTY)
 
@@ -111,11 +121,25 @@ export function useExplorerEngineMove(fen: string): ExplorerEngineTip {
 
   useEffect(() => {
     if (!fen) {
-      setTip({ fen, status: 'ready', bestUci: null, worstUci: null })
+      setTip({
+        fen,
+        status: 'ready',
+        bestUci: null,
+        worstUci: null,
+        perspectiveBestUci: null,
+        perspectiveWorstUci: null,
+      })
       return
     }
     const controller = new AbortController()
-    setTip({ fen, status: 'loading', bestUci: null, worstUci: null })
+    setTip({
+      fen,
+      status: 'loading',
+      bestUci: null,
+      worstUci: null,
+      perspectiveBestUci: null,
+      perspectiveWorstUci: null,
+    })
     const ratings = loadExplorerRatings()
     const speeds = loadExplorerSpeeds()
     const side = sideToMove(fen)
@@ -126,21 +150,41 @@ export function useExplorerEngineMove(fen: string): ExplorerEngineTip {
         if (controller.signal.aborted) return
         const best = bestExplorerEngineMove(position.moves, side)
         const worst = worstWhiteExplorerMove(position.moves, side)
+        const perspectiveBest = bestExplorerEngineMove(position.moves, perspective)
+        const perspectiveWorst = worstExplorerMove(position.moves, perspective)
         setTip({
           fen,
           status: 'ready',
           bestUci: best?.uci ?? null,
           worstUci: worst?.uci ?? null,
+          perspectiveBestUci: perspectiveBest?.uci ?? null,
+          perspectiveWorstUci: perspectiveWorst?.uci ?? null,
         })
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         if (err instanceof DOMException && err.name === 'AbortError') return
-        setTip({ fen, status: 'error', bestUci: null, worstUci: null })
+        setTip({
+          fen,
+          status: 'error',
+          bestUci: null,
+          worstUci: null,
+          perspectiveBestUci: null,
+          perspectiveWorstUci: null,
+        })
       })
 
     return () => controller.abort()
-  }, [fen, filterTick])
+  }, [fen, filterTick, perspective])
 
-  return tip.fen === fen ? tip : { fen, status: 'loading', bestUci: null, worstUci: null }
+  return tip.fen === fen
+    ? tip
+    : {
+        fen,
+        status: 'loading',
+        bestUci: null,
+        worstUci: null,
+        perspectiveBestUci: null,
+        perspectiveWorstUci: null,
+      }
 }

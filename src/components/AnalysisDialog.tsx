@@ -118,6 +118,8 @@ type Props = {
   pgn?: string
   /** Apply an edited position to the main board. */
   onApplyFen?: (fen: string) => void
+  /** Side at the bottom of the board. Explorer stats follow this seat. */
+  perspective?: 'white' | 'black'
 }
 
 
@@ -666,6 +668,7 @@ export const AnalysisDialog: FC<Props> = ({
   onTabChange,
   pgn = '',
   onApplyFen,
+  perspective = 'white',
 }) => {
   const [tabState, setTabState] = useState<TabId>(() =>
     new URLSearchParams(window.location.search).get('panel') === 'my-games'
@@ -898,6 +901,7 @@ export const AnalysisDialog: FC<Props> = ({
                 playedSans={playedSans}
                 recommendedUci={recommendedUci}
                 worstUci={worstUci}
+                perspective={perspective}
               />
               {onSendCoachChat ? (
                 <>

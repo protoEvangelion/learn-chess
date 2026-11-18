@@ -42,9 +42,11 @@ import {
   type MoveMark,
 } from '@/lib/explorerMoveMarks'
 import { START_FEN } from '@/lib/fenBridge'
+import { sideEngineLabel, sideEngineScore } from '@/lib/explorerEngineMove'
 import { cn } from '@/lib/utils'
 import {
   EXPLORER_MOVE_CAP,
+  blackWinRate,
   fetchLichessExplorer,
   isRatingBandId,
   normalizeMonths,
@@ -122,13 +124,12 @@ const columnHelper = createColumnHelper<typeof features, ExploreRow>()
 const ROW_WINDOW_OVERSCAN = 2
 const ROW_HEIGHT_FALLBACK = 36
 
-function engineSortValue(row: ExploreRow): number {
+type Perspective = 'white' | 'black'
+
+function engineSortValue(row: ExploreRow, perspective: Perspective): number {
   if (row.kind === 'status') return Number.NEGATIVE_INFINITY
-  if (row.engineMate !== null && row.engineMate !== 0) {
-    return row.engineMate > 0 ? 100_000 + row.engineMate : -100_000 + row.engineMate
-  }
-  if (row.engineCp === null) return Number.NEGATIVE_INFINITY
-  return row.engineCp
+  const score = sideEngineScore(row, perspective)
+  return score === null ? Number.NEGATIVE_INFINITY : score
 }
 
 function shareLabel(row: ExploreRow): string | null {
@@ -138,32 +139,28 @@ function shareLabel(row: ExploreRow): string | null {
   return share > 0 && shown === '0.0' ? '<0.1%' : `${shown}%`
 }
 
-function winLabel(row: ExploreRow): string | null {
-  if (row.kind === 'status' || row.winRate < 0) return null
-  return `${(row.winRate * 100).toFixed(1)}%`
+function perspectiveWinRate(row: ExploreRow, perspective: Perspective): number {
+  return perspective === 'black' ? blackWinRate(row) : whiteWinRate(row)
+}
+
+function winLabel(row: ExploreRow, perspective: Perspective): string | null {
+  const rate = perspectiveWinRate(row, perspective)
+  if (row.kind === 'status' || rate < 0) return null
+  return `${(rate * 100).toFixed(1)}%`
 }
 
 /** The percent printed in the Win column. Blank cells stay out of the icons. */
-function shownWinPercent(row: ExploreRow): number | null {
-  const label = winLabel(row)
+function shownWinPercent(row: ExploreRow, perspective: Perspective): number | null {
+  const label = winLabel(row, perspective)
   if (!label) return null
   const value = Number(label.slice(0, -1))
   return Number.isFinite(value) ? value : null
 }
 
-/** White's edge after the move. `+0.23` is a quarter pawn. */
-function engineLabel(row: ExploreRow): string | null {
+/** Saved edge from the perspective side: higher is better for that side. */
+function engineLabel(row: ExploreRow, perspective: Perspective): string | null {
   if (row.kind === 'status') return null
-  if (row.engineMate !== null && row.engineMate !== 0) {
-    const marks = Math.abs(row.engineMate)
-    return row.engineMate > 0 ? `+M${marks}` : `-M${marks}`
-  }
-  if (row.engineCp === null) return null
-  const pawns = Math.abs(row.engineCp) / 100
-  const text = pawns.toFixed(2)
-  if (row.engineCp > 0) return `+${text}`
-  if (row.engineCp < 0) return `-${text}`
-  return '0.00'
+  return sideEngineLabel(row, perspective)
 }
 
 /** Widest text in a column, so a virtualized table still reserves that width. */
@@ -517,6 +514,7 @@ function MoveTable({
   playedSans,
   recommendedUci,
   worstUci,
+  perspective = 'white',
   onPlaySan,
 }: {
   rows: ExploreRow[]
@@ -525,8 +523,9 @@ function MoveTable({
   months: ExplorerMonth[]
   playedSans: string[]
   recommendedUci?: string | null
-  /** White's worst saved score. One ✕, and only on White's turn. */
+  /** Worst saved score for the side the board is viewed from. */
   worstUci?: string | null
+  perspective?: Perspective
   onPlaySan?: (sans: string[], play?: string) => void
 }) {
   const [data, setData] = useState(rows)
@@ -569,9 +568,9 @@ function MoveTable({
         playedSans,
         recommendedUci,
         worstUci,
-        shownWin: shownWinPercent,
+        shownWin: (row) => shownWinPercent(row, perspective),
       }),
-    [data, playedSans, recommendedUci, worstUci],
+    [data, playedSans, recommendedUci, worstUci, perspective],
   )
 
   const syncWindow = useCallback(() => {
@@ -786,36 +785,36 @@ function MoveTable({
           sortFn: 'basic',
           sortDescFirst: true,
         }),
-        columnHelper.accessor('winRate', {
+        columnHelper.accessor((row) => perspectiveWinRate(row, perspective), {
           id: 'winRate',
           header: ({ header }) => (
             <SortHeader
               label="Win"
-              title="White's win rate"
+              title={`${perspective === 'black' ? "Black's" : "White's"} win rate`}
               sorted={header.column.getIsSorted()}
               onToggle={header.column.getToggleSortingHandler()}
             />
           ),
           cell: ({ row }) => {
-            const label = winLabel(row.original)
+            const label = winLabel(row.original, perspective)
             if (!label) return null
             return <span className="tabular-nums font-semibold">{label}</span>
           },
           sortFn: 'basic',
           sortDescFirst: true,
         }),
-        columnHelper.accessor(engineSortValue, {
+        columnHelper.accessor((row) => engineSortValue(row, perspective), {
           id: 'engine',
           header: ({ header }) => (
             <SortHeader
               label="Engine"
-              title="White's edge after the move. Lower is better for Black."
+              title={`${perspective === 'black' ? "Black's" : "White's"} edge after the move. Higher is better for ${perspective}.`}
               sorted={header.column.getIsSorted()}
               onToggle={header.column.getToggleSortingHandler()}
             />
           ),
           cell: ({ row }) => {
-            const label = engineLabel(row.original)
+            const label = engineLabel(row.original, perspective)
             if (!label) return null
             const depth = row.original.engineDepth
             const tip = depth !== null && depth > 0 ? `Depth ${depth}` : 'Saved engine score'
@@ -854,7 +853,7 @@ function MoveTable({
             ),
         }),
       ]),
-    [hideTip, marks, showTip],
+    [hideTip, marks, perspective, showTip],
   )
 
   const table = useTable({
@@ -877,8 +876,14 @@ function MoveTable({
   const modelRows = table.getRowModel().rows
   rowCountRef.current = modelRows.length
   const widestShare = useMemo(() => widestText(modelRows, shareLabel), [modelRows])
-  const widestWin = useMemo(() => widestText(modelRows, winLabel), [modelRows])
-  const widestEngine = useMemo(() => widestText(modelRows, engineLabel), [modelRows])
+  const widestWin = useMemo(
+    () => widestText(modelRows, (row) => winLabel(row, perspective)),
+    [modelRows, perspective],
+  )
+  const widestEngine = useMemo(
+    () => widestText(modelRows, (row) => engineLabel(row, perspective)),
+    [modelRows, perspective],
+  )
 
   useEffect(() => {
     syncWindow()
@@ -1022,9 +1027,17 @@ export const ExploreOpenings: FC<{
   playedSans?: string[]
   /** Saved explorer-engine best UCI. That row gets a ★. */
   recommendedUci?: string | null
-  /** White's worst saved score. That row gets a ✕, unless it is also the best. */
+  /** Worst saved score for the board's seat. That row gets a ✕, unless it is also the best. */
   worstUci?: string | null
-}> = ({ onPlaySan, playedSans = [], recommendedUci = null, worstUci = null }) => {
+  /** Side at the bottom of the board. Stats follow this seat. */
+  perspective?: Perspective
+}> = ({
+  onPlaySan,
+  playedSans = [],
+  recommendedUci = null,
+  worstUci = null,
+  perspective = 'white',
+}) => {
   const [ratings, setRatings] = useState<RatingBandId[]>(() => loadExplorerRatings())
   const [speeds, setSpeeds] = useState<ExplorerSpeed[]>(() => loadExplorerSpeeds())
   const [availableMonths, setAvailableMonths] = useState<ExplorerMonth[]>([])
@@ -1187,6 +1200,7 @@ export const ExploreOpenings: FC<{
           playedSans={playedSans}
           recommendedUci={recommendedUci}
           worstUci={worstUci}
+          perspective={perspective}
           onPlaySan={onPlaySan}
         />
       ) : null}
