@@ -5082,3 +5082,17 @@ body.is-review-coach-resizing canvas {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* Explorer rows filled from Stockfish when the opener has too few games. */
+.explorer-engine-tag {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--sw-teal) 40%, var(--sw-border));
+  border-radius: 999px;
+  padding: 0 0.35rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sw-teal);
+  background: color-mix(in srgb, var(--sw-teal) 10%, transparent);
+}

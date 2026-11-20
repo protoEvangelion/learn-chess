@@ -43,6 +43,8 @@ import {
 } from '@/lib/explorerMoveMarks'
 import { START_FEN } from '@/lib/fenBridge'
 import { sideEngineLabel, sideEngineScore } from '@/lib/explorerEngineMove'
+import { engineFillLines } from '@/lib/engineFill'
+import type { BestMoveResult } from '@/lib/stockfishOpponent'
 import { cn } from '@/lib/utils'
 import {
   EXPLORER_MOVE_CAP,
@@ -94,7 +96,7 @@ type ExploreRow = {
   play: string
   path: string[]
   parentName: string
-  kind: 'opening' | 'line' | 'defense' | 'status'
+  kind: 'opening' | 'line' | 'defense' | 'status' | 'engine'
   canExpand: boolean
   subRows?: ExploreRow[]
 }
@@ -357,6 +359,80 @@ async function loadGroups(
   return { groups, total: root.white + root.draws + root.black }
 }
 
+/** FEN after a comma-separated UCI path from the start position. */
+function playToFen(play: string): string {
+  const chess = new Chess(START_FEN)
+  for (const step of play.split(',').filter(Boolean)) {
+    try {
+      const played = chess.move({
+        from: step.slice(0, 2),
+        to: step.slice(2, 4),
+        promotion: step[4] || undefined,
+      })
+      if (!played) break
+    } catch {
+      break
+    }
+  }
+  return chess.fen()
+}
+
+function sanForUci(fen: string, uci: string): string | null {
+  if (uci.length < 4) return null
+  try {
+    const chess = new Chess(fen)
+    const played = chess.move({
+      from: uci.slice(0, 2),
+      to: uci.slice(2, 4),
+      promotion: uci[4] || undefined,
+    })
+    return played?.san ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Engine-only rows for a position the opener has too few games for. */
+function engineRowsForPosition(
+  row: ExploreRow,
+  fen: string,
+  parentGames: number,
+  ancestor: string,
+  lines: BestMoveResult[],
+  startIndex: number,
+  maxRows: number,
+): ExploreRow[] {
+  const rows: ExploreRow[] = []
+  for (const line of lines) {
+    if (rows.length >= maxRows) break
+    const san = sanForUci(fen, line.uci)
+    if (!san) continue
+    const play = row.play ? `${row.play},${line.uci}` : line.uci
+    rows.push({
+      id: treeId(row.id, startIndex + rows.length, san, play),
+      san,
+      name: '',
+      eco: '',
+      white: 0,
+      draws: 0,
+      black: 0,
+      averageRating: 0,
+      engineCp: line.whiteCp,
+      engineDepth: line.depth,
+      engineMate: line.whiteMate,
+      games: 0,
+      parentGames,
+      winRate: -1,
+      play,
+      path: [...row.path, san],
+      parentName: ancestor,
+      kind: 'engine',
+      canExpand: false,
+    })
+  }
+  return rows
+}
+
 async function loadChildRows(
   row: ExploreRow,
   ratings: RatingBandId[],
@@ -372,11 +448,6 @@ async function loadChildRows(
   })
   const ancestor = row.parentName || row.name
   const moves = sortByWinRate(position.moves, 'white', (move) => move.san)
-  if (moves.length === 0) {
-    return {
-      children: [statusRow(row.id, 'No further moves in these filters.')],
-    }
-  }
   // Share is against every game in the position after this move, not against
   // the parent move's own count: transpositions can reach the same position
   // by another move order, which made the old denominator too small.
@@ -385,35 +456,61 @@ async function loadChildRows(
     position.draws,
     position.black,
   ).games
-  return {
-    children: moves.map((move, index) => {
-      const play = row.play ? `${row.play},${move.uci}` : move.uci
-      const exactName = move.opening?.name ?? ''
-      const label = childLabel(exactName, ancestor)
-      const stats = counts(move.white, move.draws, move.black)
-      return {
-        id: treeId(row.id, index, move.san, play),
-        san: move.san,
-        name: label,
-        eco: label ? (move.opening?.eco ?? '') : '',
-        white: move.white,
-        draws: move.draws,
-        black: move.black,
-        averageRating: move.averageRating,
-        engineCp: move.engineCp,
-        engineDepth: move.engineDepth,
-        engineMate: move.engineMate,
-        games: stats.games,
+  const explorerRows: ExploreRow[] = moves.map((move, index) => {
+    const play = row.play ? `${row.play},${move.uci}` : move.uci
+    const exactName = move.opening?.name ?? ''
+    const label = childLabel(exactName, ancestor)
+    const stats = counts(move.white, move.draws, move.black)
+    return {
+      id: treeId(row.id, index, move.san, play),
+      san: move.san,
+      name: label,
+      eco: label ? (move.opening?.eco ?? '') : '',
+      white: move.white,
+      draws: move.draws,
+      black: move.black,
+      averageRating: move.averageRating,
+      engineCp: move.engineCp,
+      engineDepth: move.engineDepth,
+      engineMate: move.engineMate,
+      games: stats.games,
+      parentGames,
+      winRate: stats.winRate,
+      play,
+      path: [...row.path, move.san],
+      parentName: exactName || ancestor,
+      kind: 'line' as const,
+      canExpand: true,
+    }
+  })
+
+  // Sparse opener lines: fill the rest of the five rows from Stockfish.
+  let engineRows: ExploreRow[] = []
+  if (explorerRows.length < 5) {
+    try {
+      const fen = playToFen(row.play)
+      const lines = await engineFillLines(fen, signal)
+      const seen = new Set(moves.map((move) => move.uci))
+      engineRows = engineRowsForPosition(
+        row,
+        fen,
         parentGames,
-        winRate: stats.winRate,
-        play,
-        path: [...row.path, move.san],
-        parentName: exactName || ancestor,
-        kind: 'line' as const,
-        canExpand: true,
-      }
-    }),
+        ancestor,
+        lines.filter((line) => !seen.has(line.uci)),
+        explorerRows.length,
+        5 - explorerRows.length,
+      )
+    } catch {
+      // Engine fill is best-effort; the explorer rows still render.
+    }
   }
+
+  if (explorerRows.length === 0 && engineRows.length === 0) {
+    return {
+      children: [statusRow(row.id, 'No further moves in these filters.')],
+    }
+  }
+  return { children: [...explorerRows, ...engineRows] }
 }
 
 function ResultBar({
@@ -721,6 +818,14 @@ function MoveTable({
                   <span className="flex min-w-0 items-center gap-1 text-left">
                     <span className="shrink-0 font-semibold">{title}</span>
                     {icons}
+                    {item.kind === 'engine' ? (
+                      <span
+                        className="explorer-engine-tag"
+                        title="Engine suggestion — no explorer games"
+                      >
+                        engine
+                      </span>
+                    ) : null}
                     {detail ? (
                       <span className="min-w-0 truncate font-normal text-muted-foreground">
                         {detail}
@@ -736,6 +841,14 @@ function MoveTable({
                   >
                     <span className="shrink-0 font-semibold">{title}</span>
                     {icons}
+                    {item.kind === 'engine' ? (
+                      <span
+                        className="explorer-engine-tag"
+                        title="Engine suggestion — no explorer games"
+                      >
+                        engine
+                      </span>
+                    ) : null}
                     {detail ? (
                       <span className="min-w-0 truncate font-normal text-muted-foreground">
                         {detail}
@@ -842,7 +955,7 @@ function MoveTable({
           header: 'Result',
           enableSorting: false,
           cell: ({ row }) =>
-            row.original.kind === 'status' ? null : (
+            row.original.kind === 'status' || row.original.kind === 'engine' ? null : (
               <ResultBar
                 white={row.original.white}
                 draws={row.original.draws}

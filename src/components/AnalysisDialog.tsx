@@ -48,9 +48,11 @@ import {
   bestExplorerEngineMove,
   engineAdviceLabel,
   rankExplorerEngineMoves,
+  sideEngineLabel,
   worstWhiteExplorerMove,
   type EngineAdviceSource,
 } from '@/lib/explorerEngineMove'
+import { engineFillLines } from '@/lib/engineFill'
 import {
   explorerMoveMarks,
   MOVE_MARK_GLYPH,
@@ -368,6 +370,21 @@ function sanKey(san: string) {
   return san.replace(/[+#]$/, '')
 }
 
+function sanForUci(fen: string, uci: string): string | null {
+  if (uci.length < 4) return null
+  try {
+    const chess = new Chess(fen)
+    const played = chess.move({
+      from: uci.slice(0, 2),
+      to: uci.slice(2, 4),
+      promotion: uci[4] || undefined,
+    })
+    return played?.san ?? null
+  } catch {
+    return null
+  }
+}
+
 function savedEngineTip(depth: number | null): string {
   return depth !== null && depth > 0 ? `Depth ${depth}` : 'Saved engine score'
 }
@@ -454,35 +471,73 @@ function MoveChoices({
     setRows([])
     const ratings = loadExplorerRatings()
     const speeds = loadExplorerSpeeds()
+    const side = ply.color === 'black' ? 'black' : 'white'
+
+    // Sparse opener positions: fill the detail from Stockfish MultiPV.
+    const fillFromEngine = async (base: ChoiceRow[]): Promise<ChoiceRow[]> => {
+      if (base.length >= 5) return base
+      try {
+        const lines = await engineFillLines(ply.fen, controller.signal)
+        const seen = new Set(base.map((row) => sanKey(row.san)))
+        const extra: ChoiceRow[] = []
+        for (const line of lines) {
+          if (base.length + extra.length >= 5) break
+          const san = sanForUci(ply.fen, line.uci)
+          if (!san || seen.has(sanKey(san))) continue
+          extra.push({
+            san,
+            pct: null,
+            games: null,
+            engine: true,
+            engineSource: 'browser',
+            engineLabel: sideEngineLabel(
+              { engineCp: line.whiteCp, engineMate: line.whiteMate },
+              side,
+            ),
+            engineTip: line.depth > 0 ? `Depth ${line.depth}` : 'Engine score',
+            marks: extra.length === 0 ? ['best'] : [],
+          })
+        }
+        return [...base, ...extra]
+      } catch {
+        return base
+      }
+    }
+
     void fetchLichessExplorer(
       ply.fen,
       ratings.length > 0 ? ratings : allRatingBands(),
       controller.signal,
       { speeds },
     )
-      .then((position) => {
-        const side = ply.color === 'black' ? 'black' : 'white'
-        setRows(choiceRowsForPly(position.moves, side, ply.san))
+      .then(async (position) => {
+        const base = choiceRowsForPly(position.moves, side, ply.san)
+        setRows(base)
         setStatus('ready')
+        const filled = await fillFromEngine(base)
+        if (!controller.signal.aborted) setRows(filled)
       })
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setStatus('error')
         const advised = advisedEngineMove(null, ply.bestSan)
-        if (advised) {
-          setRows([
-            {
-              san: advised.san,
-              pct: null,
-              games: null,
-              engine: true,
-              engineSource: advised.source,
-              engineLabel: null,
-              engineTip: null,
-              marks: [],
-            },
-          ])
-        }
+        const base: ChoiceRow[] = advised
+          ? [
+              {
+                san: advised.san,
+                pct: null,
+                games: null,
+                engine: true,
+                engineSource: advised.source,
+                engineLabel: null,
+                engineTip: null,
+                marks: [],
+              },
+            ]
+          : []
+        setRows(base)
+        const filled = await fillFromEngine(base)
+        if (!controller.signal.aborted) setRows(filled)
       })
     return () => controller.abort()
   }, [ply.bestSan, ply.color, ply.fen, ply.san])
