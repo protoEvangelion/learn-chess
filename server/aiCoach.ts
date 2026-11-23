@@ -7,10 +7,13 @@ export const EXPLAIN_MODEL =
 /**
  * DeepSeek V4.1 Flash effort, via the AI SDK (AI Gateway).
  * Catalog effort for this model: none | low | high | max.
- * `low` is that provider's low setting. It still asks for a normal text answer.
- * Do not set this back to `none` — that turns thinking off.
+ *
+ * The coach is already grounded with Stockfish lines and explorer numbers, so
+ * it does not need private reasoning. At `low`, the model spent the whole
+ * output budget on reasoning and returned no answer text for longer review
+ * questions ("AI Gateway returned no text"). Keep this at `none`.
  */
-export const COACH_REASONING = 'low' as const
+export const COACH_REASONING = 'none' as const
 
 function deltaText(part: { text?: unknown; delta?: unknown }): string {
   if (typeof part.text === 'string') return part.text
