@@ -150,6 +150,13 @@ function caroFamilyDetails(id: string) {
       whitePlan: 'Trade knights on f6, develop the bishop to d3, and bring the queen to c2.',
       blackPlan: 'Recapture with the e-pawn, castle, put the bishop on d6, and play …h6.',
     },
+    'caro-alien-gambit': {
+      themes: ['Alien Gambit', 'knight sack on f7', 'light squares'],
+      whitePlan:
+        'Jump the knight to g5, sack it on f7, and hunt the light squares around the exposed king on f7.',
+      blackPlan:
+        'Take on f7, then hit d4 with c5 and keep developing. Avoid Bg4, which drops the piece to Ne5+.',
+    },
     'caro-maroczy': {
       themes: ['Maróczy', 'gambit', 'open center'],
       whitePlan: 'Play f3, recapture on e4 with the f-pawn, and develop the bishop to c4.',
