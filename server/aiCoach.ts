@@ -8,12 +8,13 @@ export const EXPLAIN_MODEL =
  * DeepSeek V4.1 Flash effort, via the AI SDK (AI Gateway).
  * Catalog effort for this model: none | low | high | max.
  *
- * The coach is already grounded with Stockfish lines and explorer numbers, so
- * it does not need private reasoning. At `low`, the model spent the whole
- * output budget on reasoning and returned no answer text for longer review
- * questions ("AI Gateway returned no text"). Keep this at `none`.
+ * Keep `low` for coaching quality, but give the model enough output budget:
+ * reasoning tokens count against maxOutputTokens. At 1,200/4,000 the model
+ * spent the whole budget thinking and returned no answer text for longer
+ * review questions ("AI Gateway returned no text"). 8,000 leaves room for
+ * reasoning plus the answer.
  */
-export const COACH_REASONING = 'none' as const
+export const COACH_REASONING = 'low' as const
 
 function deltaText(part: { text?: unknown; delta?: unknown }): string {
   if (typeof part.text === 'string') return part.text
@@ -158,7 +159,7 @@ async function readCoachAnswer(
     model: EXPLAIN_MODEL,
     prompt,
     abortSignal: signal,
-    maxOutputTokens: 1_200,
+    maxOutputTokens: 8_000,
     timeout: 55_000,
     reasoning: COACH_REASONING,
   })
