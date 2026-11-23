@@ -1292,6 +1292,34 @@ export default function App() {
     movingTo,
     turn,
   ])
+  // Drill opponent: play their book moves so the human only moves their side.
+  // Without this, a Caro-Kann line starts on White's move and looks stuck.
+  useEffect(() => {
+    if (!drillLine || drillStatus !== 'playing') return
+    if (drillMistake || drillPreview) return
+    if (movingTo || pendingEngineMove) return
+    if (isPlayerPly(drillPlyIndex, drillLine.side ?? 'white')) return
+    if (history.length !== drillPlyIndex) return
+    const san = expectedSan(drillLine, drillPlyIndex)
+    if (!san) return
+    const timer = window.setTimeout(() => {
+      const move = sanToBoardMove(board, history, turn, san)
+      if (move) setPendingEngineMove(move)
+    }, 600)
+    return () => window.clearTimeout(timer)
+  }, [
+    board,
+    drillLine,
+    drillMistake,
+    drillPlyIndex,
+    drillPreview,
+    drillStatus,
+    history,
+    movingTo,
+    pendingEngineMove,
+    turn,
+  ])
+
   // Danger/idea preview plays its own short line. That is a button the
   // person pressed, not Black answering a game.
   useEffect(() => {
