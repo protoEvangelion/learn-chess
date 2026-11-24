@@ -1,0 +1,18 @@
+#!/bin/sh
+# Link gitignored env files from the main checkout into a new worktree.
+# T3 Code runs this hook after `git worktree add`, and git runs it on checkout.
+# Only symlinks are created, and only when the target is missing, so a real
+# .env.local in a worktree is never replaced.
+[ "$3" = "1" ] || exit 0
+
+main=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+[ -n "$main" ] || exit 0
+[ "$main" = "$(git rev-parse --show-toplevel)" ] && exit 0
+
+for f in .env.local .env; do
+  [ -f "$main/$f" ] || continue
+  [ -e "$f" ] && continue
+  ln -s "$main/$f" "$f" && echo "post-checkout: linked $f -> $main/$f"
+done
+
+exit 0
