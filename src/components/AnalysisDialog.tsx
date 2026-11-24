@@ -28,6 +28,7 @@ import {
 import {
   REPORT_TAG_ORDER,
   TAG_LABEL,
+  TAG_RULE,
   type AnalysisReport,
   type MoveQualityTag,
   type ReviewPly,
@@ -46,11 +47,9 @@ import {
 import {
   advisedEngineMove,
   bestExplorerEngineMove,
-  engineAdviceLabel,
   rankExplorerEngineMoves,
   sideEngineLabel,
   worstWhiteExplorerMove,
-  type EngineAdviceSource,
 } from '@/lib/explorerEngineMove'
 import { engineFillLines } from '@/lib/engineFill'
 import {
@@ -169,6 +168,7 @@ function TagGlyph({ tag }: { tag: MoveQualityTag }) {
 }
 
 function formatGraphEval(label: string | undefined, pawns: number) {
+  if (label === '#') return '#'
   if (label && /m/i.test(label)) {
     return label.startsWith('-') || label.startsWith('+') ? label : `+${label}`
   }
@@ -321,16 +321,16 @@ export function EvalGraph({
           />
         </g>
       </svg>
-      <span className="analysis-graph-name is-black">
-        <span className="analysis-graph-name-text">{blackName}</span>
-        <span className="analysis-graph-acc">
-          {blackAccuracy != null ? `${blackAccuracy}%` : 'N/A'}
-        </span>
-      </span>
       <span className="analysis-graph-name is-white">
         <span className="analysis-graph-name-text">{whiteName}</span>
         <span className="analysis-graph-acc">
           {whiteAccuracy != null ? `${whiteAccuracy}%` : 'N/A'}
+        </span>
+      </span>
+      <span className="analysis-graph-name is-black">
+        <span className="analysis-graph-name-text">{blackName}</span>
+        <span className="analysis-graph-acc">
+          {blackAccuracy != null ? `${blackAccuracy}%` : 'N/A'}
         </span>
       </span>
       <div
@@ -358,8 +358,6 @@ type ChoiceRow = {
   pct: number | null
   games: number | null
   engine: boolean
-  /** Set on the green ENGINE row. Hover says which engine picked it. */
-  engineSource?: EngineAdviceSource
   /** Side-to-move eval. Plus is good for the side about to play. */
   engineLabel: string | null
   engineTip: string | null
@@ -389,11 +387,55 @@ function savedEngineTip(depth: number | null): string {
   return depth !== null && depth > 0 ? `Depth ${depth}` : 'Saved engine score'
 }
 
+/**
+ * Engine score of the move that was actually played, from the mover's side.
+ * Every other row in the table is scored for the side to move, so the played
+ * row has to match or it looks like the engine had nothing to say about it.
+ */
+function playedRowEngineLabel(ply: ReviewPly): string | null {
+  const label = ply.playedEval?.trim()
+  if (label === '#') return '#'
+  const mate = label?.match(/^(-)?M(\d+)$/i)
+  if (mate) {
+    const forWhite = mate[1] ? -Number(mate[2]) : Number(mate[2])
+    const shown = ply.color === 'white' ? forWhite : -forWhite
+    return shown > 0 ? `+M${shown}` : `-M${Math.abs(shown)}`
+  }
+  const pawns = ply.evalPawns
+  if (pawns == null || !Number.isFinite(pawns)) return null
+  const shown = ply.color === 'white' ? pawns : -pawns
+  const text = Math.abs(shown).toFixed(2)
+  if (shown > 0) return `+${text}`
+  if (shown < 0) return `-${text}`
+  return '0.00'
+}
+
+/**
+ * Give the played row the same engine score column as the other rows.
+ * The explorer detail and the engine fill both leave it blank, which made the
+ * top row look like the engine had no opinion on the move that was played.
+ */
+function withPlayedRowEval(rows: ChoiceRow[], ply: ReviewPly): ChoiceRow[] {
+  const label = playedRowEngineLabel(ply)
+  if (!label) return rows
+  const key = sanKey(ply.san)
+  return rows.map((row) =>
+    sanKey(row.san) === key && !row.engineLabel
+      ? {
+          ...row,
+          engineLabel: label,
+          engineTip: 'Stockfish score after the move you played',
+        }
+      : row,
+  )
+}
+
 /** Top explorer-engine rows for this ply, plus the played move when it missed the cut. */
 function choiceRowsForPly(
   moves: readonly ExplorerMove[],
   side: 'white' | 'black',
   playedSan: string,
+  playedEngineLabel: string | null,
 ): ChoiceRow[] {
   const rate = side === 'black' ? blackWinRate : whiteWinRate
   const ranked = rankExplorerEngineMoves(moves, side, {
@@ -431,7 +473,6 @@ function choiceRowsForPly(
       pct: games > 0 ? Math.round(rate(item.move) * 100) : null,
       games: games > 0 ? games : null,
       engine,
-      engineSource: engine ? 'explorer' : undefined,
       engineLabel: item.label,
       engineTip: item.label ? savedEngineTip(item.move.engineDepth) : null,
       marks: marks.get(item.move.uci) ?? [],
@@ -443,8 +484,10 @@ function choiceRowsForPly(
       pct: null,
       games: null,
       engine: false,
-      engineLabel: null,
-      engineTip: null,
+      engineLabel: playedEngineLabel,
+      engineTip: playedEngineLabel
+        ? 'Stockfish score after the move you played'
+        : null,
       marks: [],
     })
   }
@@ -489,7 +532,6 @@ function MoveChoices({
             pct: null,
             games: null,
             engine: true,
-            engineSource: 'browser',
             engineLabel: sideEngineLabel(
               { engineCp: line.whiteCp, engineMate: line.whiteMate },
               side,
@@ -511,11 +553,19 @@ function MoveChoices({
       { speeds },
     )
       .then(async (position) => {
-        const base = choiceRowsForPly(position.moves, side, ply.san)
+        const base = withPlayedRowEval(
+          choiceRowsForPly(
+            position.moves,
+            side,
+            ply.san,
+            playedRowEngineLabel(ply),
+          ),
+          ply,
+        )
         setRows(base)
         setStatus('ready')
         const filled = await fillFromEngine(base)
-        if (!controller.signal.aborted) setRows(filled)
+        if (!controller.signal.aborted) setRows(withPlayedRowEval(filled, ply))
       })
       .catch(async (err: unknown) => {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -528,16 +578,15 @@ function MoveChoices({
                 pct: null,
                 games: null,
                 engine: true,
-                engineSource: advised.source,
                 engineLabel: null,
                 engineTip: null,
                 marks: [],
               },
             ]
           : []
-        setRows(base)
+        setRows(withPlayedRowEval(base, ply))
         const filled = await fillFromEngine(base)
-        if (!controller.signal.aborted) setRows(filled)
+        if (!controller.signal.aborted) setRows(withPlayedRowEval(filled, ply))
       })
     return () => controller.abort()
   }, [ply.bestSan, ply.color, ply.fen, ply.san])
@@ -598,18 +647,6 @@ function MoveChoices({
                             {MOVE_MARK_GLYPH[mark]}
                           </span>
                         ))}
-                      </span>
-                    ) : null}
-                    {row.engine ? (
-                      <span
-                        className="analysis-move-table-tag"
-                        title={
-                          row.engineSource
-                            ? engineAdviceLabel(row.engineSource)
-                            : undefined
-                        }
-                      >
-                        engine
                       </span>
                     ) : null}
                     {played ? (
@@ -1030,7 +1067,11 @@ export const AnalysisDialog: FC<Props> = ({
                     <span title={blackLabel}>{blackLabel}</span>
                   </div>
                   {REPORT_TAG_ORDER.map((tag) => (
-                    <div key={tag} className="analysis-counts-row">
+                    <div
+                      key={tag}
+                      className="analysis-counts-row"
+                      title={TAG_RULE[tag]}
+                    >
                       <span className="analysis-counts-label">
                         <TagGlyph tag={tag} />
                         {TAG_LABEL[tag]}

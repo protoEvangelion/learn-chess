@@ -1710,14 +1710,21 @@ body.is-review-coach-resizing canvas {
   white-space: nowrap;
 }
 
-.analysis-graph-name.is-black {
+/* White leads up top, black leads underneath - the same side each name sits on. */
+.analysis-graph-name.is-white {
   top: 0.28rem;
   color: #fff;
+  background: rgba(10, 8, 18, 0.6);
+  padding: 0.08rem 0.3rem;
+  border-radius: 4px;
 }
 
-.analysis-graph-name.is-white {
+.analysis-graph-name.is-black {
   bottom: 0.28rem;
-  color: #111;
+  color: #fff;
+  background: rgba(10, 8, 18, 0.6);
+  padding: 0.08rem 0.3rem;
+  border-radius: 4px;
 }
 
 .analysis-graph-acc {
@@ -1735,12 +1742,14 @@ body.is-review-coach-resizing canvas {
   cursor: crosshair;
 }
 
+/* One dark plate for both halves, so only the side that leads is coloured:
+   white area above the zero line, near-black area below it. */
 .analysis-graph-white {
-  fill: #2a2a2a;
+  fill: #2f2f38;
 }
 
 .analysis-graph-black {
-  fill: #f2f2f2;
+  fill: #2f2f38;
 }
 
 .analysis-graph-tip {
@@ -1794,11 +1803,11 @@ body.is-review-coach-resizing canvas {
 }
 
 .analysis-graph-area-white {
-  fill: rgba(255, 255, 255, 0.88);
+  fill: rgba(255, 255, 255, 0.92);
 }
 
 .analysis-graph-area-black {
-  fill: rgba(22, 22, 22, 0.82);
+  fill: #08080d;
 }
 
 .analysis-graph-line {
@@ -1835,6 +1844,10 @@ body.is-review-coach-resizing canvas {
   gap: 0.35rem;
   align-items: center;
   font-size: 0.82rem;
+}
+
+.analysis-counts-row {
+  cursor: help;
 }
 
 .analysis-counts-head {
@@ -2533,11 +2546,6 @@ body.is-review-coach-resizing canvas {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--sw-teal);
-}
-
-.analysis-move-table tbody tr.is-engine .analysis-move-table-tag {
-  color: #4ade80;
-  cursor: help;
 }
 
 .analysis-move-table-tag.is-played {

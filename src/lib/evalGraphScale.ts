@@ -30,6 +30,10 @@ export function seriesPawnValue(point: {
 }): number {
   const label = point.label?.trim()
   if (label && label !== '—') {
+    // `#` is a mate already on the board, so the stored pawns carry its sign.
+    if (label === '#') {
+      return Number.isFinite(point.pawns) ? point.pawns : 12
+    }
     const mate = label.match(/^(-)?M(\d+)$/i)
     if (mate) {
       const lead = mateLeadPawns(Number(mate[2]))

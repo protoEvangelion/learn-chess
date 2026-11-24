@@ -49,6 +49,21 @@ export const TAG_LABEL: Record<MoveQualityTag, string> = {
   theory: 'Theory',
 }
 
+/**
+ * Why a move got its tag, in pawns of centipawn loss. Shown as the legend
+ * tooltip so the numbers on screen are never a mystery.
+ */
+export const TAG_RULE: Record<MoveQualityTag, string> = {
+  theory:
+    'Opening (first 8 plies): the engine top move, or at most 0.15 pawns worse.',
+  best: 'The engine top move (or at most 0.05 pawns worse).',
+  excellent: 'Lost at most 0.20 pawns against the engine top move.',
+  okay: 'Lost 0.20 to 0.50 pawns against the engine top move.',
+  inaccuracy: 'Lost 0.50 to 1.00 pawns against the engine top move.',
+  mistake: 'Lost 1.00 to 2.00 pawns against the engine top move.',
+  blunder: 'Lost 2.00 pawns or more, or missed a forced mate.',
+}
+
 /** Rough accuracy contribution per classified move (0–100). */
 const TAG_ACCURACY: Record<MoveQualityTag, number> = {
   best: 100,
@@ -136,6 +151,43 @@ function sideScore(line: BestMoveResult, side: Color): number | null {
   }
   if (line.whiteCp == null) return null
   return side === 'white' ? line.whiteCp : -line.whiteCp
+}
+
+/**
+ * Score for a position Stockfish will not search: checkmate, stalemate, or a
+ * dead draw. Without this the last played move of every finished game kept no
+ * eval and no tag (the engine only answers `bestmove (none)`), so the graph
+ * stopped one move before the finish and the mating move went unrated.
+ */
+function terminalLine(fen: string, mover: Color): BestMoveResult | null {
+  let chess: Chess
+  try {
+    chess = new Chess(fen)
+  } catch {
+    return null
+  }
+  if (!chess.isGameOver()) return null
+
+  const base: BestMoveResult = {
+    uci: '',
+    from: '',
+    to: '',
+    evalLabel: '0.00',
+    whiteCp: 0,
+    whiteMate: null,
+    depth: 0,
+    line: '',
+  }
+  if (!chess.isCheckmate()) return base
+
+  // Mate is already on the board: score it as delivered (mate in 0) for the
+  // side that just moved. `#` is what the move list and graph show.
+  return {
+    ...base,
+    whiteCp: null,
+    whiteMate: mover === 'white' ? 1 : -1,
+    evalLabel: '#',
+  }
 }
 
 function evalToPawns(line: BestMoveResult | null): number | null {
@@ -373,7 +425,8 @@ export async function analyzeGamePlies(
     const afterFen = next
       ? boardToFen(next.board, next.piece.color, history.slice(0, i + 1))
       : finalFen
-    const after = await evalFen(afterFen, signal)
+    const after =
+      (await evalFen(afterFen, signal)) ?? terminalLine(afterFen, side)
 
     done += 1
     onProgress(done, total)
@@ -391,7 +444,9 @@ export async function analyzeGamePlies(
       scoreBefore != null && scoreAfter != null
         ? Math.max(0, scoreBefore - scoreAfter)
         : 0
+    // `#` is the mate this very move delivered, so it is never "missed".
     const missedMate =
+      after.evalLabel !== '#' &&
       before.whiteMate != null &&
       (side === 'white' ? before.whiteMate > 0 : before.whiteMate < 0) &&
       after.whiteMate !== before.whiteMate
