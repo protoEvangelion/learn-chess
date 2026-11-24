@@ -4,11 +4,12 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { explainApiPlugin } from './server/explainApi.ts'
+import { pwaPlugin } from './vite-plugins/pwa.ts'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), explainApiPlugin()],
+  plugins: [react(), tailwindcss(), explainApiPlugin(), pwaPlugin()],
   server: {
     // This computer only. The Mac uses the Vercel site, which calls the gateway.
     host: '127.0.0.1',

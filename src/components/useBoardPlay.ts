@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type { Board, Position, Tile } from '@logic/board'
 import { copyBoard } from '@logic/board'
 import type { Color, GameOverType, Move, Piece } from '@logic/pieces'
@@ -118,6 +118,11 @@ export function useBoardPlay({
   } | null>(null)
   /** Legal dest under pointer while a piece is selected — drives after-move rings. */
   const [hoveredDestKey, setHoveredDestKey] = useState<string | null>(null)
+  /**
+   * Ring colours trail the finger by a frame instead of blocking it: the scan
+   * is a full-board attack map, and a drag crosses squares every few frames.
+   */
+  const settledDestKey = useDeferredValue(hoveredDestKey)
 
   const movePreviews = useMemo(
     () =>
@@ -130,16 +135,16 @@ export function useBoardPlay({
   const safetyBySquare = useMemo(() => {
     if (!showMoveIndicators) return null
     let viewBoard = board
-    if (selected && hoveredDestKey) {
+    if (selected && settledDestKey) {
       const move = moves.find(
-        (m) => positionKey(m.newPosition) === hoveredDestKey,
+        (m) => positionKey(m.newPosition) === settledDestKey,
       )
       if (move) viewBoard = applyMoveOnCopy(board, move)
     }
     return pieceSafetyMap(viewBoard, playBothSides ? turn : playerColor)
   }, [
     board,
-    hoveredDestKey,
+    settledDestKey,
     moves,
     playBothSides,
     playerColor,
@@ -191,6 +196,8 @@ export function useBoardPlay({
     clientX: number,
     clientY: number,
     destKey: string | null = null,
+    /** Off for touch: the tooltip would sit under the finger that is dragging. */
+    showTip = true,
   ) => {
     if (!preview) {
       setPreviewTip(null)
@@ -198,6 +205,10 @@ export function useBoardPlay({
       return
     }
     if (destKey != null) setHoveredDestKey(destKey)
+    if (!showTip) {
+      setPreviewTip(null)
+      return
+    }
     setPreviewTip({
       lines: tooltipLinesForPreview(preview),
       x: clientX,

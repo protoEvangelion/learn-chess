@@ -7,6 +7,18 @@
   box-sizing: border-box;
 }
 
+/*
+ * iOS standalone runs under the status bar and the home indicator once the app
+ * is installed, and reports those insets here. They are 0 in a browser tab, so
+ * every rule below is safe for both.
+ */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
 @custom-variant dark (&:is(.dark *));
 @custom-variant data-highlighted (&:is([data-highlighted]));
 
@@ -206,7 +218,7 @@
   --sw-accent-ink: #041512;
   --coach-panel-width: 440px;
   /* Keep top game toolbar clear of coach/settings drawers */
-  --hud-clearance: 4.75rem;
+  --hud-clearance: calc(4.75rem + var(--safe-top));
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -254,6 +266,10 @@ body,
   font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
   background: var(--sw-bg0);
   color: var(--sw-text);
+  /* No grey flash on tap, no double-tap zoom delay, no text autosizing. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
 }
 
 .app {
@@ -337,7 +353,9 @@ body,
   /* Steps above 1 can exceed the stage; scroll instead of clipping the
      top-left corner (plain `center` clips the start of an overflow). */
   overflow: auto;
-  padding: 4.75rem 1.25rem 1.25rem;
+  overscroll-behavior: contain;
+  padding: calc(4.75rem + var(--safe-top)) calc(1.25rem + var(--safe-right))
+    calc(1.25rem + var(--safe-bottom)) calc(1.25rem + var(--safe-left));
   container-type: size;
   background:
     radial-gradient(ellipse at center, #3c3834 0%, #262421 70%);
@@ -358,7 +376,12 @@ body,
   grid-template-rows: repeat(8, 1fr);
   container-type: size;
   user-select: none;
-  touch-action: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* Squares set their own value: a piece you can move swallows the gesture,
+     an empty square lets a zoomed board scroll. A parent `none` would
+     intersect those away, so this stays auto. */
+  touch-action: auto;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
@@ -373,6 +396,11 @@ body,
   background: transparent;
   cursor: pointer;
   overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  /* A long press on a piece must not start a selection or the share sheet. */
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 
 .board-2d-sq:focus-visible {
@@ -397,8 +425,13 @@ body,
 
 .board-2d-ghost {
   position: fixed;
+  top: 0;
+  left: 0;
   z-index: 70;
+  /* Position comes from translate3d written straight to the node, so a drag
+     never has to re-render the board. */
   transform: translate(-50%, -55%);
+  will-change: transform;
   object-fit: contain;
   pointer-events: none;
   filter: drop-shadow(0 10px 8px rgba(0, 0, 0, 0.35));
@@ -544,7 +577,8 @@ body,
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-  padding: 0.85rem 1.15rem;
+  padding: calc(0.85rem + var(--safe-top)) calc(1.15rem + var(--safe-right)) 0.85rem
+    calc(1.15rem + var(--safe-left));
   pointer-events: none;
   background: linear-gradient(
     180deg,
@@ -598,7 +632,7 @@ body,
 .hud-orbit {
   position: absolute;
   left: 50%;
-  top: 0.85rem;
+  top: calc(0.85rem + var(--safe-top));
   transform: translateX(-50%);
   pointer-events: auto;
   z-index: 2;
@@ -5103,4 +5137,96 @@ body.is-review-coach-resizing canvas {
   text-transform: uppercase;
   color: var(--sw-teal);
   background: color-mix(in srgb, var(--sw-teal) 10%, transparent);
+}
+
+/* Installed on iOS: right-edge drawers must clear the home indicator and the
+   notch side in landscape. Zero in a browser tab, so nothing moves there. */
+.settings-backdrop,
+.import-backdrop,
+.analysis-backdrop,
+.coach-backdrop,
+.game-backdrop,
+.drill-backdrop {
+  padding-right: var(--safe-right);
+  padding-bottom: var(--safe-bottom);
+}
+
+/* iOS has no install prompt; this says where the menu is, once. */
+.install-hint {
+  position: fixed;
+  z-index: 60;
+  left: calc(0.75rem + var(--safe-left));
+  right: calc(0.75rem + var(--safe-right));
+  bottom: calc(0.75rem + var(--safe-bottom));
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  width: min(24rem, calc(100% - 1.5rem - var(--safe-left) - var(--safe-right)));
+  margin-inline: auto;
+  padding: 0.7rem 0.55rem 0.7rem 0.8rem;
+  border-radius: 14px;
+  border: 1px solid var(--sw-border);
+  background: linear-gradient(180deg, var(--sw-panel-2) 0%, var(--sw-panel) 100%);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  animation: install-hint-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes install-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.install-hint-icon {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--sw-teal) 16%, transparent);
+  color: var(--sw-teal);
+}
+
+.install-hint-text {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--sw-muted);
+  text-wrap: balance;
+}
+
+.install-hint-text strong {
+  color: var(--sw-text);
+  font-weight: 650;
+}
+
+.install-hint-dismiss {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--sw-muted);
+}
+
+.install-hint-dismiss:active {
+  background: color-mix(in srgb, var(--sw-teal) 18%, transparent);
+  color: var(--sw-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .install-hint {
+    animation: none;
+  }
 }

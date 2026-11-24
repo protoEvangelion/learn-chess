@@ -136,6 +136,22 @@ Without the sketch, that run took **1 hr 43 min**. The first build, also without
 
 The two sketch files are popularity counters from pass 1. Pass 2 reads them and skips a board that looks like it appeared in fewer than 100 games. The empty `group-position.done` and `group-move.done` files mean that filter already finished. Deleting a marker makes the next filter pass do that table again.
 
+## Install as an app (iOS / iPadOS)
+
+Open the site in Safari, then **Share -> Add to Home Screen**. It launches standalone: no address bar, a launch screen instead of a white flash, and content laid out inside the notch and home-indicator insets. Safari never shows a native install prompt, so the app shows its own one-time hint.
+
+- `public/manifest.webmanifest` + `public/icons/` (192, 512, maskable, 180 apple-touch-icon)
+- `public/splash/` launch screens, matched in `index.html` by device media query
+- `pwa/sw.js` is the service worker source; `vite-plugins/pwa.ts` fills in a content hash and the precache list and writes `dist/sw.js` on build
+- The worker precaches the shell, fonts, 2D sprites and UI icons, never touches `/api/*`, and caches the heavy 3D assets only after something requests them
+- Registering happens only in production builds, and a new worker takes over with one clean reload
+
+Regenerate icons and launch screens after a brand change:
+
+```bash
+node scripts/build-pwa-icons.mjs   # needs ffmpeg on PATH
+```
+
 ## Assets
 
 Curated themes live under `public/assets/` (boards, pieces, rooms) and `public/sfx/`. Regenerate generated GLBs/SFX with:
