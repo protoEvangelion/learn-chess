@@ -198,7 +198,8 @@ export function EvalGraph({
   const [hoverPly, setHoverPly] = useState<number | null>(null)
   const w = 320
   const h = 66
-  const padX = 8
+  // No side padding: the filled area runs edge to edge like the review graph.
+  const padX = 0
   const padY = 8
   if (series.length === 0) {
     return <div className="analysis-graph is-empty">No eval data yet</div>
