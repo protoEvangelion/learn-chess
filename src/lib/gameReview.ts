@@ -121,7 +121,19 @@ export type ReportSummary = {
   whiteCounts: SideCounts
   blackCounts: SideCounts
   /** Eval after each ply, White-pov pawns, for the graph. */
-  evalSeries: Array<{ ply: number; pawns: number; label?: string }>
+  evalSeries: EvalSeriesPoint[]
+}
+
+/** One point per played move, White-pov pawns, plus what tagged it. */
+export type EvalSeriesPoint = {
+  ply: number
+  pawns: number
+  label?: string
+  /** Quality tag of the move that produced this point. */
+  tag?: MoveQualityTag
+  san?: string
+  moveNo?: number
+  color?: Color
 }
 
 export type AnalysisReport = {
@@ -366,7 +378,7 @@ export function buildReportSummary(plies: ReviewPly[]): ReportSummary {
   const blackCounts = emptyCounts()
   const whiteScores: number[] = []
   const blackScores: number[] = []
-  const evalSeries: Array<{ ply: number; pawns: number; label?: string }> = []
+  const evalSeries: EvalSeriesPoint[] = []
 
   for (const ply of plies) {
     if (ply.evalPawns != null) {
@@ -374,6 +386,10 @@ export function buildReportSummary(plies: ReviewPly[]): ReportSummary {
         ply: ply.ply,
         pawns: ply.evalPawns,
         label: ply.playedEval,
+        tag: ply.tag,
+        san: ply.san,
+        moveNo: ply.moveNo,
+        color: ply.color,
       })
     }
     if (!ply.tag) continue

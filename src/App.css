@@ -1723,18 +1723,39 @@ body.is-review-coach-resizing canvas {
   border-radius: 8px;
 }
 
-.analysis-graph-name {
-  position: absolute;
-  left: 0.4rem;
-  z-index: 1;
+/* Names sit above the plot, not on it, so the curve and its dots stay clear. */
+.analysis-graph-players {
   display: flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  max-width: calc(100% - 0.8rem);
-  pointer-events: none;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.25rem;
   font-size: 0.68rem;
   font-weight: 650;
-  line-height: 1;
+  line-height: 1.1;
+}
+
+.analysis-graph-player {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--sw-text);
+}
+
+.analysis-graph-chip {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+.analysis-graph-player.is-black .analysis-graph-chip {
+  background: #2f2f38;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+.analysis-graph-player.is-white .analysis-graph-chip {
+  background: #f4f4f4;
 }
 
 .analysis-graph-name-text {
@@ -1744,25 +1765,9 @@ body.is-review-coach-resizing canvas {
   white-space: nowrap;
 }
 
-/* Black labels the dark plate up top, white labels the filled mass below. */
-.analysis-graph-name.is-black {
-  top: 0.28rem;
-  color: #fff;
-  background: rgba(8, 8, 13, 0.55);
-  padding: 0.08rem 0.3rem;
-  border-radius: 4px;
-}
-
-.analysis-graph-name.is-white {
-  bottom: 0.28rem;
-  color: #161616;
-  background: rgba(255, 255, 255, 0.65);
-  padding: 0.08rem 0.3rem;
-  border-radius: 4px;
-}
-
 .analysis-graph-acc {
   flex: none;
+  color: var(--sw-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1841,6 +1846,42 @@ body.is-review-coach-resizing canvas {
   stroke-width: 1.2;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+/* Move markers. Same colours as the move-list tags, dark ring so a dot reads
+   on both the white mass and the dark plate. */
+.analysis-graph-dot {
+  stroke: rgba(16, 16, 24, 0.8);
+  stroke-width: 1.1;
+  cursor: help;
+}
+
+.analysis-graph-dot.is-best {
+  fill: #4ade80;
+}
+
+.analysis-graph-dot.is-excellent {
+  fill: #86efac;
+}
+
+.analysis-graph-dot.is-okay {
+  fill: #cbd5e1;
+}
+
+.analysis-graph-dot.is-inaccuracy {
+  fill: #facc15;
+}
+
+.analysis-graph-dot.is-mistake {
+  fill: #fb923c;
+}
+
+.analysis-graph-dot.is-blunder {
+  fill: #f87171;
+}
+
+.analysis-graph-dot.is-theory {
+  fill: #d2b48c;
 }
 
 .analysis-graph-cursor {

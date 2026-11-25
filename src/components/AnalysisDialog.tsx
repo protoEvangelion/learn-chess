@@ -30,6 +30,7 @@ import {
   TAG_LABEL,
   TAG_RULE,
   type AnalysisReport,
+  type EvalSeriesPoint,
   type MoveQualityTag,
   type ReviewPly,
 } from '@/lib/gameReview'
@@ -52,6 +53,7 @@ import {
   worstWhiteExplorerMove,
 } from '@/lib/explorerEngineMove'
 import { engineFillLines } from '@/lib/engineFill'
+import { pickGraphDots } from '@/lib/evalGraphDots'
 import {
   explorerMoveMarks,
   MOVE_MARK_GLYPH,
@@ -187,7 +189,7 @@ export function EvalGraph({
   whiteAccuracy,
   blackAccuracy,
 }: {
-  series: Array<{ ply: number; pawns: number; label?: string }>
+  series: EvalSeriesPoint[]
   scrubIndex: number
   onScrubTo: (index: number) => void
   whiteName: string
@@ -197,7 +199,8 @@ export function EvalGraph({
 }) {
   const [hoverPly, setHoverPly] = useState<number | null>(null)
   const w = 320
-  const h = 66
+  // A little taller than the old strip so dots and the curve breathe.
+  const h = 76
   // No side padding: the filled area runs edge to edge like the review graph.
   const padX = 0
   const padY = 8
@@ -228,6 +231,26 @@ export function EvalGraph({
     `L${pts[pts.length - 1].x.toFixed(1)},${h}`,
     'Z',
   ].join(' ')
+  // Dots mark the moves that changed the game, the way the review graph does.
+  // The swing is what the mover gained, so a save reads the same for either side.
+  const dotCandidates = pts.slice(1).map((p, i) => {
+    const before = plotted[i]
+    const after = plotted[i + 1]
+    return {
+      ply: p.ply,
+      // `x` is 0-1 for spacing rules, `at` is the SVG coordinate to draw at.
+      x: (p.x - padX) / Math.max(1, w - padX * 2),
+      at: p.x,
+      tag: (p.tag ?? 'okay') as MoveQualityTag,
+      swing: p.color === 'black' ? before - after : after - before,
+      mate: p.label === '#',
+      san: p.san,
+      moveNo: p.moveNo,
+      color: p.color,
+      y: p.y,
+    }
+  })
+  const dots = pickGraphDots(dotCandidates)
   const focus =
     pts.find((p) => p.ply === (hoverPly ?? scrubIndex)) ??
     pts[pts.length - 1]
@@ -254,6 +277,22 @@ export function EvalGraph({
 
   return (
     <div className="analysis-graph-wrap">
+      <div className="analysis-graph-players">
+        <span className="analysis-graph-player is-black" title={blackName}>
+          <span className="analysis-graph-chip" aria-hidden="true" />
+          <span className="analysis-graph-name-text">{blackName}</span>
+          <span className="analysis-graph-acc">
+            {blackAccuracy != null ? `${blackAccuracy}%` : 'N/A'}
+          </span>
+        </span>
+        <span className="analysis-graph-player is-white" title={whiteName}>
+          <span className="analysis-graph-chip" aria-hidden="true" />
+          <span className="analysis-graph-name-text">{whiteName}</span>
+          <span className="analysis-graph-acc">
+            {whiteAccuracy != null ? `${whiteAccuracy}%` : 'N/A'}
+          </span>
+        </span>
+      </div>
       <svg
         className="analysis-graph"
         viewBox={`0 0 ${w} ${h}`}
@@ -279,6 +318,19 @@ export function EvalGraph({
             className="analysis-graph-zero"
           />
           <path d={d} className="analysis-graph-line" fill="none" />
+          {dots.map((dot) => (
+            <circle
+              key={dot.ply}
+              cx={dot.at.toFixed(1)}
+              cy={dot.y.toFixed(1)}
+              r="3"
+              className={`analysis-graph-dot is-${dot.tag}`}
+            >
+              <title>
+                {`${dot.moveNo ?? '?'}${dot.color === 'black' ? '...' : '.'} ${dot.san ?? ''} - ${TAG_LABEL[dot.tag]}`}
+              </title>
+            </circle>
+          ))}
           <line
             x1={focus.x}
             x2={focus.x}
@@ -288,18 +340,6 @@ export function EvalGraph({
           />
         </g>
       </svg>
-      <span className="analysis-graph-name is-black">
-        <span className="analysis-graph-name-text">{blackName}</span>
-        <span className="analysis-graph-acc">
-          {blackAccuracy != null ? `${blackAccuracy}%` : 'N/A'}
-        </span>
-      </span>
-      <span className="analysis-graph-name is-white">
-        <span className="analysis-graph-name-text">{whiteName}</span>
-        <span className="analysis-graph-acc">
-          {whiteAccuracy != null ? `${whiteAccuracy}%` : 'N/A'}
-        </span>
-      </span>
       <div
         className={
           tipAbove ? 'analysis-graph-tip' : 'analysis-graph-tip is-below'
