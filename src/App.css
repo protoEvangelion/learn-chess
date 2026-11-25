@@ -1744,19 +1744,19 @@ body.is-review-coach-resizing canvas {
   white-space: nowrap;
 }
 
-/* White leads up top, black leads underneath - the same side each name sits on. */
-.analysis-graph-name.is-white {
+/* Black labels the dark plate up top, white labels the filled mass below. */
+.analysis-graph-name.is-black {
   top: 0.28rem;
   color: #fff;
-  background: rgba(10, 8, 18, 0.6);
+  background: rgba(8, 8, 13, 0.55);
   padding: 0.08rem 0.3rem;
   border-radius: 4px;
 }
 
-.analysis-graph-name.is-black {
+.analysis-graph-name.is-white {
   bottom: 0.28rem;
-  color: #fff;
-  background: rgba(10, 8, 18, 0.6);
+  color: #161616;
+  background: rgba(255, 255, 255, 0.65);
   padding: 0.08rem 0.3rem;
   border-radius: 4px;
 }
@@ -1776,13 +1776,8 @@ body.is-review-coach-resizing canvas {
   cursor: crosshair;
 }
 
-/* One dark plate for both halves, so only the side that leads is coloured:
-   white area above the zero line, near-black area below it. */
-.analysis-graph-white {
-  fill: #2f2f38;
-}
-
-.analysis-graph-black {
+/* One dark plate holds the curve; the white area under it is White's share. */
+.analysis-graph-plate {
   fill: #2f2f38;
 }
 
@@ -1831,28 +1826,25 @@ body.is-review-coach-resizing canvas {
   cursor: default;
 }
 
+/* Mid grey reads against both the white mass and the dark plate. */
 .analysis-graph-zero {
-  stroke: #9a9a9a;
+  stroke: rgba(154, 154, 166, 0.9);
   stroke-width: 1;
 }
 
 .analysis-graph-area-white {
-  fill: rgba(255, 255, 255, 0.92);
-}
-
-.analysis-graph-area-black {
-  fill: #08080d;
+  fill: #f4f4f4;
 }
 
 .analysis-graph-line {
-  stroke: #1a1a1a;
-  stroke-width: 1.6;
+  stroke: rgba(10, 10, 16, 0.32);
+  stroke-width: 1.2;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
 .analysis-graph-cursor {
-  stroke: rgba(180, 180, 180, 0.85);
+  stroke: rgba(140, 140, 152, 0.95);
   stroke-width: 1;
 }
 

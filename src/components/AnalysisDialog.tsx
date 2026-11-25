@@ -218,38 +218,15 @@ export function EvalGraph({
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
     .join(' ')
   const midY = h / 2
-  const areaToZero = (side: 'white' | 'black') => {
-    const above = side === 'white'
-    const parts: string[] = []
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i]
-      const b = pts[i + 1]
-      const aOnSide = above ? a.y <= midY : a.y >= midY
-      const bOnSide = above ? b.y <= midY : b.y >= midY
-      if (!aOnSide && !bOnSide) continue
-      let x1 = a.x
-      let y1 = a.y
-      let x2 = b.x
-      let y2 = b.y
-      if (aOnSide !== bOnSide) {
-        const t = (midY - a.y) / (b.y - a.y)
-        const cross = a.x + t * (b.x - a.x)
-        if (aOnSide) {
-          x2 = cross
-          y2 = midY
-        } else {
-          x1 = cross
-          y1 = midY
-        }
-      }
-      parts.push(
-        `M${x1.toFixed(1)},${midY.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)} L${x2.toFixed(1)},${y2.toFixed(1)} L${x2.toFixed(1)},${midY.toFixed(1)} Z`,
-      )
-    }
-    return parts.join(' ')
-  }
-  const whiteArea = areaToZero('white')
-  const blackArea = areaToZero('black')
+  // One filled area under the curve, like the chess.com review graph: the
+  // white mass is White's share of the game, the dark plate above it is
+  // Black's. A high curve means White is better, a low curve means Black is.
+  const areaD = [
+    `M${pts[0].x.toFixed(1)},${h}`,
+    ...pts.map((p) => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+    `L${pts[pts.length - 1].x.toFixed(1)},${h}`,
+    'Z',
+  ].join(' ')
   const focus =
     pts.find((p) => p.ply === (hoverPly ?? scrubIndex)) ??
     pts[pts.length - 1]
@@ -291,19 +268,8 @@ export function EvalGraph({
           </clipPath>
         </defs>
         <g clipPath="url(#analysis-graph-clip)">
-          <rect width={w} height={midY} className="analysis-graph-white" />
-          <rect
-            y={midY}
-            width={w}
-            height={h - midY}
-            className="analysis-graph-black"
-          />
-          {whiteArea && (
-            <path d={whiteArea} className="analysis-graph-area-white" />
-          )}
-          {blackArea && (
-            <path d={blackArea} className="analysis-graph-area-black" />
-          )}
+          <rect width={w} height={h} className="analysis-graph-plate" />
+          <path d={areaD} className="analysis-graph-area-white" />
           <line
             x1="0"
             x2={w}
@@ -321,16 +287,16 @@ export function EvalGraph({
           />
         </g>
       </svg>
-      <span className="analysis-graph-name is-white">
-        <span className="analysis-graph-name-text">{whiteName}</span>
-        <span className="analysis-graph-acc">
-          {whiteAccuracy != null ? `${whiteAccuracy}%` : 'N/A'}
-        </span>
-      </span>
       <span className="analysis-graph-name is-black">
         <span className="analysis-graph-name-text">{blackName}</span>
         <span className="analysis-graph-acc">
           {blackAccuracy != null ? `${blackAccuracy}%` : 'N/A'}
+        </span>
+      </span>
+      <span className="analysis-graph-name is-white">
+        <span className="analysis-graph-name-text">{whiteName}</span>
+        <span className="analysis-graph-acc">
+          {whiteAccuracy != null ? `${whiteAccuracy}%` : 'N/A'}
         </span>
       </span>
       <div
