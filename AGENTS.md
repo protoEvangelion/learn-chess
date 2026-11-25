@@ -40,6 +40,12 @@ Registry config: `components.json` (`@cult-ui` + default `@shadcn`).
 - DeepSeek is for live coach responses only; opening cards must not call an LLM at runtime.
 - Prefetched when a drill line starts; coach `/api/explain` + `/api/coach-chat` inject the **cached** card only (never the whole pack).
 
+### Visual verification: 2D mode only
+
+- Always do visual verification in **2D board mode only** - never against the 3D board.
+- 2D is opt-in, so set `localStorage['chess-3d:boardView'] = '2d'` before load (or toggle it in Settings) rather than relying on the default 3D view.
+- Reason: the flat board is deterministic and fast to assert on; WebGL/camera framing makes 3D screenshots flaky.
+
 ### Enabling MCP in Cursor
 
 1. `.cursor/mcp.json` → `shadcn`
